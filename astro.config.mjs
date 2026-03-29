@@ -10,7 +10,7 @@ import { fontHeadTags } from "./src/assets/headlinks.js";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://glennhenry.github.io",
+  site: "https://bdmohammed.github.io",
   base: "cs-notes",
   markdown: {
     remarkPlugins: [remarkMath],
@@ -26,7 +26,7 @@ export default defineConfig({
       },
       favicon: "/favicon.ico",
       editLink: {
-        baseUrl: "https://github.com/glennhenry/cs-notes/edit/main/",
+        baseUrl: "https://github.com/bdmohammed/computer-science-notes/edit/main/",
       },
       credits: true,
       title: "CS Notes",
@@ -43,7 +43,7 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/glennhenry/cs-notes",
+          href: "https://github.com/bdmohammed/computer-science-notes",
         },
       ],
 
