@@ -11,7 +11,7 @@ import { fontHeadTags } from "./src/assets/headlinks.js";
 // https://astro.build/config
 export default defineConfig({
   site: "https://bdmohammed.github.io",
-  base: "cs-notes",
+  base: "computer-science-notes",
   markdown: {
     remarkPlugins: [remarkMath],
     rehypePlugins: [rehypeKatex, [rehypeExternalLinks, externalLinkIcon]],
