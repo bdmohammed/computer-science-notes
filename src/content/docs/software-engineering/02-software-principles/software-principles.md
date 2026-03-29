@@ -17,11 +17,11 @@ description: Software Principles
 - **[SOLID — Wikipedia](https://en.wikipedia.org/wiki/SOLID) and the 5 articles**
 - **[Difference Between Cohesion and Coupling — stackoverflow](https://stackoverflow.com/questions/3085285/difference-between-cohesion-and-coupling)**
 
-**Software Principles** are collection of guidelines, styles, tips, good practices, by various software and engineers to help to guide the process of developing a good software. By good software, it means they are reliable, maintainable, scalable, and many more listed in [software characteristics](/cs-notes/software-engineering#software-characteristics).
+**Software Principles** are collection of guidelines, styles, tips, good practices, by various software and engineers to help to guide the process of developing a good software. By good software, it means they are reliable, maintainable, scalable, and many more listed in [software characteristics](/computer-science-notes/software-engineering#software-characteristics).
 
 ### OOP
 
-[Object-Oriented Programming (OOP)](/cs-notes/computer-and-programming-fundamentals/object-oriented-programming) is a common paradigm used in the world of software engineering. The elements of OOP such as classes, objects, inheritance, polymorphism, encapsulation, and many more promotes code organization, reusability, and modularity in a software system. These elements serve as the foundation of other software principle that we will see later.
+[Object-Oriented Programming (OOP)](/computer-science-notes/computer-and-programming-fundamentals/object-oriented-programming) is a common paradigm used in the world of software engineering. The elements of OOP such as classes, objects, inheritance, polymorphism, encapsulation, and many more promotes code organization, reusability, and modularity in a software system. These elements serve as the foundation of other software principle that we will see later.
 
 We will see an example that demonstrate the benefits OOP about code reusing (in [Kotlin programming language](https://kotlinlang.org)).
 
@@ -149,7 +149,7 @@ We don't need to make function for every single expression we are executing. Mak
 
 ### YAGNI
 
-**YAGNI (You Ain't Gonna Need It)** principle suggests developers should avoid adding functionality until it is necessary. It is typically associated with [agile development methodology](/cs-notes/software-engineering/software-process#agile), where the development style revolve around quick incremental software development.
+**YAGNI (You Ain't Gonna Need It)** principle suggests developers should avoid adding functionality until it is necessary. It is typically associated with [agile development methodology](/computer-science-notes/software-engineering/software-process#agile), where the development style revolve around quick incremental software development.
 
 Its main idea is to focus on delivering the minimum viable product (MVP) or the necessary features to meet the immediate requirements, rather than adding functionality that may or may not be needed in the future.
 
@@ -275,7 +275,7 @@ The ideal properties are high cohesion and low coupling.
 
 ### Law of Demeter (LoD)
 
-**LoD (Law of Demeter)** is a design principle that promotes loose coupling and encapsulation in [object-oriented programming](/cs-notes/computer-and-programming-fundamentals/object-oriented-programming). The principle states that an object should have limited knowledge about other objects and should only interact with its immediate neighbors.
+**LoD (Law of Demeter)** is a design principle that promotes loose coupling and encapsulation in [object-oriented programming](/computer-science-notes/computer-and-programming-fundamentals/object-oriented-programming). The principle states that an object should have limited knowledge about other objects and should only interact with its immediate neighbors.
 
 There are three principles of LoD, based on [Wikipedia](https://en.wikipedia.org/wiki/Law_of_Demeter):
 
@@ -437,7 +437,7 @@ The `MessageBroadcaster` no longer instantiates an instance of `MessageService` 
 
 ### Composition Over Inheritance
 
-In OOP, there is a concept called [inheritance](/cs-notes/computer-and-programming-fundamentals/object-oriented-programming#inheritance). Inheritance allows a class to inherit all the properties and behaviors from a parent class. While inheritance can be useful in some cases, it can also lead to a rigid and inflexible class hierarchy. Child class exactly inherit anything the parent has. This means if the child class wants to remove some behaviors associated with the parent, the parent would need to do it. The impact is all the subclasses within the hierarchy is affected.
+In OOP, there is a concept called [inheritance](/computer-science-notes/computer-and-programming-fundamentals/object-oriented-programming#inheritance). Inheritance allows a class to inherit all the properties and behaviors from a parent class. While inheritance can be useful in some cases, it can also lead to a rigid and inflexible class hierarchy. Child class exactly inherit anything the parent has. This means if the child class wants to remove some behaviors associated with the parent, the parent would need to do it. The impact is all the subclasses within the hierarchy is affected.
 
 In other word, inheritance creates a tight coupling between classes, making it difficult to modify or extend the behavior of a class without affecting other classes in the hierarchy.
 

@@ -74,7 +74,7 @@ def generate_topic_links():
     os.makedirs(".temp", exist_ok=True)
     with open(os.path.join(".temp", "link.txt"), "w") as f:
         for i, kebab_title in enumerate(pages_id):
-            a = f"- [{pages_title[i]}](/cs-notes/{topic_title}/{kebab_title})\n"
+            a = f"- [{pages_title[i]}](/computer-science-notes/{topic_title}/{kebab_title})\n"
             f.write(a)
             print("Generated: ", a[:len(a) - 1])
 

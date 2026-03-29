@@ -6,7 +6,7 @@ description: Array
 
 **Main Source:**
 
-- **[Array (data structure) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Array_(data_structure)>)**
+- **[Array (data structure) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Array_(data_structure)>)**
 - **[Dynamic array — Wikipedia](https://en.wikipedia.org/wiki/Dynamic_array)**
 
 **Array** is a data structure that stores a **fixed-size** of element of the **same type**. In memory, array is located within a contiguous block of memory locations. It is a fundamental and elementary data structure that serves as a building block for constructing more complex data structures.
@@ -18,7 +18,7 @@ Each element in the array has its own position, it is called **index**. Index in
 
 To access an element in the array, we will need to know its position or index. For instance, in some programming language, accessing an element in the array is done by calling the array name with a square bracket and include the index inside it, such as `array[3]` (access element in the index 3 from the array).
 
-The [time complexity](/cs-notes/data-structures-and-algorithms/analysis-of-algorithms#time--space-complexity) or the time it takes to access an element in the array will be constant $O(1)$. This is because, no matter which array or which index we are accessing, the amount of time it takes will always be the same.
+The [time complexity](/computer-science-notes/data-structures-and-algorithms/analysis-of-algorithms#time--space-complexity) or the time it takes to access an element in the array will be constant $O(1)$. This is because, no matter which array or which index we are accessing, the amount of time it takes will always be the same.
 
 Accessing an element by its index involves a simple calculation to determine the memory location of the element. Since the index directly corresponds to the memory location, accessing any element in the array can be done in constant time, regardless of the array's size.
 
@@ -33,9 +33,9 @@ Therefore, it is important for array to have store the same type of element.
 
 We see that memory address of an element is obtained by adding the base address with certain offset (i.e., `data_type_size * index`) of the element.
 
-The declaration of array involves assigning a [pointer](/cs-notes/computer-and-programming-fundamentals/memory#pointer--reference) to an identifier that points to some base address. For example, in C language, with the assignment `int a[5] = {0, 1, 2, 3, 4};`, we are essentially assigning a pointer to `arr` identifier. This pointer holds the memory address of the first element of the array, which is called the **base address**.
+The declaration of array involves assigning a [pointer](/computer-science-notes/computer-and-programming-fundamentals/memory#pointer--reference) to an identifier that points to some base address. For example, in C language, with the assignment `int a[5] = {0, 1, 2, 3, 4};`, we are essentially assigning a pointer to `arr` identifier. This pointer holds the memory address of the first element of the array, which is called the **base address**.
 
-Subsequent access of this array is done using [pointer arithmetic](/cs-notes/computer-and-programming-fundamentals/memory#pointer-arithmetic) under the hood.
+Subsequent access of this array is done using [pointer arithmetic](/computer-science-notes/computer-and-programming-fundamentals/memory#pointer-arithmetic) under the hood.
 
 ![Array in memory](./array-memory.png)  
 Source: https://www2.hawaii.edu/~walbritt/ics212/materials/array-diagrams.htm

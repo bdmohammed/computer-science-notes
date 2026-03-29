@@ -4,4 +4,4 @@ slug: software-engineering/client-server
 description: Client-Server
 ---
 
-See **[Cloud Computing > Client-Server](/cs-notes/cloud-computing-and-distributed-systems/client-server)**
+See **[Cloud Computing > Client-Server](/computer-science-notes/cloud-computing-and-distributed-systems/client-server)**

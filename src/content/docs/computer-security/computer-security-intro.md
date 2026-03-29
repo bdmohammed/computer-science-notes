@@ -5,34 +5,34 @@ description: Computer Security Notes
 ---
 
 :::tip
-Highly recommend seeing [computer networking](/cs-notes/computer-networking-intro) first. This includes the various network protocol and terminology.
+Highly recommend seeing [computer networking](/computer-science-notes/computer-networking-intro) first. This includes the various network protocol and terminology.
 :::
 
 ### All pages
 
-- [Computer Security Fundamentals](/cs-notes/computer-security/computer-security-fundamentals)
+- [Computer Security Fundamentals](/computer-science-notes/computer-security/computer-security-fundamentals)
 - Cryptography
-  - [Math Concepts](/cs-notes/computer-security/math-concepts)
+  - [Math Concepts](/computer-science-notes/computer-security/math-concepts)
   - Hashing
-    - [Hash Function](/cs-notes/computer-security/hash-function)
-    - [MD5](/cs-notes/computer-security/md5)
-    - [SHA](/cs-notes/computer-security/sha)
-  - [Encryption](/cs-notes/computer-security/encryption)
+    - [Hash Function](/computer-science-notes/computer-security/hash-function)
+    - [MD5](/computer-science-notes/computer-security/md5)
+    - [SHA](/computer-science-notes/computer-security/sha)
+  - [Encryption](/computer-science-notes/computer-security/encryption)
   - Symmetric Encryption
-    - [DES](/cs-notes/computer-security/des)
-    - [AES](/cs-notes/computer-security/aes)
-    - [Blowfish](/cs-notes/computer-security/blowfish)
+    - [DES](/computer-science-notes/computer-security/des)
+    - [AES](/computer-science-notes/computer-security/aes)
+    - [Blowfish](/computer-science-notes/computer-security/blowfish)
   - Asymmetric Encryption & Key Exchange
-    - [Diffie-Hellman](/cs-notes/computer-security/diffie-hellman)
-    - [RSA](/cs-notes/computer-security/rsa)
-    - [Elliptic Curve Cryptography](/cs-notes/computer-security/elliptic-curve-cryptography)
-    - [DSA](/cs-notes/computer-security/dsa)
-  - [Lattice-Based Cryptography](/cs-notes/computer-security/lattice-based-cryptography)
-  - [Blockchain](/cs-notes/computer-security/blockchain)
-- [Antivirus & Antimalware](/cs-notes/computer-security/antivirus-antimalware)
-- [Reverse Engineering](/cs-notes/computer-security/reverse-engineering)
-- [Network Security](/cs-notes/computer-security/network-security)
-- [Web Security](/cs-notes/computer-security/web-security)
-- [Mobile Security](/cs-notes/computer-security/mobile-security)
-- [Backend & Server Security](/cs-notes/computer-security/backend-server-security)
-- [Other Attack & Exploit](/cs-notes/computer-security/other-attack-and-exploit)
+    - [Diffie-Hellman](/computer-science-notes/computer-security/diffie-hellman)
+    - [RSA](/computer-science-notes/computer-security/rsa)
+    - [Elliptic Curve Cryptography](/computer-science-notes/computer-security/elliptic-curve-cryptography)
+    - [DSA](/computer-science-notes/computer-security/dsa)
+  - [Lattice-Based Cryptography](/computer-science-notes/computer-security/lattice-based-cryptography)
+  - [Blockchain](/computer-science-notes/computer-security/blockchain)
+- [Antivirus & Antimalware](/computer-science-notes/computer-security/antivirus-antimalware)
+- [Reverse Engineering](/computer-science-notes/computer-security/reverse-engineering)
+- [Network Security](/computer-science-notes/computer-security/network-security)
+- [Web Security](/computer-science-notes/computer-security/web-security)
+- [Mobile Security](/computer-science-notes/computer-security/mobile-security)
+- [Backend & Server Security](/computer-science-notes/computer-security/backend-server-security)
+- [Other Attack & Exploit](/computer-science-notes/computer-security/other-attack-and-exploit)

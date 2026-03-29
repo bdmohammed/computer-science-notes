@@ -33,8 +33,8 @@ To put it simply, `response time = latency + processing time + latency`. The goa
 
 Technique to improve performance includes:
 
-- Implement [caching mechanism](/cs-notes/computer-and-programming-fundamentals/caching).
-- [Optimize database](/cs-notes/database-system/database-optimization), such as using [database index](/cs-notes/database-system/database-index).
+- Implement [caching mechanism](/computer-science-notes/computer-and-programming-fundamentals/caching).
+- [Optimize database](/computer-science-notes/database-system/database-optimization), such as using [database index](/computer-science-notes/database-system/database-index).
 - [Load balancing](#load-balancer), incorporate multiple servers or instance to distribute the workload.
 - Efficient algorithms and data structures.
 - Asynchronous systems, use algorithm that are capable of doing concurrent operations.
@@ -47,12 +47,12 @@ To handle more workload, a system can either be scaled horizontally or verticall
 
 Improving scalability is typically related to distributing the workload::
 
-- Use load balancer with distributed architecture like [SOA](/cs-notes/backend-system/soa) or [microservice](/cs-notes/backend-system/microservice), allowing the system to be decomposed into smaller and independent server that can be developed, deployed, and scaled individually. For example, the authentication system may struggle with workload, but not the file uploader, which means we can scale up the authentication system.
+- Use load balancer with distributed architecture like [SOA](/computer-science-notes/backend-system/soa) or [microservice](/computer-science-notes/backend-system/microservice), allowing the system to be decomposed into smaller and independent server that can be developed, deployed, and scaled individually. For example, the authentication system may struggle with workload, but not the file uploader, which means we can scale up the authentication system.
 - Make service or system that are **stateless**. Stateless refer to the ability of a system or service to operate without relying on stored state information. A stateless system treats each request as an independent transaction and does not maintain any session or context information between requests.
 
   With more users present, storing all their session data can be a burden. One approach is to share the state across all the server, to reduce the burden of a single server storing the data. However, this approach require additional synchronization mechanism, which can increase the complexity of the system.
 
-- [Database partitioning](/cs-notes/database-system/database-optimization#partition) is a term for breaking down a large database into smaller, more manageable units called partitions. This is done within a single database instance. Partition can scale the system horizontally, this is done by distributing the partition across multiple servers, this process is called [database sharding](/cs-notes/cloud-computing-and-distributed-systems/distributed-database#database-sharding).
+- [Database partitioning](/computer-science-notes/database-system/database-optimization#partition) is a term for breaking down a large database into smaller, more manageable units called partitions. This is done within a single database instance. Partition can scale the system horizontally, this is done by distributing the partition across multiple servers, this process is called [database sharding](/computer-science-notes/cloud-computing-and-distributed-systems/distributed-database#database-sharding).
 
 ### Availability & Reliability
 
@@ -75,7 +75,7 @@ Two mechanisms to improve availability and reliability:
 
   Failover can be done in **active-passive** or **active-active**. In active-passive, one system is running, and the other is on standby. In the latter one, two systems are running together, to distribute workload as well as to increase the availability.
 
-- **Replication (redundancy)**: Create and maintain duplicate copies of data or system components across multiple locations or systems. Ensure that data or services are accessible even if one copy or component becomes unavailable. See also [database replication](/cs-notes/database-system/logging-and-recovery#replication) for replicating database and [database sharding](/cs-notes/cloud-computing-and-distributed-systems/distributed-database#database-sharding).
+- **Replication (redundancy)**: Create and maintain duplicate copies of data or system components across multiple locations or systems. Ensure that data or services are accessible even if one copy or component becomes unavailable. See also [database replication](/computer-science-notes/database-system/logging-and-recovery#replication) for replicating database and [database sharding](/computer-science-notes/cloud-computing-and-distributed-systems/distributed-database#database-sharding).
 
 ### Consistency
 
@@ -92,8 +92,8 @@ The level of consistency required for a system can be adjusted based on the trad
 
 Ways to improve consistency:
 
-- Use [transaction](/cs-notes/database-system/transactions) on database operation and adhere to [ACID properties](/cs-notes/database-system/transactions#acid) of database.
-- Implement synchronization mechanisms to coordinate access and updates to shared resources or data. [Various technique](/cs-notes/operating-system/multithreading#synchronization-primitives), such as locks and semaphores can help to guarantee concurrent operations.
+- Use [transaction](/computer-science-notes/database-system/transactions) on database operation and adhere to [ACID properties](/computer-science-notes/database-system/transactions#acid) of database.
+- Implement synchronization mechanisms to coordinate access and updates to shared resources or data. [Various technique](/computer-science-notes/operating-system/multithreading#synchronization-primitives), such as locks and semaphores can help to guarantee concurrent operations.
 
 #### CAP Theorem
 
@@ -122,7 +122,7 @@ This leaves us with two possible system:
 Source: https://en.wikipedia.org/wiki/CAP_theorem#/media/File:CAP_Theorem_Venn_Diagram.png
 
 :::tip
-More about [distributed systems](/cs-notes/cloud-computing-and-distributed-systems-intro).
+More about [distributed systems](/computer-science-notes/cloud-computing-and-distributed-systems-intro).
 :::
 
 ### Infrastructure
@@ -131,7 +131,7 @@ Infrastructure refers to the hardware, software, and network components that pro
 
 #### DNS
 
-The main purpose of [Domain Name System (DNS)](/cs-notes/computer-networking/dns) resolves a domain name (e.g., `google.com`) to the corresponding IP address (i.e., `216.239.38.120`), to allow browser to establish a connection with the correct server.
+The main purpose of [Domain Name System (DNS)](/computer-science-notes/computer-networking/dns) resolves a domain name (e.g., `google.com`) to the corresponding IP address (i.e., `216.239.38.120`), to allow browser to establish a connection with the correct server.
 
 Other than that, we can configure DNS for load balancing and traffic distribution using DNS service, such as Cloudflare. DNS can rotate and distribute requests among different servers based on workload, latency, or geolocation.
 
@@ -159,11 +159,11 @@ Source: https://www.domainesia.com/tips/apa-itu-cdn-dan-fungsi-cdn/
 Other benefits of load balancer:
 
 - **Session Persistence**: Now, because the server are distributed, it could be possible that they don't share data with each other. In the case of stateful application, in which the server need to store user's session data, load balancer can maintain **session persistence** by ensuring that requests from the same client are consistently routed to the same server.
-- **SSL Termination**: Client through web browser connects to server with secure connection, encrypted with [SSL/TLS protocol](/cs-notes/computer-networking/network-encryption#ssltls). Load balancer can decrypt the connection before it connects to the application servers. Furthermore, it can encrypt outgoing connection from the server. Using load balancer as SSL termination help separating the concern of server, so they do not need to be concerned by security-related issues.
+- **SSL Termination**: Client through web browser connects to server with secure connection, encrypted with [SSL/TLS protocol](/computer-science-notes/computer-networking/network-encryption#ssltls). Load balancer can decrypt the connection before it connects to the application servers. Furthermore, it can encrypt outgoing connection from the server. Using load balancer as SSL termination help separating the concern of server, so they do not need to be concerned by security-related issues.
 
 There are two levels of where load balancer can operate:
 
-- **Network Level**: In this level, load balancers distribute traffic based on network-level protocols, typically at the [transport layer (layer 4) of the OSI model](/cs-notes/computer-networking/osi-model#osi-layers). They forward incoming requests using information such as source IP address, destination IP address, and TCP/UDP ports. They do not examine the content of the requests, and they are generally faster and more efficient, but lack of application layer access.
+- **Network Level**: In this level, load balancers distribute traffic based on network-level protocols, typically at the [transport layer (layer 4) of the OSI model](/computer-science-notes/computer-networking/osi-model#osi-layers). They forward incoming requests using information such as source IP address, destination IP address, and TCP/UDP ports. They do not examine the content of the requests, and they are generally faster and more efficient, but lack of application layer access.
 - **Application Level**: Application level is the layer 7 of the OSI model, it has access from the application layer protocol, such as HTTP headers, URLs, cookies, and session information. They are generally slower, but they can perform content-based routing, SSL termination, caching, etc.
 
 ![Load balancer](./load-balancer.png)  
@@ -171,20 +171,20 @@ Source: https://azure.microsoft.com/en-us/blog/build-a-globally-resilient-archit
 
 #### Reverse Proxy
 
-[Reverse proxy](/cs-notes/computer-networking/proxy#reverse-proxy) can function similar to load balancer, however, instead of evenly distributing the workload, a reverse proxy forwards request to the appropriate backend server.
+[Reverse proxy](/computer-science-notes/computer-networking/proxy#reverse-proxy) can function similar to load balancer, however, instead of evenly distributing the workload, a reverse proxy forwards request to the appropriate backend server.
 
 #### Architecture
 
 Several choices of architecture are:
 
-- **[Monolithic](/cs-notes/backend-system/monolithic)**: Simple to develop and deploy but can become harder to maintain and scale as the application grows.
-- **[Microservice](/cs-notes/backend-system/microservice)**: Flexible, scalable, and isolate fault, but introduces additional complexity in terms of service coordination and communication.
-- **[Service Oriented Architecture (SOA)](/cs-notes/backend-system/soa)**: Similar to microservice, it can lead to complexity in terms of service coordination and communication.
-- **[Serverless](/cs-notes/backend-system/serverless)**: Easy development, automatic scaling, and cost efficiency but may have limited control over low-level components.
+- **[Monolithic](/computer-science-notes/backend-system/monolithic)**: Simple to develop and deploy but can become harder to maintain and scale as the application grows.
+- **[Microservice](/computer-science-notes/backend-system/microservice)**: Flexible, scalable, and isolate fault, but introduces additional complexity in terms of service coordination and communication.
+- **[Service Oriented Architecture (SOA)](/computer-science-notes/backend-system/soa)**: Similar to microservice, it can lead to complexity in terms of service coordination and communication.
+- **[Serverless](/computer-science-notes/backend-system/serverless)**: Easy development, automatic scaling, and cost efficiency but may have limited control over low-level components.
 
 #### Message Broker
 
-[Message broker](/cs-notes/backend-system/message-broker) can be useful to handle the communication and coordination between components or services in a system.
+[Message broker](/computer-science-notes/backend-system/message-broker) can be useful to handle the communication and coordination between components or services in a system.
 
 Benefits:
 
@@ -195,21 +195,21 @@ Benefits:
 
 Ways to improve security:
 
-- Implement [authentication](/cs-notes/backend-system/authentication) and [authorization](/cs-notes/backend-system/authorization) mechanism.
-- Use secure protocols such as [SSL/TLS](/cs-notes/computer-networking/network-encryption#ssltls).
-- Avoid [various security vulnerability](/cs-notes/computer-security-intro) and apply best practices.
+- Implement [authentication](/computer-science-notes/backend-system/authentication) and [authorization](/computer-science-notes/backend-system/authorization) mechanism.
+- Use secure protocols such as [SSL/TLS](/computer-science-notes/computer-networking/network-encryption#ssltls).
+- Avoid [various security vulnerability](/computer-science-notes/computer-security-intro) and apply best practices.
 - Maintain IP whitelists and blacklists to allow or block traffic from specific IP addresses or ranges.
-- Implement rate limiting to control the amount of incoming traffic, preventing [DoS](/cs-notes/computer-security/network-security#ddos-attack).
+- Implement rate limiting to control the amount of incoming traffic, preventing [DoS](/computer-science-notes/computer-security/network-security#ddos-attack).
 
 :::tip
 See also:
 
-- [Backend Optimization](/cs-notes/backend-system/backend-optimization)
-- [Database Optimization](/cs-notes/database-system/database-optimization)
-- [Database Index](/cs-notes/database-system/database-index)
-- [Network Security](/cs-notes/computer-security/network-security)
-- [Web Security](/cs-notes/computer-security/web-security)
-- [Mobile Security](/cs-notes/computer-security/mobile-security)
-- [Backend & Server Security](/cs-notes/computer-security/backend-server-security)
-- [Other Attack & Exploit](/cs-notes/computer-security/other-attack-and-exploit)
+- [Backend Optimization](/computer-science-notes/backend-system/backend-optimization)
+- [Database Optimization](/computer-science-notes/database-system/database-optimization)
+- [Database Index](/computer-science-notes/database-system/database-index)
+- [Network Security](/computer-science-notes/computer-security/network-security)
+- [Web Security](/computer-science-notes/computer-security/web-security)
+- [Mobile Security](/computer-science-notes/computer-security/mobile-security)
+- [Backend & Server Security](/computer-science-notes/computer-security/backend-server-security)
+- [Other Attack & Exploit](/computer-science-notes/computer-security/other-attack-and-exploit)
 :::

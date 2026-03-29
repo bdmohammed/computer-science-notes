@@ -56,8 +56,8 @@ We call the duration or existence of an object or a variable accessible within a
 
 During its lifetime, there are three mechanisms to allocate storage for an object.
 
-- **[Stack allocation](/cs-notes/operating-system/memory-management#stack-allocation)**: Memory is allocated in a [stack data structure](/cs-notes/data-structures-and-algorithms/stack). It is used for storing subroutines call as well as local variables within them. They are fast, efficient, and handled automatically (in a sense) by the compiler.
-- **[Heap allocation](/cs-notes/operating-system/memory-management#dynamic-allocation)**: Also known as dynamic allocation, in which objects are allocated and deallocated at runtime. It is typically managed manually by programmers, although mechanism like [garbage collection](/cs-notes/operating-system/memory-management#automatic-memory-management) allows it to be automatic.
+- **[Stack allocation](/computer-science-notes/operating-system/memory-management#stack-allocation)**: Memory is allocated in a [stack data structure](/computer-science-notes/data-structures-and-algorithms/stack). It is used for storing subroutines call as well as local variables within them. They are fast, efficient, and handled automatically (in a sense) by the compiler.
+- **[Heap allocation](/computer-science-notes/operating-system/memory-management#dynamic-allocation)**: Also known as dynamic allocation, in which objects are allocated and deallocated at runtime. It is typically managed manually by programmers, although mechanism like [garbage collection](/computer-science-notes/operating-system/memory-management#automatic-memory-management) allows it to be automatic.
 - **Static allocation**: Static allocation is used for objects with a fixed size and a lifetime that spans the entire program's execution. It could be variable placed in global scope (typically any region outside block or function) or initializing variable with `static` keyword in some programming languages. Object allocated statically has a fixed and reserved place in the program memory, making it accessible anywhere and anytime in the program.
 
 ### Scope Rules
@@ -68,7 +68,7 @@ Scope rules are the rules about visibility and accessibility of variables, funct
 
 We call the languages that determine scope of an identifier in compile-time based on the lexical structure of the program as **static scope** or **lexical scope**. Example of statically scoped languages are C, C++, Java, Python, and most programming languages in general.
 
-For example, below are code taken from [Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Scope_(computer_science)#Lexical_scope>). The lexical structure of program refers to the arrangement of its code into blocks, functions, and other nested structures. Each block or function introduces a new scope.
+For example, below are code taken from [Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Scope_(computer_science)#Lexical_scope>). The lexical structure of program refers to the arrangement of its code into blocks, functions, and other nested structures. Each block or function introduces a new scope.
 
 ```javascript
 program A;
@@ -113,7 +113,7 @@ Declaration refers to the introduction of a name and its scope, while definition
 Note that `int` is a primitive type, so memory allocation actually happens at declaration.
 :::
 
-When making a recursive type like a [linked list](/cs-notes/data-structures-and-algorithms/linked-list) in C, we will need to declare the type first before defining it.
+When making a recursive type like a [linked list](/computer-science-notes/data-structures-and-algorithms/linked-list) in C, we will need to declare the type first before defining it.
 
 ```c
 struct Node; // Declaration
@@ -216,4 +216,4 @@ Sometimes there can be multiple names (but different objects) in a single scope.
 - **Aliases**: Aliases is a situation where two or more names are used to access or refer to the same object or value in memory. Any modifications made to the object through one alias will be reflected when accessing the object through the other alias. This can happen through the use of reference. The resolution of aliases occurs at runtime and is handled by the underlying memory management and variable referencing mechanisms of the programming language.
 - **Overloading**: The ability to define multiple functions or methods (or even operators) with the same name but different parameter lists or types. It is possible for user to add their definition of adding a string with an integer, although there are some languages that provide this as feature.
   The resolution of overloading functions depends on the arguments provided during function calls. Some languages determine this during compile-time, they are referred as **static overloading**, while deferring it until runtime when the actual function call is made is referred as **dynamic overloading**.
-- **[Polymorphism](/cs-notes/computer-and-programming-fundamentals/object-oriented-programming#polymorphism)**: The ability of treating an object or function as multiple forms or types. There are several resolutions, some language resolve this by implicitly converting argument type to the parameter type (referred as **coercion** or implicit type convertion), some implement the object or function during runtime based on the actual type encountered ([dynamic polymorphism](/cs-notes/computer-and-programming-fundamentals/object-oriented-programming#polymorphism)), and others explicitly create a copy of the function during compile-time for each type and its implementation after performing type checking (referred as **generics**).
+- **[Polymorphism](/computer-science-notes/computer-and-programming-fundamentals/object-oriented-programming#polymorphism)**: The ability of treating an object or function as multiple forms or types. There are several resolutions, some language resolve this by implicitly converting argument type to the parameter type (referred as **coercion** or implicit type convertion), some implement the object or function during runtime based on the actual type encountered ([dynamic polymorphism](/computer-science-notes/computer-and-programming-fundamentals/object-oriented-programming#polymorphism)), and others explicitly create a copy of the function during compile-time for each type and its implementation after performing type checking (referred as **generics**).

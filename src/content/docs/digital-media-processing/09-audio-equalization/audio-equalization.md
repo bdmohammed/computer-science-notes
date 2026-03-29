@@ -6,7 +6,7 @@ description: Audio Equalization
 
 **Main Source:**
 
-- **[Equalization (audio) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Equalization_(audio)>)**
+- **[Equalization (audio) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Equalization_(audio)>)**
 - **[What Is Equalization? | Simple Explanation For Beginners — C-Threep](https://youtu.be/4FkKiWJfd00)**
 
 **Audio equalization**, often referred to as EQ, is the process of adjusting a specific range of frequency to make it stronger (sounds louder) or weaker (sounds softer).
@@ -26,7 +26,7 @@ Human audible range is divided into specific frequency range. These categories m
 
 ### Equalizer
 
-EQ works in between human audible frequency which is from 20 Hz to 20 kHz. An EQ also consists of a number of [filters](/cs-notes/digital-signal-processing/filtering), which are used to filter off specific frequency.
+EQ works in between human audible frequency which is from 20 Hz to 20 kHz. An EQ also consists of a number of [filters](/computer-science-notes/digital-signal-processing/filtering), which are used to filter off specific frequency.
 
 ![Example of EQ Filter](./eq-filters.png)  
 Source: https://www.musicguymixing.com/eq-filters/

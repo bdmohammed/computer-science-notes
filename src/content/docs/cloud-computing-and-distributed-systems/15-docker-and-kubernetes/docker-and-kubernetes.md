@@ -6,19 +6,19 @@ description: Docker & Kubernetes
 
 **Main Source:**
 
-- **[Docker (software) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Docker_(software)>)**
+- **[Docker (software) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Docker_(software)>)**
 - **[Kubernetes — Wikipedia](https://en.wikipedia.org/wiki/Kubernetes)**
 
 ### Docker
 
-**Docker** is a platform that provides [OS-level virtualization](/cs-notes/cloud-computing-and-distributed-systems/virtualization#level-implementation) or [containerization](/cs-notes/cloud-computing-and-distributed-systems/containerization), allowing developers to package their applications in a format that can be easily distributed and run on any system that supports Docker.
+**Docker** is a platform that provides [OS-level virtualization](/computer-science-notes/cloud-computing-and-distributed-systems/virtualization#level-implementation) or [containerization](/computer-science-notes/cloud-computing-and-distributed-systems/containerization), allowing developers to package their applications in a format that can be easily distributed and run on any system that supports Docker.
 
 Docker uses the idea of **containers**, these are isolated environment of our application. A container is fully-fledged format that contains all the necessary components to run an application, including the application's code, dependencies, libraries, and runtime environment.
 
 Docker includes a **container engine**, which is the software that makes possible for our application hosted on it, to interact with the underlying system that the container is run on.
 
 :::tip
-Find more about [containerization](/cs-notes/cloud-computing-and-distributed-systems/containerization) and [virtualization](/cs-notes/cloud-computing-and-distributed-systems/virtualization).
+Find more about [containerization](/computer-science-notes/cloud-computing-and-distributed-systems/containerization) and [virtualization](/computer-science-notes/cloud-computing-and-distributed-systems/virtualization).
 :::
 
 #### How containers are made
@@ -42,7 +42,7 @@ Source: https://itnext.io/getting-started-with-docker-facts-you-should-know-d000
 
 While Docker is used to build containerized applications, **Kubernetes**, on the other hand, is a container orchestration platform—or simply, a platform that helps manage and automate the deployment, scaling, and management of containerized applications.
 
-Kubernetes becomes useful when application is containerized at scale, across multiple nodes or machines. This includes task scheduling of containers, ease of adding or removing containers, a way to monitor the health of containers, as well as restarting or replacing them. Additionally, Kubernetes provides a [load balancing](/cs-notes/software-engineering/system-design#load-balancer) service, capable of distributing incoming traffic across the available replicas of the service.
+Kubernetes becomes useful when application is containerized at scale, across multiple nodes or machines. This includes task scheduling of containers, ease of adding or removing containers, a way to monitor the health of containers, as well as restarting or replacing them. Additionally, Kubernetes provides a [load balancing](/computer-science-notes/software-engineering/system-design#load-balancer) service, capable of distributing incoming traffic across the available replicas of the service.
 
 #### Concepts
 

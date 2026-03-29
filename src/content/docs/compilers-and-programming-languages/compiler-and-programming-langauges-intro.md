@@ -5,7 +5,7 @@ description: Compilers & Programming Languages
 ---
 
 :::tip
-Recommend taking a look at [theory of computation and automata](/cs-notes/theory-of-computation-and-automata-intro) first.
+Recommend taking a look at [theory of computation and automata](/computer-science-notes/theory-of-computation-and-automata-intro) first.
 :::
 
 :::info
@@ -19,26 +19,26 @@ Originally, compilers and programming language (formerly called programming lang
 
 ### All pages
 
-- [CPL Fundamentals](/cs-notes/compilers-and-programming-languages/cpl-fundamentals)
+- [CPL Fundamentals](/computer-science-notes/compilers-and-programming-languages/cpl-fundamentals)
 - Compiler Frontend
-  - [Syntax](/cs-notes/compilers-and-programming-languages/syntax)
-  - [Scanning](/cs-notes/compilers-and-programming-languages/scanning)
-  - [Parsing](/cs-notes/compilers-and-programming-languages/parsing)
-  - [Semantic Analysis](/cs-notes/compilers-and-programming-languages/semantic-analysis)
+  - [Syntax](/computer-science-notes/compilers-and-programming-languages/syntax)
+  - [Scanning](/computer-science-notes/compilers-and-programming-languages/scanning)
+  - [Parsing](/computer-science-notes/compilers-and-programming-languages/parsing)
+  - [Semantic Analysis](/computer-science-notes/compilers-and-programming-languages/semantic-analysis)
 - Programming Languages Constructs
-  - [Names, Scopes, Bindings](/cs-notes/compilers-and-programming-languages/names-scopes-bindings)
-  - [Control Flow](/cs-notes/compilers-and-programming-languages/control-flow)
-  - [Data Types](/cs-notes/compilers-and-programming-languages/data-types)
-  - [Subroutines](/cs-notes/compilers-and-programming-languages/subroutines)
-  - [Data Abstraction](/cs-notes/compilers-and-programming-languages/data-abstraction)
+  - [Names, Scopes, Bindings](/computer-science-notes/compilers-and-programming-languages/names-scopes-bindings)
+  - [Control Flow](/computer-science-notes/compilers-and-programming-languages/control-flow)
+  - [Data Types](/computer-science-notes/compilers-and-programming-languages/data-types)
+  - [Subroutines](/computer-science-notes/compilers-and-programming-languages/subroutines)
+  - [Data Abstraction](/computer-science-notes/compilers-and-programming-languages/data-abstraction)
 - Compiler Backend
-  - [Target Architecture](/cs-notes/compilers-and-programming-languages/target-architecture)
-  - [Intermediate Representation](/cs-notes/compilers-and-programming-languages/intermediate-representation)
-  - [Assembly Language](/cs-notes/compilers-and-programming-languages/assembly-language)
-  - [Code Generation](/cs-notes/compilers-and-programming-languages/code-generation)
-  - [Compiler Optimization](/cs-notes/compilers-and-programming-languages/compiler-optimization)
+  - [Target Architecture](/computer-science-notes/compilers-and-programming-languages/target-architecture)
+  - [Intermediate Representation](/computer-science-notes/compilers-and-programming-languages/intermediate-representation)
+  - [Assembly Language](/computer-science-notes/compilers-and-programming-languages/assembly-language)
+  - [Code Generation](/computer-science-notes/compilers-and-programming-languages/code-generation)
+  - [Compiler Optimization](/computer-science-notes/compilers-and-programming-languages/compiler-optimization)
 - Other Programming Model
-  - [Functional Languages](/cs-notes/compilers-and-programming-languages/functional-languages)
-  - [Logic Languages](/cs-notes/compilers-and-programming-languages/logic-languages)
-  - [Concurrency](/cs-notes/compilers-and-programming-languages/concurrency)
-  - [Scripting Languages](/cs-notes/compilers-and-programming-languages/scripting-languages)
+  - [Functional Languages](/computer-science-notes/compilers-and-programming-languages/functional-languages)
+  - [Logic Languages](/computer-science-notes/compilers-and-programming-languages/logic-languages)
+  - [Concurrency](/computer-science-notes/compilers-and-programming-languages/concurrency)
+  - [Scripting Languages](/computer-science-notes/compilers-and-programming-languages/scripting-languages)

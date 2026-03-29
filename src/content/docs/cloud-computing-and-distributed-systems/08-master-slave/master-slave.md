@@ -6,7 +6,7 @@ description: Master-Slave
 
 **Main Source:**
 
-- **[Master–slave (technology) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Master%E2%80%93slave_(technology)>)**
+- **[Master–slave (technology) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Master%E2%80%93slave_(technology)>)**
 
 **Master-Slave** architecture is a system architecture in which one component, called the **master**, controls one or more other components, called **slaves**.
 
@@ -19,7 +19,7 @@ Source: https://www.researchgate.net/figure/Master-slave-architecture_fig1_31729
 
 ### Example
 
-One common example of the master-slave architecture is [database replication](/cs-notes/database-system/logging-and-recovery#replication). Database stores a bunch of data, having a copy of them would minimize data loss. The concept of database replication is storing all or some subset of data in different device.
+One common example of the master-slave architecture is [database replication](/computer-science-notes/database-system/logging-and-recovery#replication). Database stores a bunch of data, having a copy of them would minimize data loss. The concept of database replication is storing all or some subset of data in different device.
 
 Any database operation that involves writing new data will only be applied to a single master database. One or more slave databases contains the replicate of the data. They are only responsible for handling read operation. The slave database will synchronize their data with the master over time.
 

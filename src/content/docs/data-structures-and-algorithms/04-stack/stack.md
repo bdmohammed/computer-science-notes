@@ -6,7 +6,7 @@ description: Stack
 
 **Main Source:**
 
-- **[Stack (abstract data type) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Stack_(abstract_data_type)>)**
+- **[Stack (abstract data type) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Stack_(abstract_data_type)>)**
 
 **Stack** is a data structure where the elements are stacked on top of each other. In stack data structure, we can add and remove element, the behavior of adding and removing element follows the **Last-In-First-Out (LIFO)** principle. This principle says that the last element added to the stack is the first one to be removed.
 
@@ -24,7 +24,7 @@ Stack is a fairly simple data structure, the general implementation typically on
 - **Push**: Push is when we add an element to the stack, which is to the top.
 - **Pop**: Pop is when we remove an element from the stack, which is the topmost element.
 
-Stack data structure can be implemented using an [array](/cs-notes/data-structures-and-algorithms/array) or [linked list](/cs-notes/data-structures-and-algorithms/linked-list), the important thing is we need to follow the LIFO principle. Even if array allow random access and linked list allow insertion in the middle, we can't use these.
+Stack data structure can be implemented using an [array](/computer-science-notes/data-structures-and-algorithms/array) or [linked list](/computer-science-notes/data-structures-and-algorithms/linked-list), the important thing is we need to follow the LIFO principle. Even if array allow random access and linked list allow insertion in the middle, we can't use these.
 
 Stack operation is done in O(1) or constant time, no matter what the element is, no matter how large the stack is, removing or adding element always performs the same.
 

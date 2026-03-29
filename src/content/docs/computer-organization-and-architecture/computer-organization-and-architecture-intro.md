@@ -6,17 +6,17 @@ description: Computer Organization & Architecture Notes
 
 ### All pages
 
-- [COA Fundamentals](/cs-notes/computer-organization-and-architecture/coa-fundamentals)
-- [Boolean Logic](/cs-notes/computer-organization-and-architecture/boolean-logic)
+- [COA Fundamentals](/computer-science-notes/computer-organization-and-architecture/coa-fundamentals)
+- [Boolean Logic](/computer-science-notes/computer-organization-and-architecture/boolean-logic)
 - CPU
-  - [ALU](/cs-notes/computer-organization-and-architecture/alu)
-  - [Registers & RAM](/cs-notes/computer-organization-and-architecture/registers-and-ram)
-  - [Control Unit](/cs-notes/computer-organization-and-architecture/control-unit)
-  - [CPU Design](/cs-notes/computer-organization-and-architecture/cpu-design)
-- [Input/Output](/cs-notes/computer-organization-and-architecture/input-output)
-- [Assembly Language](/cs-notes/computer-organization-and-architecture/assembly-language)
+  - [ALU](/computer-science-notes/computer-organization-and-architecture/alu)
+  - [Registers & RAM](/computer-science-notes/computer-organization-and-architecture/registers-and-ram)
+  - [Control Unit](/computer-science-notes/computer-organization-and-architecture/control-unit)
+  - [CPU Design](/computer-science-notes/computer-organization-and-architecture/cpu-design)
+- [Input/Output](/computer-science-notes/computer-organization-and-architecture/input-output)
+- [Assembly Language](/computer-science-notes/computer-organization-and-architecture/assembly-language)
 - Computer Architecture
-  - [Von Neumann](/cs-notes/computer-organization-and-architecture/von-neumann)
-  - [Harvard](/cs-notes/computer-organization-and-architecture/harvard)
-  - [ISA](/cs-notes/computer-organization-and-architecture/isa)
-- [Other Processing Units](/cs-notes/computer-organization-and-architecture/other-processing-units)
+  - [Von Neumann](/computer-science-notes/computer-organization-and-architecture/von-neumann)
+  - [Harvard](/computer-science-notes/computer-organization-and-architecture/harvard)
+  - [ISA](/computer-science-notes/computer-organization-and-architecture/isa)
+- [Other Processing Units](/computer-science-notes/computer-organization-and-architecture/other-processing-units)

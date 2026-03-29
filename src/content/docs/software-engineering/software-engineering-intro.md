@@ -18,7 +18,7 @@ As software become more complex, more people coming to develop and more people u
 
 An individual programmer may not need to structure their code in a specific standard. They can even name their program's variable or function in their own language. However, as we are developing the software in a larger scope with more people on it, we may need to follow specific standard or even document our code.
 
-Not only making collaboration possible, following a specific standard helps to improve software development process efficiency. The simplest example of software engineering standard that probably everyone has done before is the [DRY (Don't Repeat Yourself)](/cs-notes/software-engineering/software-principles#dry). In short, the principle encourages us to avoid code duplication. Instead of coding the same instruction multiple times, we can move it to a function that we can reuse it anytime.
+Not only making collaboration possible, following a specific standard helps to improve software development process efficiency. The simplest example of software engineering standard that probably everyone has done before is the [DRY (Don't Repeat Yourself)](/computer-science-notes/software-engineering/software-principles#dry). In short, the principle encourages us to avoid code duplication. Instead of coding the same instruction multiple times, we can move it to a function that we can reuse it anytime.
 
 ### Software Characteristics
 
@@ -36,28 +36,28 @@ A good software is associated with several characteristics:
 
 ### All pages
 
-- [Software Process](/cs-notes/software-engineering/software-process)
+- [Software Process](/computer-science-notes/software-engineering/software-process)
 - Software Design
-  - [Software Principles](/cs-notes/software-engineering/software-principles)
-  - [Diagrams](/cs-notes/software-engineering/diagrams)
+  - [Software Principles](/computer-science-notes/software-engineering/software-principles)
+  - [Diagrams](/computer-science-notes/software-engineering/diagrams)
   - Design Patterns
-    - [Creational Patterns](/cs-notes/software-engineering/creational-patterns)
-    - [Structural Patterns](/cs-notes/software-engineering/structural-patterns)
-    - [Behavioral Patterns](/cs-notes/software-engineering/behavioral-patterns)
+    - [Creational Patterns](/computer-science-notes/software-engineering/creational-patterns)
+    - [Structural Patterns](/computer-science-notes/software-engineering/structural-patterns)
+    - [Behavioral Patterns](/computer-science-notes/software-engineering/behavioral-patterns)
 - Software Architecture
-  - [Client-Server](/cs-notes/software-engineering/client-server)
-  - [Event-Driven](/cs-notes/software-engineering/event-driven)
-  - [Master-Slave](/cs-notes/software-engineering/master-slave)
-  - [Peer-to-Peer](/cs-notes/software-engineering/peer-to-peer)
-  - [Layered](/cs-notes/software-engineering/layered)
-  - [Other Architecture Patterns](/cs-notes/software-engineering/other-architecture-patterns)
+  - [Client-Server](/computer-science-notes/software-engineering/client-server)
+  - [Event-Driven](/computer-science-notes/software-engineering/event-driven)
+  - [Master-Slave](/computer-science-notes/software-engineering/master-slave)
+  - [Peer-to-Peer](/computer-science-notes/software-engineering/peer-to-peer)
+  - [Layered](/computer-science-notes/software-engineering/layered)
+  - [Other Architecture Patterns](/computer-science-notes/software-engineering/other-architecture-patterns)
 - Software Management
-  - [Software Testing](/cs-notes/software-engineering/software-testing)
-  - [Software Debugging](/cs-notes/software-engineering/software-debugging)
-  - [Build & Package Management](/cs-notes/software-engineering/build-and-package-management)
-  - [Version Control](/cs-notes/software-engineering/version-control)
-  - [Open Sourcing](/cs-notes/software-engineering/open-sourcing)
-  - [Modularization](/cs-notes/software-engineering/modularization)
-  - [Software Deployment](/cs-notes/software-engineering/software-deployment)
-- [System Design](/cs-notes/software-engineering/system-design)
-- [System Design Examples](/cs-notes/software-engineering/system-design-examples)
+  - [Software Testing](/computer-science-notes/software-engineering/software-testing)
+  - [Software Debugging](/computer-science-notes/software-engineering/software-debugging)
+  - [Build & Package Management](/computer-science-notes/software-engineering/build-and-package-management)
+  - [Version Control](/computer-science-notes/software-engineering/version-control)
+  - [Open Sourcing](/computer-science-notes/software-engineering/open-sourcing)
+  - [Modularization](/computer-science-notes/software-engineering/modularization)
+  - [Software Deployment](/computer-science-notes/software-engineering/software-deployment)
+- [System Design](/computer-science-notes/software-engineering/system-design)
+- [System Design Examples](/computer-science-notes/software-engineering/system-design-examples)

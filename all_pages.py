@@ -100,7 +100,7 @@ def generate_index_markdown(topics):
     total_notes = 0
     for i, topic in enumerate(topics, start=1):
         lines.append(
-            f"{i}. [{topic['title']}](/cs-notes/{topic['slug']}) (**{topic['topics_count']}** subtopics)")
+            f"{i}. [{topic['title']}](/computer-science-notes/{topic['slug']}) (**{topic['topics_count']}** subtopics)")
         indented = "\n".join("    " + line.strip()
                              for line in topic['topics_content'].splitlines() if line.strip())
         lines.append(indented)

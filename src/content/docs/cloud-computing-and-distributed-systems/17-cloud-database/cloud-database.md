@@ -20,16 +20,16 @@ Benefits:
 
 The two methods to run database on the cloud:
 
-- Cloud provider could provide cloud database by providing a service. The service that provide database as a service is called Database-as-a-service (DBaaS), and is a type of [SaaS](/cs-notes/cloud-computing-and-distributed-systems/cloud-models#common-models).
-- Run database by using [virtual machine](/cs-notes/cloud-computing-and-distributed-systems/virtualization) image. The idea is, a pre-configured template that contains an operating system and any required software, including the database system is packaged into format called image. The format will be uploaded to the cloud service provider, where they will execute the image on a virtual machine.
+- Cloud provider could provide cloud database by providing a service. The service that provide database as a service is called Database-as-a-service (DBaaS), and is a type of [SaaS](/computer-science-notes/cloud-computing-and-distributed-systems/cloud-models#common-models).
+- Run database by using [virtual machine](/computer-science-notes/cloud-computing-and-distributed-systems/virtualization) image. The idea is, a pre-configured template that contains an operating system and any required software, including the database system is packaged into format called image. The format will be uploaded to the cloud service provider, where they will execute the image on a virtual machine.
 
 ### Usage
 
 Upon deploying the database, user can now configure the service based on their needs. This involves selecting the infrastructure, as well as the location, selecting the desired database type or storage capacity, and selecting the number of database instances.
 
-The database type correspond to how the data are stored within the cloud database. Typically, the data are classified into two model, [SQL database](/cs-notes/database-system/query-language#sql) and [NoSQL database](/cs-notes/database-system/nosql).
+The database type correspond to how the data are stored within the cloud database. Typically, the data are classified into two model, [SQL database](/computer-science-notes/database-system/query-language#sql) and [NoSQL database](/computer-science-notes/database-system/nosql).
 
-To actually use the database, we will use APIs provided by the cloud providers to access it. The APIs vary between provider, and it may use protocols like SQL for relational databases or [RESTful APIs](/cs-notes/backend-system/rest-api) for NoSQL databases.
+To actually use the database, we will use APIs provided by the cloud providers to access it. The APIs vary between provider, and it may use protocols like SQL for relational databases or [RESTful APIs](/computer-science-notes/backend-system/rest-api) for NoSQL databases.
 
 #### Example
 
@@ -67,7 +67,7 @@ for (document in result) {
 }
 ```
 
-Getting the collection using `getCollection` method passing in the collection name. A collection is similar to table, but it is not called so because MongoDB is a [document database](/cs-notes/database-system/nosql#document). In this case, we are trying to find specific document, that is someone with field `name` equal to "John Doe". The `find` method takes a query object (in this case, a Document object) that specifies the criteria for the search. It returns a cursor, which we can iterate over to access the retrieved documents.
+Getting the collection using `getCollection` method passing in the collection name. A collection is similar to table, but it is not called so because MongoDB is a [document database](/computer-science-notes/database-system/nosql#document). In this case, we are trying to find specific document, that is someone with field `name` equal to "John Doe". The `find` method takes a query object (in this case, a Document object) that specifies the criteria for the search. It returns a cursor, which we can iterate over to access the retrieved documents.
 
 Furthermore, some cloud provider provide a way to inspect and manage databases hosted on their platforms. We can see what collections and documents are available, monitor traffic, setting up access for security purposes, and adding or deleting a document directly from there is also possible.
 

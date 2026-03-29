@@ -7,48 +7,48 @@ description: Digital Media Processing Notes
 **Digital media processing** is the manipulation of digital data that represents multimedia content, such as images, video, and audio. This topic will cover media processing and some common file format, including a high-level explanation to how they work.
 
 :::tip
-See also [digital signal processing](/cs-notes/digital-signal-processing-intro).
+See also [digital signal processing](/computer-science-notes/digital-signal-processing-intro).
 :::
 
 ### All pages
 
 - Image Processing
-  - [Image Properties](/cs-notes/digital-media-processing/image-properties)
-  - [Image Enhancement](/cs-notes/digital-media-processing/image-enhancement)
-  - [Image Acquisition & Sensing](/cs-notes/digital-media-processing/image-acquisition-sensing)
-  - [Image Restoration](/cs-notes/digital-media-processing/image-restoration)
-  - [Image Editing](/cs-notes/digital-media-processing/image-editing)
+  - [Image Properties](/computer-science-notes/digital-media-processing/image-properties)
+  - [Image Enhancement](/computer-science-notes/digital-media-processing/image-enhancement)
+  - [Image Acquisition & Sensing](/computer-science-notes/digital-media-processing/image-acquisition-sensing)
+  - [Image Restoration](/computer-science-notes/digital-media-processing/image-restoration)
+  - [Image Editing](/computer-science-notes/digital-media-processing/image-editing)
 - Audio Processing
-  - [Sound & Audio Properties](/cs-notes/digital-media-processing/sound-audio-properties)
-  - [Audio Input & Output](/cs-notes/digital-media-processing/audio-input-output)
-  - [Audio Equalization](/cs-notes/digital-media-processing/audio-equalization)
-  - [Audio Effects](/cs-notes/digital-media-processing/audio-effects)
-  - [Audio Editing](/cs-notes/digital-media-processing/audio-editing)
-  - [Speech Processing](/cs-notes/digital-media-processing/speech-processing)
+  - [Sound & Audio Properties](/computer-science-notes/digital-media-processing/sound-audio-properties)
+  - [Audio Input & Output](/computer-science-notes/digital-media-processing/audio-input-output)
+  - [Audio Equalization](/computer-science-notes/digital-media-processing/audio-equalization)
+  - [Audio Effects](/computer-science-notes/digital-media-processing/audio-effects)
+  - [Audio Editing](/computer-science-notes/digital-media-processing/audio-editing)
+  - [Speech Processing](/computer-science-notes/digital-media-processing/speech-processing)
 - Video Processing
-  - [Video Representation](/cs-notes/digital-media-processing/video-representation)
-  - [Video Recording](/cs-notes/digital-media-processing/video-recording)
-  - [Video Effects & Enhancement](/cs-notes/digital-media-processing/video-effects-enhancement)
+  - [Video Representation](/computer-science-notes/digital-media-processing/video-representation)
+  - [Video Recording](/computer-science-notes/digital-media-processing/video-recording)
+  - [Video Effects & Enhancement](/computer-science-notes/digital-media-processing/video-effects-enhancement)
 - Digital Media Formats
-  - [MIME Type](/cs-notes/digital-media-processing/mime-type)
+  - [MIME Type](/computer-science-notes/digital-media-processing/mime-type)
   - Image
-    - [BMP](/cs-notes/digital-media-processing/bmp)
-    - [JPG / JPEG](/cs-notes/digital-media-processing/jpg-jpeg)
-    - [PNG](/cs-notes/digital-media-processing/png)
-    - [WebP](/cs-notes/digital-media-processing/webp)
-    - [SVG](/cs-notes/digital-media-processing/svg)
-    - [GIF](/cs-notes/digital-media-processing/gif)
+    - [BMP](/computer-science-notes/digital-media-processing/bmp)
+    - [JPG / JPEG](/computer-science-notes/digital-media-processing/jpg-jpeg)
+    - [PNG](/computer-science-notes/digital-media-processing/png)
+    - [WebP](/computer-science-notes/digital-media-processing/webp)
+    - [SVG](/computer-science-notes/digital-media-processing/svg)
+    - [GIF](/computer-science-notes/digital-media-processing/gif)
   - Audio
-    - [WAV](/cs-notes/digital-media-processing/wav)
-    - [OGG Vorbis](/cs-notes/digital-media-processing/ogg-vorbis)
-    - [MP3](/cs-notes/digital-media-processing/mp3)
+    - [WAV](/computer-science-notes/digital-media-processing/wav)
+    - [OGG Vorbis](/computer-science-notes/digital-media-processing/ogg-vorbis)
+    - [MP3](/computer-science-notes/digital-media-processing/mp3)
   - Video
-    - [AVI](/cs-notes/digital-media-processing/avi)
-    - [MP4](/cs-notes/digital-media-processing/mp4)
-    - [SWF](/cs-notes/digital-media-processing/swf)
+    - [AVI](/computer-science-notes/digital-media-processing/avi)
+    - [MP4](/computer-science-notes/digital-media-processing/mp4)
+    - [SWF](/computer-science-notes/digital-media-processing/swf)
   - Document
-    - [XML](/cs-notes/digital-media-processing/xml)
-    - [JSON](/cs-notes/digital-media-processing/json)
-    - [MD](/cs-notes/digital-media-processing/md)
-    - [TXT](/cs-notes/digital-media-processing/txt)
-    - [PDF](/cs-notes/digital-media-processing/pdf)
+    - [XML](/computer-science-notes/digital-media-processing/xml)
+    - [JSON](/computer-science-notes/digital-media-processing/json)
+    - [MD](/computer-science-notes/digital-media-processing/md)
+    - [TXT](/computer-science-notes/digital-media-processing/txt)
+    - [PDF](/computer-science-notes/digital-media-processing/pdf)

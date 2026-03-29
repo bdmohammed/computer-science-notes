@@ -6,7 +6,7 @@ description: Graph
 
 **Main Source:**
 
-- **[Graph (abstract data type) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Graph_(abstract_data_type)>)**
+- **[Graph (abstract data type) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Graph_(abstract_data_type)>)**
 
 **Graph** is a data structure that represents a collection of interconnected elements.
 
@@ -87,7 +87,7 @@ A complete graph is one in which there is an edge between every pair of distinct
 ![Complete graph](./complete-graph.webp)  
 Source: https://www.tutorialscan.com/datastructure/complete-graph/
 
-Depending on the problem, a graph may have multiple characteristics together. For example, a [tree](/cs-notes/data-structures-and-algorithms/tree) is a special type of graph where it is undirected and acyclic. We can traverse from top to bottom or vice versa and it has no cycle in it. A graph is a more generalized tree, it is more flexible, and it can have arbitrary connections and structures.
+Depending on the problem, a graph may have multiple characteristics together. For example, a [tree](/computer-science-notes/data-structures-and-algorithms/tree) is a special type of graph where it is undirected and acyclic. We can traverse from top to bottom or vice versa and it has no cycle in it. A graph is a more generalized tree, it is more flexible, and it can have arbitrary connections and structures.
 
 ### Graph Representation
 

@@ -6,7 +6,7 @@ description: Set
 
 **Main Source:**
 
-- **[Set (abstract data type) — Wikipedia](/cs-notes/<https://en.wikipedia.org/wiki/Set_(abstract_data_type)>)**
+- **[Set (abstract data type) — Wikipedia](/computer-science-notes/<https://en.wikipedia.org/wiki/Set_(abstract_data_type)>)**
 
 **Set** is a data structure that stores unique elements. Some characteristics of a set:
 
@@ -25,6 +25,6 @@ There are many operations we can do with set data structure:
 
 ### Set Implementation
 
-Set data structure can be implemented in many ways. The simplest way to implement set is just to use a simple [array](/cs-notes/data-structures-and-algorithms/array) or [list](/cs-notes/data-structures-and-algorithms/linked-list). When an element is added and its already present, we will ignore the operation. However, this implementation is inefficient, assuming the array is not sorted, we would need to perform search algorithm like [linear search](/cs-notes/data-structures-and-algorithms/search#linear-search), which has a time complexity of O(n), to determine if an element exists in the collection.
+Set data structure can be implemented in many ways. The simplest way to implement set is just to use a simple [array](/computer-science-notes/data-structures-and-algorithms/array) or [list](/computer-science-notes/data-structures-and-algorithms/linked-list). When an element is added and its already present, we will ignore the operation. However, this implementation is inefficient, assuming the array is not sorted, we would need to perform search algorithm like [linear search](/computer-science-notes/data-structures-and-algorithms/search#linear-search), which has a time complexity of O(n), to determine if an element exists in the collection.
 
-A simple yet efficient implementation of set is the **hash set**. Hash set is implementation of set data structure using [hash table](/cs-notes/data-structures-and-algorithms/hash-table). To determine if an element already present or not, we will use hash function that produces hash code. This allows for efficient checking, addition, and removal operations with a constant time complexity of O(1).
+A simple yet efficient implementation of set is the **hash set**. Hash set is implementation of set data structure using [hash table](/computer-science-notes/data-structures-and-algorithms/hash-table). To determine if an element already present or not, we will use hash function that produces hash code. This allows for efficient checking, addition, and removal operations with a constant time complexity of O(1).
