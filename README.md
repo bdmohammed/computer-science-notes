@@ -1,1 +1,1 @@
-# CS_notes
+I didn't originally intend for this to be public, but since I've hosted it on GitHub Pages, it's now publicly accessible. Feel free to check out my personal [Computer Science notes website](https://glennhenry.github.io/cs-notes/).
