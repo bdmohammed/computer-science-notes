@@ -1,12 +1,16 @@
 // @ts-check
-import { defineConfig } from "astro/config";
+import { defineConfig, passthroughImageService } from "astro/config";
 import starlight from "@astrojs/starlight";
-import starlightThemeObsidian from "starlight-theme-obsidian";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeExternalLinks from "rehype-external-links";
 import externalLinkIcon from "./src/assets/externalLinkIcon.js";
 import { fontHeadTags } from "./src/assets/headlinks.js";
+import starlightLinksValidator from "starlight-links-validator";
+import starlightImageZoom from "starlight-image-zoom";
+import starlightHeadingBadges from "starlight-heading-badges";
+import starlightScrollToTop from "starlight-scroll-to-top";
+import mermaid from 'astro-mermaid';
 
 // https://astro.build/config
 export default defineConfig({
@@ -16,10 +20,35 @@ export default defineConfig({
     remarkPlugins: [remarkMath],
     rehypePlugins: [rehypeKatex, [rehypeExternalLinks, externalLinkIcon]],
   },
+  image: {
+   service: passthroughImageService(),
+  },
   integrations: [
+    mermaid({
+      theme: 'forest',
+      autoTheme: true,
+      mermaidConfig: {
+        startOnLoad: false,
+        sequence: {
+          diagramMarginX: 50,
+          diagramMarginY: 10
+        },
+        gantt: {
+          fontSize: 40,
+          numberSectionStyles: 4
+        },
+        logLevel: 'error',
+        securityLevel: 'strict'
+      }
+    }),
     starlight({
       head: [...fontHeadTags],
-      plugins: [starlightThemeObsidian()],
+      plugins: [
+        starlightLinksValidator(),
+        starlightImageZoom(),
+        starlightHeadingBadges(),
+        starlightScrollToTop()
+        ],
       customCss: ["./src/assets/custom.css"],
       logo: {
         src: "./src/assets/logo.jpg",
@@ -34,7 +63,7 @@ export default defineConfig({
 
       components: {
         Pagination: "./src/components/Pagination.astro",
-        PageFrame: "./src/components/PageFrame.astro",
+        // PageFrame: "./src/components/PageFrame.astro",
         Sidebar: "./src/components/Sidebar.astro",
       },
 

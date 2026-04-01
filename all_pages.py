@@ -8,6 +8,7 @@ OUTPUT_FILE = os.path.join(TARGET_DIR, "all-pages.md")
 
 ORDER = [
     "Computer & Programming Fundamentals",
+    "Computer Languages",
     "Digital Signal Processing",
     "Digital Media Processing",
     "Computer Networking",
@@ -144,8 +145,14 @@ This page contains all the notes on this site. The structure is similar to the s
 
 def main():
     topics = get_all_intro_files(TARGET_DIR)
+    print(topics)
+    print("##############")
     sorted_topics = sort_by_order(topics)
+    print(sorted_topics)
+    print("##############")
     _, total_notes = generate_index_markdown(sorted_topics)
+    print(total_notes)
+    print("##############")
     write_index_md(sorted_topics, total_notes)
     print("✅ index.md generated successfully.")
 

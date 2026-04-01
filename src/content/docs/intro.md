@@ -9,6 +9,7 @@ My computer science notes from various online courses, tutorial, books, blogs, W
 ### Main Topics
 
 - **[Computer & Programming Fundamentals](/computer-science-notes/computer-and-programming-fundamentals-intro)**
+- **[Computer Languages](/computer-science-notes/computer-languages)**
 - **[Digital Signal Processing](/computer-science-notes/digital-signal-processing-intro)**
 - **[Digital Media Processing](/computer-science-notes/digital-media-processing-intro)**
 - **[Computer Networking](/computer-science-notes/computer-networking-intro)**
