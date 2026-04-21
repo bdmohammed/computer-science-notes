@@ -1,0 +1,524 @@
+---
+title: Java Short Circuit Operators
+slug: computer-languages/java/arithmetic-operators-&-assignments/short-circuit-operators
+description: How && and || skip evaluation, performance benefits, safety patterns, and comparison with & and |.
+sidebar:
+  label: "Short Circuit"
+  badge:
+    text: Operators
+    variant: tip
+tags: [java, operators, short-circuit, boolean, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## ⚡ Short Circuit Operators
+
+```text
+&&   short circuit AND
+||   short circuit OR
+```
+
+> **Short circuit** means: **skip evaluating the right operand if the result is already determined by the left operand**.
+
+<Code lang="java" title="&& — skip right if left is false" code={`// && → if LEFT is false, RIGHT is NOT evaluated!
+int x = 0;
+if (x != 0 && 10/x > 1) {  // 10/x never runs! ✅ no division by zero
+    System.out.println("safe");
+}
+// Because x != 0 is false, the entire && expression is false.
+// JVM skips 10/x > 1 → prevents ArithmeticException!`} />
+
+<Code lang="java" title="|| — skip right if left is true" code={`// || → if LEFT is true, RIGHT is NOT evaluated!
+String s = null;
+if (s == null || s.isEmpty()) {  // s.isEmpty() never called if null ✅
+    System.out.println("empty or null");
+}
+// Because s == null is true, the entire || expression is true.
+// JVM skips s.isEmpty() → prevents NullPointerException!`} />
+
+<Aside type="tip">
+**Safety Pattern**: Always put null/validity checks **first** in `&&`/`||` expressions:
+```java
+// ✅ Safe: null check first
+if (obj != null && obj.isValid()) { ... }
+
+// ✅ Safe: null check first for OR
+if (str == null || str.isEmpty()) { ... }
+
+// ❌ Dangerous: method call first
+if (obj.isValid() && obj != null) { ... }  // 💥 NPE if obj is null!```
+</Aside>
+
+---
+
+## 🔬 Short Circuit vs. Bitwise/Logical Operators
+
+### Key Differences Table
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>&amp;</code> / <code>|</code></th>
+      <th><code>&amp;&amp;</code> / <code>||</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Evaluation</strong></td>
+      <td>Both sides <strong>always</strong> evaluated</td>
+      <td>Right side <strong>optional</strong> (short circuit)</td>
+    </tr>
+    <tr>
+      <td><strong>Performance</strong></td>
+      <td>Relatively lower (always eval both)</td>
+      <td>Relatively higher (may skip right)</td>
+    </tr>
+    <tr>
+      <td><strong>Applicable Types</strong></td>
+      <td>✅ Integral types<br/>✅ Boolean types</td>
+      <td>✅ Boolean types only<br/>❌ NOT for integral types</td>
+    </tr>
+    <tr>
+      <td><strong>Primary Use</strong></td>
+      <td>Bitwise math, non-short-circuit logic</td>
+      <td>Conditional logic, safety checks</td>
+    </tr>
+  </tbody>
+</table>
+
+### 🧠 Evaluation Rules
+
+| Operator | When is Right Operand Evaluated? |
+|----------|----------------------------------|
+| `x && y` | ✅ Only if `x` is **true** (if `x` is false, result is false — skip `y`) |
+| `x \|\| y` | ✅ Only if `x` is **false** (if `x` is true, result is true — skip `y`) |
+| `x & y` | ✅ Always — no short circuit |
+| `x \| y` | ✅ Always — no short circuit |
+<Code lang="java" title="Danger: & does NOT short circuit" code={`// & and | → BOTH sides always evaluated (no short circuit!)
+int x = 0;
+if (x != 0 & 10/x > 1) {  // 10/x IS evaluated → 💥 ArithmeticException!
+    System.out.println("not safe");
+}
+// Even though x != 0 is false, JVM still evaluates 10/x > 1 → crash!
+
+// ✅ Always prefer && for boolean conditions:
+if (x != 0 && 10/x > 1) {  // Safe: 10/x skipped when x == 0
+    System.out.println("safe");
+}`} />
+
+---
+
+## 🔢 Side Effects & Evaluation Order — Interview Trap
+
+When operands have **side effects** (like `++x`), short circuit behavior changes the final state.
+
+<Code lang="java" title="Increment operators reveal evaluation order" code={`int x = 10, y = 15;
+
+// Test with different operators:
+// Condition: (++x < 10) [op] (++y > 15)
+
+// Case 1: & (always eval both)
+// ++x < 10 → 11 < 10 = false
+// ++y > 15 → 16 > 15 = true  
+// false & true = false → else branch: y++ → y=17
+// Result: x=11, y=17
+
+// Case 2: | (always eval both)
+// ++x < 10 → 11 < 10 = false
+// ++y > 15 → 16 > 15 = true
+// false | true = true → if branch: x++ → x=12
+// Result: x=12, y=16
+
+// Case 3: && (short circuit: skip right if left false)
+// ++x < 10 → 11 < 10 = false → skip ++y > 15!
+// Result: false → else branch: y++ → y=16
+// Result: x=11, y=16  (y was NOT incremented in condition!)
+
+// Case 4: || (short circuit: skip right if left true)
+// ++x < 10 → 11 < 10 = false → MUST eval ++y > 15
+// ++y > 15 → 16 > 15 = true
+// Result: true → if branch: x++ → x=12
+// Result: x=12, y=16`} />
+
+### 📊 Results Summary Table
+
+```text
+┌──────────┬─────────┬─────────┬─────────┐│ Operator │ Final x │ Final y │ Why?    │
+├──────────┼─────────┼─────────┼─────────┤
+│    &     │   11    │   17    │ Both sides evaluated      │
+│    |     │   12    │   16    │ Both sides evaluated      │
+│   &&     │   11    │   16    │ Right skipped (left false)│
+│   ||     │   12    │   16    │ Right evaluated (left false)│
+└──────────┴─────────┴─────────┴─────────┘
+```
+
+<Code lang="java" title="Reproducible test code" code={`public class ShortCircuitTest {
+    public static void main(String[] args) {
+        testWith("&");
+        testWith("|");
+        testWith("&&");
+        testWith("||");
+    }
+    
+    static void testWith(String op) {
+        int x = 10, y = 15;
+        boolean result;
+        
+        switch (op) {
+            case "&":  result = (++x < 10) & (++y > 15); break;
+            case "|":  result = (++x < 10) | (++y > 15); break;
+            case "&&": result = (++x < 10) && (++y > 15); break;
+            case "||": result = (++x < 10) || (++y > 15); break;
+            default: return;
+        }
+        
+        if (result) { x++; } else { y++; }
+        System.out.println(op + " → x=" + x + ", y=" + y);
+    }
+}
+/* Output:
+&  → x=11, y=17
+|  → x=12, y=16
+&& → x=11, y=16
+|| → x=12, y=16
+*/`} />
+
+<Aside type="danger">
+**Interview Trap**: Questions with `++` in conditions test your understanding of:
+1. Short circuit evaluation order
+2. When side effects occur
+3. How skipped expressions affect final state
+
+**Pro Tip**: Avoid side effects in condition expressions — extract to separate statements for clarity:
+```java
+// ❌ Hard to reason about:
+if (++x < 10 && ++y > 15) { ... }
+// ✅ Clear and maintainable:
+x++;
+y++;
+if (x < 10 && y > 15) { ... }
+```
+</Aside>
+
+---
+
+## 🛡️ Practical Safety Patterns
+
+<CardGrid>
+  <Card title="Pattern: Null-Safe Method Calls" icon="shield">
+```java
+    // ✅ Safe: null check first with &&
+    if (user != null && user.isActive()) {
+        process(user);
+    }
+    
+    // ✅ Safe: null or empty check with ||
+    if (input == null || input.trim().isEmpty()) {
+        return "Please enter a value";
+    }
+    
+    // ❌ Dangerous: method call before null check
+    if (user.isActive() && user != null) {  // 💥 NPE if user is null!
+        process(user);
+    }
+```
+  </Card>
+  
+  <Card title="Pattern: Defensive Division" icon="approve-check">
+```java
+    // ✅ Safe: check divisor first
+    if (divisor != 0 && dividend / divisor > threshold) {
+        // Safe to use result
+    }
+    
+    // ❌ Dangerous: division before check
+    if (dividend / divisor > threshold && divisor != 0) {  // 💥 if divisor==0!
+        // Never reaches here safely
+    }
+```
+  </Card>
+
+  <Card title="Pattern: Lazy Initialization with Short Circuit" icon="rocket">
+```java
+    // ✅ Efficient: only compute expensive value if needed
+    if (cache == null || cache.isExpired()) {        cache = loadExpensiveData();  // Only runs when necessary
+    }
+    
+    // ✅ Chain multiple conditions safely
+    if (config != null 
+        && config.isEnabled() 
+        && config.getValue() != null
+        && config.getValue().isValid()) {
+        use(config.getValue());
+    }
+    // Each check protects the next — short circuit prevents NPEs!
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔁 Boolean Complement (`!`) Operator
+
+> The `!` operator **inverts a boolean value** — and **only works on boolean types**.
+
+<Code lang="java" title="Boolean NOT examples" code={`System.out.println(!true);    // false
+System.out.println(!false);   // true
+
+// Chaining NOTs:
+System.out.println(!!true);   // true (double negation)
+System.out.println(!!!false); // true (odd number of ! = invert)
+
+// ❌ Invalid on non-boolean types:
+System.out.println(!4);       // ❌ C.E: operator ! cannot be applied to int
+System.out.println(!"text");  // ❌ C.E: operator ! cannot be applied to String`} />
+
+<Aside type="note">
+**Idiom**: `!!x` is sometimes used to explicitly convert a "truthy" value to boolean in other languages, but in Java, boolean expressions are already boolean — so `!!` is redundant and rarely used.
+</Aside>
+
+---
+
+## 📋 Operator Applicability Summary
+
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Boolean Types</th>
+      <th>Integral Types</th>
+      <th>Short Circuit</th>
+      <th>Primary Use</th>
+    </tr>
+  </thead>  <tbody>
+    <tr><td><code>&amp;</code></td><td>✅ Logical AND</td><td>✅ Bitwise AND</td><td>❌ No</td><td>Bitwise math, non-short-circuit logic</td></tr>
+    <tr><td><code>|</code></td><td>✅ Logical OR</td><td>✅ Bitwise OR</td><td>❌ No</td><td>Bitwise math, non-short-circuit logic</td></tr>
+    <tr><td><code>^</code></td><td>✅ Logical XOR</td><td>✅ Bitwise XOR</td><td>N/A</td><td>Bitwise math, toggle logic</td></tr>
+    <tr><td><code>~</code></td><td>❌ Not allowed</td><td>✅ Bitwise NOT</td><td>N/A</td><td>Bitwise complement (2's complement)</td></tr>
+    <tr><td><code>!</code></td><td>✅ Boolean NOT</td><td>❌ Not allowed</td><td>N/A</td><td>Invert boolean condition</td></tr>
+    <tr><td><code>&amp;&amp;</code></td><td>✅ Short-circuit AND</td><td>❌ Not allowed</td><td>✅ Yes</td><td>Conditional logic, safety checks</td></tr>
+    <tr><td><code>||</code></td><td>✅ Short-circuit OR</td><td>❌ Not allowed</td><td>✅ Yes</td><td>Conditional logic, fallback checks</td></tr>
+  </tbody>
+</table>
+
+<Code lang="java" title="Quick reference: type compatibility" code={`// ✅ Valid combinations:
+boolean b1 = true, b2 = false;
+int i1 = 5, i2 = 3;
+
+b1 && b2;      // ✅ boolean && boolean
+b1 || b2;      // ✅ boolean || boolean
+b1 & b2;       // ✅ boolean & boolean (non-short-circuit)
+b1 | b2;       // ✅ boolean | boolean (non-short-circuit)
+b1 ^ b2;       // ✅ boolean ^ boolean
+!b1;           // ✅ !boolean
+
+i1 & i2;       // ✅ int & int (bitwise)
+i1 | i2;       // ✅ int | int (bitwise)
+i1 ^ i2;       // ✅ int ^ int (bitwise)
+~i1;           // ✅ ~int (bitwise NOT)
+
+// ❌ Invalid combinations:
+// i1 && i2;   // ❌ C.E: operator && cannot be applied to int, int
+// i1 || i2;   // ❌ C.E: operator || cannot be applied to int, int
+// !i1;        // ❌ C.E: operator ! cannot be applied to int
+// ~b1;        // ❌ C.E: operator ~ cannot be applied to boolean`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: When is the right operand of && evaluated?" icon="information">
+    **Only if the left operand is `true`**.  
+    If left is `false`, the result is already `false` — right is skipped.
+  </Card>
+  
+  <Card title="Q: When is the right operand of || evaluated?" icon="information">
+    **Only if the left operand is `false`**.  
+    If left is `true`, the result is already `true` — right is skipped.
+  </Card>
+
+  <Card title="Q: Why prefer && over & for boolean conditions?" icon="approve-check">
+    1. ✅ **Safety**: Prevents evaluating risky expressions (e.g., null dereference)      2. ✅ **Performance**: Skips unnecessary computation  
+    3. ✅ **Intent**: Clearly signals conditional logic, not bitwise math
+  </Card>
+
+  <Card title="Q: Can && be used with integers?" icon="error">
+    **NO ❌** — `&&` and `||` work **only on boolean types**.  
+    For integers, use `&` and `|` for bitwise operations.
+  </Card>
+
+  <Card title="Q: What is the output? `int x=10; if(++x<10 && x/0>1)`" icon="backspace">
+    **`Hi`** (assuming else prints "Hi").  
+    - `++x < 10` → `11 < 10` = `false`  
+    - Because left is `false`, `&&` short-circuits — `x/0>1` is **never evaluated**  
+    - No `ArithmeticException` — safe!  
+    - Condition is `false` → else branch executes
+  </Card>
+
+  <Card title="Q: Does ! work on non-boolean types?" icon="error">
+    **NO ❌** — `!` is **only for boolean**.  
+    `!4`, `!"text"`, `!null` → all compile errors.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA & Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Early Exit with Short Circuit" icon="rocket">
+    Use `||` to skip expensive checks when a simple condition suffices:
+```java
+    boolean isValid(Input in) {
+        // Quick rejections first (cheap checks)
+        if (in == null || in.isEmpty() || in.isBanned()) {
+            return false;  // Short circuit: skip expensive validation
+        }
+        // Only run heavy validation if quick checks pass
+        return expensiveValidation(in);
+    }
+```
+  </Card>
+  
+  <Card title="Pattern: Cascading Fallbacks with ||" icon="shield">
+    Chain fallback values using short-circuit OR:
+```java
+    // Use first non-null/non-empty value
+    String config = System.getenv("APP_CONFIG")
+                   || System.getProperty("app.config")
+                   || loadDefaultConfig();
+        // In Java (pre-14), simulate with ternary:
+    String config = System.getenv("APP_CONFIG");
+    config = (config != null) ? config 
+           : System.getProperty("app.config");
+    config = (config != null) ? config 
+           : loadDefaultConfig();
+    
+    // Java 14+: Use switch expressions or Objects.requireNonNullElse
+```
+  </Card>
+
+  <Card title="Pattern: Guard Clauses with &&" icon="backspace">
+    Combine preconditions cleanly:
+```java
+    void process(User user, Order order) {
+        // All conditions must pass — && short-circuits on first failure
+        if (user != null 
+            && user.isActive() 
+            && order != null 
+            && order.isPaid()
+            && inventory.hasStock(order.getItem())) {
+            
+            ship(order);  // All guards passed — safe to proceed
+        }
+    }
+    // Each check protects the next — no nested if hell!
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Performance Note**: While short-circuit operators are faster when they skip work, **don't prematurely optimize**. Write clear, safe conditions first:
+```java
+// ✅ Clear and safe:
+if (obj != null && obj.isValid() && obj.getValue() > 0) { ... }
+
+// ❌ Over-optimized and hard to read:
+if (obj != null) { if (obj.isValid()) { if (obj.getValue() > 0) { ... } } }
+```
+Modern JVMs optimize boolean expressions well — prioritize readability and correctness.
+</Aside>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Scenario | Use `&&` / `||` | Use `&` / `|` | Why? |
+|----------|----------------|---------------|------|
+| Null-safe method call | ✅ `obj != null && obj.method()` | ❌ | Short circuit prevents NPE |
+| Bitwise flag check | ❌ | ✅ `(flags & READ_FLAG) != 0` | Need bitwise operation || Performance-critical condition | ✅ (if right side is expensive) | ❌ | Skip unnecessary work |
+| Both sides must run (side effects) | ❌ | ✅ `log() & validate()` | Non-short-circuit ensures both execute |
+| Boolean logic in `if`/`while` | ✅ Always | ❌ Rarely | Clarity, safety, performance |
+| Bit manipulation on integers | ❌ Not allowed | ✅ `x & 1`, `x \| MASK` | Only bitwise ops work on integers |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `&&`/`||` for **boolean conditions** — they're safer and faster
+2. ✅ Put **null/validity checks first** to leverage short-circuit safety
+3. ✅ Use `&`/`|` for **bitwise operations** on integers
+4. ✅ Remember: `&`/`|` on booleans **do not short-circuit** — both sides always run
+5. ✅ `!` works **only on boolean** — compile error on other types
+6. ✅ Avoid side effects (`++`, method calls) in condition expressions — extract for clarity
+7. ✅ In interviews: explain **why** short circuit matters (safety + performance)
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="java" title="Predict the output" code={`public class ShortCircuitQuiz {
+    static int counter = 0;
+    
+    static boolean expensive() {
+        counter++;
+        System.out.println("expensive() called, counter=" + counter);
+        return true;
+    }
+    
+    public static void main(String[] args) {
+        // Q1: Short circuit with &&
+        counter = 0;
+        if (false && expensive()) { }
+        System.out.println("After &&: counter=" + counter);  // ?
+        
+        // Q2: Short circuit with ||
+        counter = 0;
+        if (true || expensive()) { }
+        System.out.println("After ||: counter=" + counter);  // ?
+        
+        // Q3: Non-short-circuit &
+        counter = 0;
+        if (false & expensive()) { }
+        System.out.println("After &: counter=" + counter);  // ?
+        
+        // Q4: Non-short-circuit |
+        counter = 0;
+        if (true | expensive()) { }
+        System.out.println("After |: counter=" + counter);  // ?
+                // Q5: Mixed with side effects
+        int x = 5, y = 10;
+        if (++x > 10 && ++y > 15) { x++; y++; }
+        System.out.println("x=" + x + ", y=" + y);  // ?
+        
+        // Q6: Boolean NOT
+        System.out.println(!true);        // ?
+        System.out.println(!!false);      // ?
+        // System.out.println(!5);        // ? (would this compile?)
+    }
+}
+
+/* Expected Output:
+After &&: counter=0      ← expensive() skipped
+After ||: counter=0      ← expensive() skipped
+After &: counter=1       ← expensive() called (no short circuit)
+After |: counter=1       ← expensive() called (no short circuit)
+x=6, y=10                ← ++x>10 is false (6>10=false), so ++y skipped
+false
+false
+// Q6 last line: ❌ Compile Error: operator ! cannot be applied to int
+*/`} />
+
+<Aside type="tip">
+**Pro Interview Answer Framework** for short-circuit questions:
+1. State the evaluation rule (`&&` skips right if left false; `||` skips right if left true)
+2. Explain the **safety benefit** (prevents NPE, division by zero, etc.)
+3. Mention the **performance benefit** (avoids unnecessary computation)
+4. Contrast with `&`/`|` (always eval both, for bitwise or forced evaluation)
+5. Note type restrictions (`&&`/`||` only for boolean; `&`/`|` for both boolean and integral)
+6. Give a practical example (null check pattern, guard clauses)
+
+This demonstrates both theoretical knowledge and real-world coding wisdom! 🎯
+</Aside>

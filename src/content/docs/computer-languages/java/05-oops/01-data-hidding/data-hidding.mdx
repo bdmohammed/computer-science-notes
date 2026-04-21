@@ -1,0 +1,1161 @@
+---
+title: Java Data Hiding & Encapsulation
+slug: computer-languages/java/oops/data-hiding
+description: Master encapsulation, access modifiers, getters/setters, and information hiding principles — with practical patterns and interview essentials.
+sidebar:
+  label: "Data Hiding"
+  badge:
+    text: OOP Fundamentals
+    variant: tip
+tags: [java, encapsulation, access-modifiers, oop, data-hiding, interview, design]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔐 Data Hiding & Encapsulation — Complete Guide
+
+> **Data Hiding** (also called **Encapsulation**) is the practice of restricting direct access to an object's internal state, exposing only controlled interfaces for interaction.
+
+```java
+// ❌ Without data hiding — fragile and unsafe
+class BankAccount {
+    public double balance;  // Anyone can modify directly!
+}
+
+BankAccount acc = new BankAccount();
+acc.balance = -1000000;  // ❌ Invalid state — no validation!
+
+// ✅ With data hiding — safe and maintainable
+class BankAccount {
+    private double balance;  // Hidden from outside
+    
+    public double getBalance() { return balance; }  // Read access
+    
+    public void deposit(double amount) {  // Controlled write access
+        if (amount > 0) balance += amount;
+        else throw new IllegalArgumentException("Amount must be positive");
+    }
+}
+```
+
+<Aside type="tip">
+**Key Insight**: Data hiding is not about secrecy — it's about **controlled access**.  
+You hide implementation details to:
+- ✅ Prevent invalid state
+- ✅ Enable validation logic
+- ✅ Allow internal changes without breaking clients
+- ✅ Improve maintainability and testability
+</Aside>
+
+---
+## 🗂️ Access Modifiers — The Foundation of Data Hiding
+
+> Access modifiers control **visibility** of classes, methods, and fields — the primary mechanism for data hiding in Java.
+
+### 🔑 Access Modifier Comparison
+
+<table>
+  <thead>
+    <tr>
+      <th>Modifier</th>
+      <th>Same Class</th>
+      <th>Same Package</th>
+      <th>Subclass (Diff Package)</th>
+      <th>World</th>
+      <th>Use Case</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>private</code></td>
+      <td>✅</td>
+      <td>❌</td>
+      <td>❌</td>
+      <td>❌</td>
+      <td>Internal implementation details</td>
+    </tr>
+    <tr>
+      <td><code>default</code></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>❌</td>
+      <td>❌</td>
+      <td>Package-internal helpers</td>
+    </tr>
+    <tr>
+      <td><code>protected</code></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅*</td>
+      <td>❌</td>
+      <td>Extension points for subclasses</td>
+    </tr>
+    <tr>
+      <td><code>public</code></td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>✅</td>
+      <td>Public API — what clients use</td>    </tr>
+  </tbody>
+</table>
+
+<small>* `protected` access in subclass requires reference to be subclass type or `this`, not parent type.</small>
+
+### 💻 Practical Access Modifier Examples
+
+<Code lang="java" title="Layered access control in a real class" code={`public class User {
+    // 🔒 Private: Core state — hidden from all external code
+    private String passwordHash;
+    private LocalDateTime lastLogin;
+    
+    // 📦 Default: Package-internal helpers
+    boolean isValidEmail() {  // Used only within auth package
+        return email != null && email.matches(".+@.+\\..+");
+    }
+    
+    // 🛡️ Protected: Extension point for subclasses
+    protected void onLogin() {  // Called by auth framework
+        lastLogin = LocalDateTime.now();
+        logActivity("login");
+    }
+    
+    // 🌍 Public: Safe API for clients
+    public String getUsername() { return username; }
+    
+    public void updateEmail(String newEmail) {
+        if (!isValidEmail()) throw new ValidationException();
+        this.email = newEmail;
+        onLogin();  // Trigger internal hook
+    }
+}`} />
+
+<Aside type="caution">
+**Golden Rule**: Start with the **most restrictive** access (`private`), then relax only as needed.  
+This minimizes your class's "surface area" and prevents accidental misuse.
+</Aside>
+
+---
+
+## 🔑 Getters & Setters — Controlled Access Patterns
+
+> Getters and setters provide **validated, controlled access** to private fields — the classic encapsulation pattern.
+
+### 🧱 Basic Getter/Setter Pattern
+
+<Code lang="java" title="Encapsulated field with validation" code={`public class Product {
+    private String name;
+    private double price;    private int stock;
+    
+    // ✅ Getter — read-only access
+    public String getName() {
+        return name;  // String is immutable — safe to return directly
+    }
+    
+    // ✅ Setter with validation
+    public void setPrice(double price) {
+        if (price < 0) {
+            throw new IllegalArgumentException("Price cannot be negative");
+        }
+        this.price = price;
+    }
+    
+    // ✅ Business method — encapsulates logic
+    public boolean purchase(int quantity) {
+        if (quantity <= 0 || quantity > stock) return false;
+        stock -= quantity;
+        return true;
+    }
+    
+    // ❌ Avoid: Exposing mutable internal state
+    // public int[] getTags() { return tags; }  // Caller can modify array!
+    
+    // ✅ Fix: Return defensive copy or unmodifiable view
+    public List<String> getTags() {
+        return Collections.unmodifiableList(tags);
+    }
+}`} />
+
+### ⚠️ Common Getter/Setter Pitfalls
+
+<CardGrid>
+  <Card title="Pitfall 1: Exposing Mutable Collections" icon="error">
+```java
+    class Team {
+        private List<String> members = new ArrayList<>();
+        
+        // ❌ Dangerous: Caller can modify internal list!
+        public List<String> getMembers() {
+            return members;  // External code can add/remove!
+        }
+    }
+    
+    // Usage:
+    Team team = new Team();
+    team.getMembers().add("Hacker");  // 😱 Bypasses business logic!
+    
+    // ✅ Safe alternatives:    // Option 1: Return unmodifiable view
+    public List<String> getMembers() {
+        return Collections.unmodifiableList(members);
+    }
+    
+    // Option 2: Return defensive copy
+    public List<String> getMembers() {
+        return new ArrayList<>(members);
+    }
+    
+    // Option 3: Provide controlled add/remove methods
+    public void addMember(String name) { /* validation */ }
+    public void removeMember(String name) { /* validation */ }
+```
+  </Card>
+  
+  <Card title="Pitfall 2: Returning Mutable Objects Directly" icon="error">
+```java
+    class Event {
+        private Date startTime;  // java.util.Date is mutable!
+        
+        // ❌ Dangerous: Caller can change internal state
+        public Date getStartTime() {
+            return startTime;  // Caller: event.getStartTime().setTime(...)
+        }
+    }
+    
+    // ✅ Safe alternatives:
+    // Option 1: Return defensive copy
+    public Date getStartTime() {
+        return new Date(startTime.getTime());
+    }
+    
+    // Option 2: Use immutable types (Java 8+)
+    private Instant startTime;  // Instant is immutable ✅
+    public Instant getStartTime() { return startTime; }  // Safe to return directly
+```
+  </Card>
+
+  <Card title="Pitfall 3: Over-Encapsulation — Unnecessary Getters/Setters" icon="caution">
+```java
+    // ❌ Over-engineered: Simple data holder doesn't need full encapsulation
+    class Point {
+        private int x;
+        private int y;
+        public int getX() { return x; }
+        public void setX(int x) { this.x = x; }
+        public int getY() { return y; }
+        public void setY(int y) { this.y = y; }
+    }    
+    // ✅ Better: Immutable value object with constructor
+    public final class Point {
+        private final int x;
+        private final int y;
+        
+        public Point(int x, int y) {
+            this.x = x;
+            this.y = y;
+        }
+        public int x() { return x; }  // Minimal getter (no "get" prefix for value objects)
+        public int y() { return y; }
+        // No setters — immutable ✅
+    }
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Modern Java Tip**: For simple data holders, consider:
+- **Records** (Java 14+): `public record Point(int x, int y) { }` — immutable, auto-generated accessors
+- **Lombok**: `@Value` or `@Data` annotations to reduce boilerplate (use judiciously)
+- **Immutable objects**: Prefer `final` fields and no setters for value objects
+</Aside>
+
+---
+
+## 🛡️ Advanced Encapsulation Patterns
+
+### 🔹 Immutable Objects — Ultimate Data Hiding
+
+<Code lang="java" title="Immutable class pattern" code={`public final class Money {  // final class → cannot extend
+    private final BigDecimal amount;  // final fields → cannot reassign
+    private final Currency currency;
+    
+    // Constructor validates and copies mutable inputs
+    public Money(BigDecimal amount, Currency currency) {
+        if (amount == null || currency == null) {
+            throw new NullPointerException();
+        }
+        if (amount.signum() < 0) {
+            throw new IllegalArgumentException("Amount cannot be negative");
+        }
+        this.amount = amount;  // BigDecimal is immutable — safe
+        this.currency = currency;  // Currency is immutable — safe
+    }
+    
+    // Getters return immutable types — no defensive copy needed
+    public BigDecimal amount() { return amount; }
+    public Currency currency() { return currency; }    
+    // Methods return new instances — never modify this
+    public Money add(Money other) {
+        if (!this.currency.equals(other.currency)) {
+            throw new CurrencyMismatchException();
+        }
+        return new Money(this.amount.add(other.amount), this.currency);
+    }
+    
+    // No setters — truly immutable ✅
+}
+
+// Usage:
+Money price = new Money(new BigDecimal("19.99"), Currency.USD);
+Money tax = new Money(new BigDecimal("2.00"), Currency.USD);
+Money total = price.add(tax);  // Returns new Money — original unchanged
+`} />
+
+<CardGrid>
+  <Card title="Benefits of Immutability" icon="approve-check">
+    - ✅ **Thread-safe** by design — no synchronization needed
+    - ✅ **Safe to share** — no defensive copying required
+    - ✅ **Predictable** — state cannot change after construction
+    - ✅ **Easy to test** — no hidden state mutations
+    - ✅ **Cache-friendly** — safe to reuse instances
+  </Card>
+  
+  <Card title="When to Use Immutable Objects" icon="rocket">
+```text
+    ✅ Value objects: Money, Point, DateRange, UserId
+    ✅ Configuration: AppConfig, FeatureFlags
+    ✅ DTOs for APIs: Request/Response objects
+    ✅ Keys in collections: HashMap keys must be immutable
+    ✅ Multithreaded contexts: Shared state without locks
+```
+  </Card>
+</CardGrid>
+
+### 🔹 Builder Pattern — Controlled Construction
+
+<Code lang="java" title="Builder for complex object creation with validation" code={`public class User {
+    private final String username;  // required
+    private final String email;     // required
+    private final String phone;     // optional
+    private final List<String> roles; // optional, mutable internally
+    
+    // Private constructor — force use of Builder
+    private User(Builder builder) {
+        this.username = builder.username;
+        this.email = builder.email;        this.phone = builder.phone;
+        // Defensive copy of mutable collection
+        this.roles = builder.roles != null 
+            ? new ArrayList<>(builder.roles) 
+            : new ArrayList<>();
+    }
+    
+    // Getters — return defensive copies for mutable fields
+    public List<String> getRoles() {
+        return Collections.unmodifiableList(roles);
+    }
+    
+    // Static nested Builder class
+    public static class Builder {
+        // Required fields
+        private final String username;
+        private final String email;
+        
+        // Optional fields
+        private String phone;
+        private List<String> roles;
+        
+        public Builder(String username, String email) {
+            if (username == null || email == null) {
+                throw new NullPointerException();
+            }
+            this.username = username;
+            this.email = email;
+        }
+        
+        public Builder phone(String phone) {
+            this.phone = phone;  // Optional — no validation needed here
+            return this;
+        }
+        
+        public Builder roles(List<String> roles) {
+            // Defensive copy at build time, not setter time
+            this.roles = roles != null ? new ArrayList<>(roles) : null;
+            return this;
+        }
+        
+        public User build() {
+            // Final validation before construction
+            if (email != null && !email.matches(".+@.+\\..+")) {
+                throw new ValidationException("Invalid email");
+            }
+            return new User(this);
+        }
+    }
+}
+// Usage — clear, fluent, validated:
+User user = new User.Builder("alice", "alice@example.com")
+    .phone("+1-555-1234")
+    .roles(List.of("USER", "ADMIN"))
+    .build();
+`} />
+
+<Aside type="tip">
+**Builder Best Practices**:
+1. ✅ Make constructor `private` — enforce builder usage
+2. ✅ Validate required fields in builder constructor
+3. ✅ Perform final validation in `build()` method
+4. ✅ Copy mutable collections at build time (not in setters)
+5. ✅ Return `this` from setter methods for fluent chaining
+</Aside>
+
+### 🔹 Package-Private Implementation — Hidden Helpers
+
+<Code lang="java" title="Package-private classes for internal implementation" code={`// File: com/example/payment/internal/ValidationHelper.java
+package com.example.payment.internal;  // Internal package
+
+// Package-private class — not visible outside payment package
+class ValidationHelper {
+    // Package-private method — only usable within package
+    static boolean isValidAmount(double amount) {
+        return amount > 0 && amount <= 1_000_000;
+    }
+}
+
+// File: com/example/payment/PaymentService.java
+package com.example.payment;
+
+import com.example.payment.internal.ValidationHelper;  // ✅ Same package — accessible
+
+public class PaymentService {
+    public void process(double amount) {
+        // Use internal helper — hidden from external clients
+        if (!ValidationHelper.isValidAmount(amount)) {
+            throw new InvalidAmountException();
+        }
+        // ... process payment
+    }
+}
+
+// File: com/example/app/Main.java
+package com.example.app;
+
+// import com.example.payment.internal.ValidationHelper;  // ❌ C.E: not public
+// ValidationHelper.isValidAmount(100);  // ❌ Cannot access — package-private
+public class Main {
+    public static void main(String[] args) {
+        // Can only use public API:
+        new PaymentService().process(100);  // ✅
+    }
+}`} />
+
+<Aside type="note">
+**Package Structure Tip**: Use subpackages like `.internal`, `.impl`, or `.support` to clearly separate public API from internal implementation. This signals to users: "Don't depend on this — it may change".
+</Aside>
+
+---
+
+## 🎯 Benefits of Data Hiding — Why It Matters
+
+<CardGrid>
+  <Card title="Benefit 1: Prevent Invalid State" icon="shield">
+```java
+    class Temperature {
+        private double celsius;
+        
+        public void setCelsius(double c) {
+            if (c < -273.15) {  // Absolute zero
+                throw new IllegalArgumentException("Below absolute zero!");
+            }
+            this.celsius = c;
+        }
+    }
+    
+    // Without hiding: temp.celsius = -1000;  // ❌ Physically impossible
+    // With hiding: Validation ensures only valid values accepted ✅
+```
+  </Card>
+  
+  <Card title="Benefit 2: Enable Implementation Changes" icon="rocket">
+```java
+    // Version 1: Store as String
+    public class User {
+        private String name;
+        public String getName() { return name; }
+    }
+    
+    // Version 2: Refactor to FirstName + LastName — no API change!
+    public class User {
+        private String firstName;
+        private String lastName;
+        
+        public String getName() { 
+            return firstName + " " + lastName;  // Same public API ✅        }
+    }
+    
+    // Client code unchanged — encapsulation enables refactoring ✅
+```
+  </Card>
+
+  <Card title="Benefit 3: Improve Testability" icon="approve-check">
+```java
+    // Hard to test: Logic mixed with I/O
+    class OrderService {
+        public void placeOrder(Order order) {
+            // Validation + DB save + Email send — all in one method
+            if (order.isValid()) {
+                database.save(order);      // Hard to mock!
+                emailService.send(order);  // Hard to mock!
+            }
+        }
+    }
+    
+    // Easy to test: Dependencies injected, logic isolated
+    class OrderService {
+        private final OrderRepository repo;
+        private final EmailSender email;
+        
+        public void placeOrder(Order order) {
+            if (!order.isValid()) throw new InvalidOrderException();
+            repo.save(order);      // Mockable interface ✅
+            email.send(order);     // Mockable interface ✅
+        }
+    }
+```
+  </Card>
+
+  <Card title="Benefit 4: Thread Safety" icon="backspace">
+```java
+    // Not thread-safe: Mutable shared state
+    class Counter {
+        private int count = 0;
+        public void increment() { count++; }  // Race condition!
+        public int getCount() { return count; }
+    }
+    
+    // Thread-safe options via encapsulation:
+    
+    // Option 1: Synchronized methods
+    class Counter {
+        private int count = 0;
+        public synchronized void increment() { count++; }
+        public synchronized int getCount() { return count; }    }
+    
+    // Option 2: Immutable + atomic reference
+    class Counter {
+        private final AtomicInteger count = new AtomicInteger(0);
+        public void increment() { count.incrementAndGet(); }
+        public int getCount() { return count.get(); }
+    }
+    
+    // Option 3: Immutable value object (functional style)
+    record CounterState(int count) {
+        CounterState increment() { return new CounterState(count + 1); }
+    }
+```
+  </Card>
+</CardGrid>
+
+---
+
+## ❌ Common Data Hiding Anti-Patterns
+
+<CardGrid>
+  <Card title="Anti-Pattern 1: Public Fields" icon="error">
+```java
+    // ❌ Fragile — no validation, no encapsulation
+    public class Product {
+        public String name;
+        public double price;
+        public int stock;
+    }
+    
+    // Client can break invariants:
+    Product p = new Product();
+    p.price = -100;    // ❌ Invalid
+    p.stock = -5;      // ❌ Invalid
+    p.name = null;     // ❌ May cause NPE later
+    
+    // ✅ Fix: Private fields + validated setters
+```
+  </Card>
+  
+  <Card title="Anti-Pattern 2: Leaking This Reference in Constructor" icon="error">
+```java
+    class EventListener {
+        EventListener() {
+            EventManager.register(this);  // ❌ Leaking 'this' before construction complete!
+        }
+        void onEvent(Event e) { /* ... */ }
+    }
+        // Danger: onEvent() could be called before constructor finishes → NPE on uninitialized fields
+    
+    // ✅ Fix: Register after construction
+    EventListener listener = new EventListener();
+    EventManager.register(listener);  // Safe — object fully constructed
+```
+  </Card>
+
+  <Card title="Anti-Pattern 3: Over-Encapsulation — Getters for Everything" icon="caution">
+```java
+    // ❌ Anemic domain model — data without behavior
+    class Order {
+        private List<Item> items;
+        private double total;
+        
+        public List<Item> getItems() { return items; }
+        public double getTotal() { return total; }
+        // No business methods — logic leaks to service layer
+    }
+    
+    // Service layer does all the work — Order is just a data bag
+    class OrderService {
+        void calculateTotal(Order order) {
+            double sum = 0;
+            for (Item item : order.getItems()) {
+                sum += item.getPrice() * item.getQuantity();
+            }
+            // ... set total via setter or reflection 😩
+        }
+    }
+    
+// ✅ Fix: Rich domain model — behavior with data
+    class Order {
+        private final List<Item> items = new ArrayList<>();
+        
+        public void addItem(Item item) {
+            items.add(item);
+            recalculateTotal();  // Encapsulated logic
+        }
+        
+        public double getTotal() {
+            return items.stream()
+                .mapToDouble(i -> i.getPrice() * i.getQuantity())
+                .sum();
+        }
+        
+        private void recalculateTotal() {
+            // Internal helper — not exposed
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the difference between data hiding and encapsulation?" icon="information">
+    **Data hiding**: Restricting access to internal state (using `private`, etc.).  
+    **Encapsulation**: Bundling data + methods that operate on that data, while hiding implementation details.  
+    ✅ Data hiding is a *technique*; encapsulation is a *design principle*.
+  </Card>
+  
+  <Card title="Q: Why use getters/setters instead of public fields?" icon="approve-check">
+    1. ✅ **Validation**: Setters can enforce business rules  
+    2. ✅ **Flexibility**: Change internal representation without breaking clients  
+    3. ✅ **Debugging**: Add logging/breakpoints in accessors  
+    4. ✅ **Thread safety**: Add synchronization in accessors if needed  
+    5. ✅ **Lazy loading**: Compute value on first access
+  </Card>
+
+  <Card title="Q: When should you NOT use getters/setters?" icon="caution">
+    - ✅ **Immutable value objects**: Use constructor + read-only accessors (or records)  
+    - ✅ **Behavior-rich objects**: Expose actions (`order.ship()`) not data (`order.getItems()`)  
+    - ✅ **Internal implementation**: Keep helper methods/fields `private` or package-private  
+    - ✅ **Performance-critical paths**: Avoid unnecessary method calls (but profile first!)
+  </Card>
+
+  <Card title="Q: How do you make a class immutable?" icon="rocket">
+    ```java
+    // Checklist for immutability:
+    // 1. Declare class final (or make constructor private + static factory)
+    // 2. Make all fields private + final
+    // 3. Don't provide setters or mutator methods
+    // 4. Ensure mutable fields are defensively copied:
+    //    - Constructor: copy mutable inputs
+    //    - Getters: return copies/unmodifiable views
+    // 5. Ensure mutable objects used are themselves immutable (or handle carefully)
+    ```
+  </Card>
+
+  <Card title="Q: What is the 'principle of least privilege' in access control?" icon="shield">
+    **Grant the minimum access necessary** for a component to do its job.  
+    - Start with `private`  
+    - Relax to `default`/`protected` only if same-package/subclass access is truly needed  
+    - Use `public` only for intended API surface  
+    ✅ Reduces coupling, prevents misuse, enables safer refactoring
+  </Card>
+
+  <Card title="Q: Can private methods be tested?" icon="information">
+    **Indirectly, yes** — test via public API that uses the private method.  
+    If a private method is complex enough to need direct testing, consider:
+    1. ✅ Extract to a separate class with public methods (better design)  
+    2. ✅ Use reflection for testing only (not recommended — fragile)  
+    3. ✅ Accept that private methods are implementation details — test behavior, not implementation
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle — Encapsulation in Algorithms
+
+<CardGrid>
+  <Card title="Pattern: Encapsulated Graph Node" icon="rocket">
+    ```java
+    class GraphNode {
+        private final int value;
+        private final List<GraphNode> neighbors = new ArrayList<>();
+        
+        public GraphNode(int value) { this.value = value; }
+        
+        // Controlled mutation — prevents cycles, duplicates
+        public void addNeighbor(GraphNode node) {
+            if (node == null || node == this) return;
+            if (!neighbors.contains(node)) {
+                neighbors.add(node);
+                node.neighbors.add(this);  // Maintain undirected edge
+            }
+        }
+        
+        // Safe access — unmodifiable view
+        public List<GraphNode> getNeighbors() {
+            return Collections.unmodifiableList(neighbors);
+        }
+        
+        public int value() { return value; }
+    }
+    
+    // BFS implementation — clean separation of concerns
+    class GraphAlgorithms {
+        public static List<Integer> bfs(GraphNode start) {
+            Queue<GraphNode> queue = new LinkedList<>();
+            Set<GraphNode> visited = new HashSet<>();
+            List<Integer> result = new ArrayList<>();
+            
+            queue.offer(start);
+            visited.add(start);
+            
+            while (!queue.isEmpty()) {
+                GraphNode node = queue.poll();
+                result.add(node.value());
+                
+                for (GraphNode neighbor : node.getNeighbors()) {  // Safe iteration
+                    if (!visited.contains(neighbor)) {
+                        visited.add(neighbor);
+                        queue.offer(neighbor);
+                    }
+                }
+            }
+            return result;
+        }
+    }
+    ```
+  </Card>
+  
+  <Card title="Pattern: Immutable Interval for Sweep Line Algorithms" icon="shield">
+    ```java
+    // Immutable value object — safe to share across threads/algorithms
+    public final class Interval implements Comparable<Interval> {
+        private final int start;
+        private final int end;
+        
+        public Interval(int start, int end) {
+            if (start > end) throw new IllegalArgumentException();
+            this.start = start;
+            this.end = end;
+        }
+        
+        public int start() { return start; }
+        public int end() { return end; }
+        
+        public boolean overlaps(Interval other) {
+            return this.start <= other.end && other.start <= this.end;
+        }
+        
+        @Override
+        public int compareTo(Interval other) {
+            return Integer.compare(this.start, other.start);
+        }
+    }
+    
+    // Merge intervals — pure function, no side effects
+    public static List<Interval> merge(List<Interval> intervals) {
+        if (intervals.isEmpty()) return List.of();
+        
+        List<Interval> sorted = new ArrayList<>(intervals);
+        Collections.sort(sorted);  // Uses compareTo
+        
+        List<Interval> merged = new ArrayList<>();
+        Interval current = sorted.get(0);
+        
+        for (int i = 1; i < sorted.size(); i++) {
+            Interval next = sorted.get(i);
+            if (current.overlaps(next)) {
+                // Create new merged interval — original unchanged
+                current = new Interval(
+                    current.start(), 
+                    Math.max(current.end(), next.end())
+                );
+            } else {
+                merged.add(current);
+                current = next;
+            }
+        }
+        merged.add(current);
+        return merged;
+    }
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**DSA Pro Tip**: Encapsulation enables **modular algorithm design**.  
+- Hide graph traversal details inside `Graph` class  
+- Make interval operations pure functions on immutable objects  
+- Use builder pattern for complex algorithm configuration  
+This leads to reusable, testable, and composable algorithm components.
+</Aside>
+
+---
+
+## 🏢 Real-Life SDE Usage — Production Patterns
+
+<CardGrid>
+  <Card title="Pattern: Domain-Driven Design — Aggregate Root" icon="rocket">
+    ```java
+    // Aggregate Root — controls access to entire object graph
+    public class Order {
+        private final OrderId id;
+        private OrderStatus status;
+        private final List<OrderLine> lines = new ArrayList<>();
+        private Money total;
+        
+        // Private constructor — force use of factory method
+        private Order(OrderId id) {
+            this.id = Objects.requireNonNull(id);
+            this.status = OrderStatus.DRAFT;
+            this.total = Money.zero();
+        }
+        
+        // Factory method — ensures valid initial state
+        public static Order create(OrderId id) {
+            return new Order(id);
+        }
+        
+        // Business method — encapsulates invariant
+        public void addLine(Product product, int quantity) {
+            if (status != OrderStatus.DRAFT) {
+                throw new IllegalStateException("Cannot modify " + status + " order");
+            }
+            if (quantity <= 0) throw new IllegalArgumentException();
+            
+            lines.add(new OrderLine(product, quantity));
+            recalculateTotal();  // Private helper
+        }
+        
+        // Controlled state transition
+        public void submit() {
+            if (lines.isEmpty()) throw new IllegalStateException("Empty order");
+            if (status != OrderStatus.DRAFT) throw new IllegalStateException();
+            
+            status = OrderStatus.SUBMITTED;
+            // Publish domain event, save to DB, etc.
+        }
+        
+        // Read-only access — no setters for critical state
+        public OrderId id() { return id; }
+        public OrderStatus status() { return status; }
+        public List<OrderLine> lines() { 
+            return Collections.unmodifiableList(lines); 
+        }
+        public Money total() { return total; }
+        
+        private void recalculateTotal() {
+            total = lines.stream()
+                .map(OrderLine::subtotal)
+                .reduce(Money.zero(), Money::add);
+        }
+    }
+    ```
+  </Card>
+  
+  <Card title="Pattern: Configuration Object — Immutable + Builder" icon="shield">
+    ```java
+    // Immutable config — thread-safe, shareable
+    public final class AppConfig {
+        private final String apiUrl;
+        private final int timeoutMs;
+        private final boolean enableCache;
+        private final Map<String, String> headers;
+        
+        private AppConfig(Builder builder) {
+            this.apiUrl = Objects.requireNonNull(builder.apiUrl);
+            this.timeoutMs = builder.timeoutMs;
+            this.enableCache = builder.enableCache;
+            // Defensive copy of mutable map
+            this.headers = Collections.unmodifiableMap(
+                new HashMap<>(builder.headers)
+            );
+        }
+        
+        // Getters — all immutable types or unmodifiable views
+        public String apiUrl() { return apiUrl; }
+        public int timeoutMs() { return timeoutMs; }
+        public boolean enableCache() { return enableCache; }
+        public Map<String, String> headers() { return headers; }
+        
+        // Builder for flexible construction
+        public static class Builder {
+            private String apiUrl;  // Required
+            private int timeoutMs = 30_000;  // Default
+            private boolean enableCache = true;  // Default
+            private final Map<String, String> headers = new HashMap<>();
+            
+            public Builder apiUrl(String url) {
+                this.apiUrl = url;
+                return this;
+            }
+            public Builder timeoutMs(int ms) {
+                if (ms <= 0) throw new IllegalArgumentException();
+                this.timeoutMs = ms;
+                return this;
+            }
+            public Builder header(String name, String value) {
+                this.headers.put(name, value);
+                return this;
+            }
+            public AppConfig build() {
+                if (apiUrl == null) throw new IllegalStateException("apiUrl required");
+                return new AppConfig(this);
+            }
+        }
+    }
+    
+    // Usage — clear, validated, immutable
+    AppConfig config = new AppConfig.Builder()
+        .apiUrl("https://api.example.com")
+        .timeoutMs(60_000)
+        .header("Authorization", "Bearer token")
+        .build();
+    ```
+  </Card>
+
+  <Card title="Pattern: Repository Interface — Encapsulated Data Access" icon="backspace">
+    ```java
+    // Interface defines contract — implementation hidden
+    public interface UserRepository {
+        Optional<User> findById(UserId id);
+        User save(User user);  // Returns saved entity (may have generated ID)
+        void delete(UserId id);
+    }
+    
+    // Implementation encapsulates DB logic — not exposed to clients
+    @Repository
+    class JpaUserRepository implements UserRepository {
+        @PersistenceContext
+        private EntityManager em;
+        
+        @Override
+        public Optional<User> findById(UserId id) {
+            // JPA/Hibernate logic hidden here
+            return Optional.ofNullable(em.find(User.class, id));
+        }
+        
+        @Override
+        public User save(User user) {
+            // Transaction management, caching, etc. — encapsulated
+            return em.merge(user);
+        }
+        
+        // ... other methods
+    }
+    
+    // Service layer depends on abstraction — swappable implementation
+    @Service
+    class UserService {
+        private final UserRepository users;  // Interface, not concrete class
+        
+        @Autowired
+        public UserService(UserRepository users) {
+            this.users = users;  // Dependency injection
+        }
+        
+        public User register(String email, String password) {
+            // Business logic — independent of persistence tech
+            User user = User.create(email, password);  // Domain logic
+            return users.save(user);  // Persistence via interface
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Production Best Practices**:
+1. ✅ **Start private** — relax access only when proven necessary
+2. ✅ **Validate at boundaries** — constructors, setters, public methods
+3. ✅ **Return immutable views** — `unmodifiableList()`, defensive copies
+4. ✅ **Prefer immutability** — for value objects, config, DTOs
+5. ✅ **Depend on abstractions** — interfaces for repositories, services
+6. ✅ **Document invariants** — JavaDoc for class-level rules
+7. ✅ **Test behavior, not implementation** — focus on public API contracts
+</Aside>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Access Modifier Decision Guide
+
+```text
+Should this member be accessible from...?
+
+┌─────────────────────────────────────┐
+│ Outside the class?                  │
+│ ├─ Yes → Should it be public API?   │
+│ │  ├─ Yes → public ✅               │
+│ │  └─ No  → protected* ✅          │
+│ └─ No  → Inside same package?       │
+│    ├─ Yes → default ✅              │
+│    └─ No  → private ✅              │
+└─────────────────────────────────────┘
+* protected also allows subclass access (even in different packages)
+```
+
+### Encapsulation Checklist
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| Simple data holder | `record` (Java 14+) or immutable class |
+| Mutable domain object | Private fields + validated setters + business methods |
+| Configuration | Immutable + Builder pattern |
+| Internal helper | `private` or package-private |
+| Extension point | `protected` method + JavaDoc contract |
+| Public API | `public` methods with clear contracts + validation |
+| Mutable collection field | Return `unmodifiableList()` or defensive copy |
+| Mutable object field | Return defensive copy or use immutable type |
+
+### Common Pitfalls & Fixes
+
+| Pitfall | Risk | Fix |
+|---------|------|-----|
+| Public mutable field | Invalid state, thread issues | Make `private` + validated setter |
+| Getter returns mutable collection | Caller modifies internal state | Return `unmodifiableList()` or copy |
+| Setter accepts mutable object without copy | Caller retains reference, can mutate later | Defensive copy in setter |
+| Constructor leaks `this` | Methods called on partially-constructed object | Register listeners after construction |
+| Over-encapsulation (getters for everything) | Anemic domain model, logic leakage | Expose behavior, not just data |
+
+<Aside type="caution">
+**Final Checklist for Data Hiding**:
+1. ✅ Start with `private` — relax access only when necessary
+2. ✅ Validate inputs at public boundaries (constructors, setters, methods)
+3. ✅ Return immutable views or defensive copies for mutable state
+4. ✅ Prefer immutability for value objects, config, DTOs
+5. ✅ Encapsulate invariants within the class — don't leak validation to callers
+6. ✅ Document class-level invariants in JavaDoc
+7. ✅ Test public API behavior — not private implementation details
+8. ✅ Use modern features: `record`, `var`, immutable collections where appropriate
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="java" title="Predict compile/runtime behavior" code={`// Q1: Access modifier visibility
+class Outer {
+    private int priv = 1;
+    int def = 2;
+    protected int prot = 3;
+    public int pub = 4;
+}
+class Child extends Outer {
+    void test() {
+        // System.out.println(priv);  // ?
+        // System.out.println(def);   // ? (same package assumed)
+        // System.out.println(prot);  // ?
+        // System.out.println(pub);   // ?
+    }
+}
+
+// Q2: Immutable class validation
+public final class Point {
+    private final int x;
+    private final int y;
+    public Point(int x, int y) { this.x = x; this.y = y; }
+    public int x() { return x; }
+    public int y() { return y; }
+    // public void setX(int x) { this.x = x; }  // ? (if added)
+}
+
+// Q3: Mutable collection exposure
+class Team {
+    private List<String> members = new ArrayList<>();
+    // public List<String> getMembers() { return members; }  // ? (risk?)
+    // public List<String> getMembers() { return new ArrayList<>(members); }  // ?
+}
+
+// Q4: Builder pattern construction
+class Config {
+    private final String url;
+    private Config(Builder b) { url = b.url; }
+    static class Builder {
+        private String url;
+        Builder url(String u) { this.url = u; return this; }
+        Config build() { 
+            // if (url == null) throw ...;  // ? (required validation)
+            return new Config(this); 
+        }
+    }
+}
+
+// Q5: Package-private helper
+package com.example.internal;
+class Helper {  // package-private
+    static int compute(int x) { return x * 2; }
+}
+package com.example.app;
+// import com.example.internal.Helper;  // ? (accessible?)
+// Helper.compute(5);  // ?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1 (assuming Child in same package as Outer):
+• System.out.println(priv);  // ❌ C.E: private not visible in subclass
+• System.out.println(def);   // ✅ Works — default access within same package
+• System.out.println(prot);  // ✅ Works — protected accessible in subclass
+• System.out.println(pub);   // ✅ Works — public always accessible
+
+Q2:
+• public void setX(int x) { this.x = x; }  // ❌ C.E: cannot assign to final variable x
+   // Immutable classes cannot have setters — by design ✅
+
+Q3:
+• return members;  // ⚠️ Risk: Caller can modify internal list via returned reference
+• return new ArrayList<>(members);  // ✅ Safe: Defensive copy — caller gets independent list
+
+Q4:
+• if (url == null) throw ...;  // ✅ Recommended: Validate required fields in build()
+   // Prevents creating invalid Config objects
+
+Q5:
+• import com.example.internal.Helper;  // ❌ C.E: Helper is not public in com.example.internal
+• Helper.compute(5);  // ❌ Won't compile — class not accessible from different package
+   // Package-private classes are only visible within their own package
+```
+</details>
+
+<Aside type="tip">
+**Pro Interview Strategy** for data hiding questions:
+1. Explain **why** encapsulation matters (validation, flexibility, thread safety)
+2. Distinguish **access levels** and when to use each (`private` → `public`)
+3. Discuss **mutable vs immutable** design tradeoffs
+4. Mention **modern Java features** (`record`, immutable collections) that simplify encapsulation
+5. Give **real-world examples** (domain objects, config, repositories) to show practical understanding
+6. Address **testing concerns** — test behavior via public API, not private implementation
+
+This demonstrates both theoretical knowledge and production-ready design thinking! 🎯
+</Aside>

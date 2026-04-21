@@ -1,13 +1,9 @@
 ---
 title: JAVA Topics
-slug: computer-languages/java/topics
+slug: computer-languages/java
 description: JAVA Topics
 ---
 
 JAVA Topics
-
-### All Languages
-
-- [Intro](/computer-science-notes/computer-languages/java/topics/intro)
-- [Identifiers](/computer-science-notes/computer-languages/java/topics/identifiers)
-- [Keywords](/computer-science-notes/computer-languages/java/topics/keywords)
+- [Language Fundamentals](/computer-science-notes/computer-languages/java/language-fundamentals)
+- [Arithmetic Operators &  Assignments](/computer-science-notes/computer-languages/java/arithmetic-operators-&-assignments)

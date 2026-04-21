@@ -1,0 +1,619 @@
+---
+title: Java Variables
+slug: computer-languages/java/language-fundamentals/variables
+description: A deep dive into memory management, variable scope, pass-by-value, and algorithmic patterns.
+sidebar:
+  label: "Variables"
+  badge:
+    text: Core
+    variant: tip
+tags: [java, variables, memory, jvm, stack, heap, interview, dsa]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 📦 What is a Variable?
+
+A **Variable** is a named container that stores a value in memory. Every variable has a specific **type**, which dictates:
+1.  The kind of data it can hold.
+2.  How much memory is allocated.
+3.  What operations can be performed on it.
+
+<Code lang="java" title="Variable structure" code={`
+int age = 25;
+ ↑    ↑    ↑
+type name values
+`} />
+
+---
+
+## The Foundational Divide: Primitive vs. Reference
+
+The most fundamental categorization of variables is based on what they store: **actual values** or **references to objects**. This distinction defines Java's memory model.
+
+### 🔵 Primitive Variable
+
+Stores the **actual value directly** on the stack — no indirection.
+
+<Code lang="java" title="Primitive — value lives on stack" code={`int age = 25;
+
+// Stack
+// ┌─────────────┐
+// │  age │  25  │  ← value itself is here
+// └─────────────┘`} />
+
+### 🟠 Reference Variable
+
+Stores a **memory address** that points to an object on the Heap — not the object itself.
+
+<Code lang="java" title="Reference — stack holds address, heap holds object" code={`String name = "Alice";
+
+// Stack                      Heap
+// ┌──────────────────┐       ┌─────────────────┐
+// │  name │ 0x1A3F ──┼──────▶│    "Alice"      │
+// └──────────────────┘       └─────────────────┘
+//    (holds address)           (actual object)`} />
+
+---
+
+| Feature | Primitive Type | Reference Type |
+|---------|----------------|----------------|
+| **Stores** | Actual value (e.g., `10`, `true`) | Memory address of an object |
+| **Memory Location** | Stack | Ref on Stack; Object on Heap |
+| **Methods** | ❌ None | ✅ Yes (`.length()`, `.equals()`) |
+| **Size** | Fixed (1-8 bytes) | Depends on the object |
+| **Default Value** | `0`, `false`, `'\u0000'` | `null` |
+| **Nullability** | ❌ No (cannot be `null`) | ✅ Yes (can be `null`) |
+| Copy behaviour | Independent copy | Shared reference |
+| Examples | `int`, `double`, `char`… | `String`, arrays, objects |
+
+
+### Copy Behaviour — The Real Difference
+
+<Tabs>
+  <TabItem label="Primitive Copy — Independent">
+    <Code lang="java" title="Each variable gets its own copy of the value" code={`int a = 10;
+int b = a;    // b gets a COPY of the value
+b = 99;       // changing b does NOT affect a
+
+System.out.println(a); // 10 ✅ unchanged
+System.out.println(b); // 99`} />
+
+    <Aside type="note">
+      Primitives are **value-independent** — modifying one never affects the other.
+    </Aside>
+  </TabItem>
+
+  <TabItem label="Reference Copy — Shared Object">
+    <Code lang="java" title="Both variables point to the SAME heap object" code={`int[] arr1 = {1, 2, 3};
+int[] arr2 = arr1;       // copies the ADDRESS, not the data!
+
+arr2[0] = 999;           // modifies the SAME object on heap
+
+System.out.println(arr1[0]); // 999 😱 arr1 also affected!
+System.out.println(arr2[0]); // 999
+
+// arr1 ──────────▶ [999, 2, 3]  ← same heap object
+// arr2 ──────────▶ [999, 2, 3]  ← both point here!`} />
+
+    <Aside type="caution">
+      Assigning a reference copies the **address**, not the data. Both variables now point to the **same object**.
+    </Aside>
+  </TabItem>
+
+  <TabItem label="True Array Copy ✅">
+    <Code lang="java" title="Arrays.copyOf creates a new independent object" code={`int[] arr2 = Arrays.copyOf(arr1, arr1.length);
+// now arr1 and arr2 are completely independent
+
+// Also valid:
+int[] arr3 = arr1.clone();
+int[] arr4 = Arrays.copyOfRange(arr1, 0, arr1.length);`} />
+  </TabItem>
+</Tabs>
+
+---
+
+## 🗂️ Classification by Scope
+
+Beyond type, variables are classified by where they are declared, which determines their **scope** and **lifetime**.
+
+```java
+Java Variables
+├── 1️⃣ Local Variable      (Inside method/block/constructor)
+├── 2️⃣ Instance Variable   (Inside class, non-static)
+├── 3️⃣ Static Variable     (Inside class, static)
+└── 4️⃣ Parameter Variable  (In method signature)
+```
+
+### 1️⃣ Local Variables
+
+Declared **inside a method, block, or constructor**. Also called: *automatic / temporary / stack variable*.
+
+- **Lifespan:** Exists only while the method executes (Stack).
+- **Initialization:** ⚠️ **No default value.** Must be initialized before use, otherwise → Compile Error.
+- **Modifiers:** Only `final` is allowed.
+
+<Code lang="java" title="Local variable — scoped to the method" code={`void greet() {
+    String message = "Hello!"; // local variable
+    System.out.println(message);
+}
+// 'message' is DEAD after method ends`} />
+
+<Aside type="danger">
+  **No default value.** Must initialize before use — the compiler will not let you read an uninitialized local.
+
+  ```java
+  void calculate() {
+      int result;
+      System.out.println(result); // ❌ C.E: variable result might not have been initialized
+  }
+  ```
+</Aside>
+
+<Tabs>
+  <TabItem label="Scope trap — for loop">
+    <Code lang="java" title="Loop variable j is not accessible outside the loop" code={`int i = 0;
+for (int j = 0; j < 3; j++) {
+    i = i + j;
+}
+System.out.println(i + " -- " + j); // ❌ C.E: cannot find symbol 'j'`} />
+  </TabItem>
+
+  <TabItem label="Conditional init — valid">
+    <Code lang="java" title="Both branches initialize x — compiler accepts it" code={`int x;
+if (args.length > 0) {
+    x = 10;
+} else {
+    x = 20;
+}
+System.out.println(x); // ✅ safe — every path assigns x`} />
+
+    <Aside type="tip">
+      Always initialize locals **at the point of declaration**, not inside conditional blocks — there's no guarantee a branch runs at runtime.
+    </Aside>
+  </TabItem>
+
+  <TabItem label="Allowed modifiers">
+    <Code lang="java" title="Only 'final' is valid on a local variable" code={`final int x = 10;    // ✅ only valid modifier
+
+private   int x = 10; // ❌ C.E: illegal start of expression
+protected int x = 10; // ❌
+static    int x = 10; // ❌
+volatile  int x = 10; // ❌
+transient int x = 10; // ❌`} />
+  </TabItem>
+</Tabs>
+
+### 2️⃣ Instance Variables
+
+Declared **inside the class, outside any method**. Also called: *object-level variable / attribute / field*.
+
+- **Lifespan:** Lives as long as the object lives (Heap).
+- **Initialization:** Gets default values automatically (`0`, `false`, `null`).
+- **Access:** Can use `public`, `private`, etc.
+
+<Code lang="java" title="Each object gets its OWN independent copy" code={`class Student {
+    String name;   // instance variable
+    int    marks;  // instance variable
+
+    void display() {
+        System.out.println(name + " : " + marks);
+    }
+}
+
+Student s1 = new Student();
+Student s2 = new Student();
+s1.name = "Alice";  // s1's copy
+s2.name = "Bob";    // s2's copy — completely independent!`} />
+
+<Aside type="note">
+  JVM always provides **default values** for instance variables — explicit initialization is not required.
+
+  | Type | Default |
+  |------|---------|
+  | `int`, `long`, `byte`, `short` | `0` |
+  | `float`, `double` | `0.0` |
+  | `boolean` | `false` |
+  | `char` | `'\u0000'` |
+  | Any object reference | `null` |
+</Aside>
+
+<Aside type="caution">
+  Instance variables **cannot be accessed directly from a static context** (e.g., `main`). You need an object reference:
+
+  ```java
+  static void main(String[] args) {
+      System.out.println(name); // ❌ C.E: non-static variable name cannot be referenced
+      Student s = new Student();
+      System.out.println(s.name); // ✅
+  }
+  ```
+</Aside>
+
+**Lifetime:** created when the object is created → destroyed when the object is garbage collected. Scope = scope of the object.
+
+### 3️⃣ Static Variables (Class Variables)
+
+Declared with the `static` keyword **inside the class, outside any method**. Also called: *class-level variable / field*.
+
+- **Lifespan:** Lives as long as the class is loaded (Method Area/Metaspace).
+- **Creation:** Only **one copy** exists per class, regardless of how many objects are created.
+- **Access:** `ClassName.variableName` is recommended.
+
+<Code lang="java" title="Static variables are shared" code={`class Counter {
+    static int count = 0; // Shared across ALL objects
+
+    Counter() { count++; }
+}
+
+Counter c1 = new Counter();
+Counter c2 = new Counter();
+System.out.println(Counter.count); // 2 (c1 and c2 share this variable)`} />
+
+<Aside type="note">
+**Thread Safety:** Local variables are inherently thread-safe (each thread has its own stack). Instance and static variables are shared across threads and require synchronization if modified concurrently.
+</Aside>
+
+Declared with the `static` keyword **inside the class, outside any method**. Also called: *class-level variable / field*.
+
+<Code lang="java" title="One shared copy across ALL objects" code={`class Student {
+    String name;           // instance — each object has own copy
+    static int count = 0;  // static  — ONE copy, shared by all
+
+    Student(String name) {
+        this.name = name;
+        count++;           // tracks total students ever created
+    }
+}
+
+Student s1 = new Student("Alice");
+Student s2 = new Student("Bob");
+
+System.out.println(Student.count); // 2 ✅ — access via class name`} />
+
+<Code lang="java" title="Memory layout" code={`// METHOD AREA (Metaspace in Java 8+)
+// ┌──────────────────────────────────┐
+// │   static int count = 2           │  ← ONE copy for entire class
+// └──────────────────────────────────┘
+//
+// HEAP
+// ┌─────────────┐     ┌─────────────┐
+// │  s1 object  │     │  s2 object  │
+// │  name=Alice │     │  name=Bob   │
+// └─────────────┘     └─────────────┘
+//       ↑ both share the static variable — no copy per object`} />
+
+<Code lang="java" title="Classic static mutation example" code={`class Test {
+    int x = 10;          // instance
+    static int y = 20;   // static
+
+    public static void main(String[] args) {
+        Test t1 = new Test();
+        t1.x = 888;
+        t1.y = 999;      // modifies the ONE shared copy
+
+        Test t2 = new Test();
+        System.out.println(t2.x + "----" + t2.y); // 10----999
+        // t2.x = 10 (own fresh copy)
+        // t2.y = 999 (same shared static, already mutated by t1)
+    }
+}`} />
+
+<Aside type="note">
+  - Static variables are created when the **class is loaded** by the JVM.
+  - Destroyed when the **class is unloaded** — lifetime = lifetime of the `.class` file in JVM.
+  - Stored in **Method Area** (called **Metaspace** from Java 8 onwards).
+  - JVM provides default values — no explicit initialization required.
+  - Accessible from both **instance** and **static** areas directly.
+  - Preferred access: **`ClassName.variable`** (not via object reference).
+</Aside>
+
+## 4️⃣ Parameter Variable
+
+Variables passed into a **method or constructor** — treated like local variables inside the method.
+
+<Code lang="java" title="Parameters behave like local variables" code={`void add(int a, int b) {   // a, b are parameter variables
+    System.out.println(a + b);
+}`} />
+
+<Tabs>
+  <TabItem label="Primitive parameter — value copy">
+    <Code lang="java" title="Changing the parameter does NOT affect the caller" code={`void change(int x) {
+    x = 100;       // modifies only the LOCAL copy
+}
+
+int n = 10;
+change(n);
+System.out.println(n); // 10 — unchanged ✅`} />
+  </TabItem>
+
+  <TabItem label="Reference parameter — shared object">
+    <Code lang="java" title="Modifying the object DOES affect the caller" code={`void modify(int[] arr) {
+    arr[0] = 999;  // mutates the actual heap object
+}
+
+int[] arr = {1, 2, 3};
+modify(arr);
+System.out.println(arr[0]); // 999 ✅`} />
+  </TabItem>
+
+  <TabItem label="Reassigning reference — no effect">
+    <Code lang="java" title="Reassigning the reference only changes the local copy" code={`void change(String s) {
+    s = "New Value";    // reassigns LOCAL reference copy only
+}
+
+String str = "Old Value";
+change(str);
+System.out.println(str); // "Old Value" — unchanged ✅`} />
+
+    <Aside type="tip">
+      **Java is always pass-by-value.**
+      For objects, the *value* being passed is the **reference (address)** — not the object itself. You can mutate the object, but you cannot reassign the caller's reference.
+    </Aside>
+  </TabItem>
+</Tabs>
+
+
+### 📊 Quick Comparison Table
+
+<table>
+  <thead><tr><th>Feature</th><th>Local</th><th>Instance</th><th>Static</th></tr></thead>
+  <tbody>
+    <tr><td>Location</td><td>Stack</td><td>Heap (in Object)</td><td>Method Area</td></tr>
+    <tr><td>Default Value</td><td>❌ None</td><td>✅ Yes</td><td>✅ Yes</td></tr>
+    <tr><td>Scope</td><td>Method/Block</td><td>Whole Object</td><td>Whole Class</td></tr>
+  </tbody>
+</table>
+
+## 🔬 Scope & Lifetime Comparison
+
+| Feature | Local | Instance | Static |
+|---------|-------|----------|--------|
+| Declared in | Method / block | Class body | Class body (`static`) |
+| Default value | ❌ None | ✅ JVM provides | ✅ JVM provides |
+| Memory | Stack | Heap (inside object) | Method Area / Metaspace |
+| Per object? | N/A | ✅ Yes | ❌ Shared |
+| Access modifiers | ❌ Only `final` | ✅ All | ✅ All |
+| Lifetime | Method execution | Object lifetime | Program lifetime |
+| Thread safe? | ✅ Yes (own copy per thread) | ❌ No | ❌ No |
+
+<Aside type="note">
+  **On thread safety:** Local variables are created per-thread (each thread has its own call stack) → inherently thread-safe.  
+  Instance and static variables are shared across threads → **not thread-safe** without synchronization.
+</Aside>
+
+### Variable Shadowing
+
+<Code lang="java" title="Local variable hides instance variable — use 'this' to distinguish" code={`class Demo {
+    int x = 10;       // instance variable
+
+    void show() {
+        int x = 20;              // local — shadows the instance var!
+        System.out.println(x);       // 20 (local wins)
+        System.out.println(this.x);  // 10 (this → instance)
+    }
+}`} />
+---
+
+## 🧠 Advanced Concepts & Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1 — Java is Pass-by-Value" icon="error">
+    Java **always** passes by value.
+    - **Primitive:** Copy of the value is passed.
+    - **Object:** Copy of the **reference** (address) is passed.
+
+    ```java
+    void change(int x) { x = 99; } // Won't change original
+    void mutate(int[] arr) { arr[0] = 99; } // WILL change original
+    
+    int n = 10; change(n); System.out.println(n); // 10
+    
+    int[] a = {1}; mutate(a); System.out.println(a[0]); // 99
+    ```
+    *You can modify the object's state, but you cannot reassign the original reference to point to a new object.*
+  </Card>
+
+  <Card title="Trap 2 — Integer Overflow" icon="error">
+    In DSA (e.g., Binary Search), `mid = (start + end) / 2` can overflow if `start + end > Integer.MAX_VALUE`.
+    
+    **✅ Safe Pattern:**
+    `int mid = start + (end - start) / 2;`
+  </Card>
+
+  <Card title="Trap 3 — Variable Shadowing" icon="error">
+    Local variables can hide instance variables of the same name.
+    
+    ```java
+    class Demo {
+        int x = 10;
+        void foo() {
+            int x = 20; // Shadows the instance variable!
+            System.out.println(x);      // 20 (Local)
+            System.out.println(this.x); // 10 (Instance)
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## ⚡ DSA Patterns & Usage
+
+Variables play specific roles in algorithmic design. Understanding their scope prevents bugs in recursion and state management.
+
+<CardGrid>
+  <Card title="Pattern: Static Global State" icon="rocket">
+    Use `static` variables to track global results (like `maxDepth` or `totalSum`) across recursive DFS calls without passing them in parameters.
+    ```java
+    static int maxVal = Integer.MIN_VALUE;
+    
+    void dfs(Node n) {
+        if (n == null) return;
+        maxVal = Math.max(maxVal, n.val); // Updates global state
+        dfs(n.left); dfs(n.right);
+    }
+    ```
+  </Card>
+  
+  <Card title="Pattern: Defensive Copying" icon="shield">
+    When passing mutable arrays/lists to functions, pass a copy if you want to protect the original data.
+    ```java
+    // ❌ Dangerous: Method modifies caller's array
+    void sort(int[] arr) { ... }
+    
+    // ✅ Safe: Method modifies a copy
+    void safeSort(int[] arr) { 
+        int[] copy = Arrays.copyOf(arr, arr.length); 
+        // ...
+    }
+    ```
+  </Card>
+
+  <Card title="Pattern: Primitive vs Reference in Recursion" icon="backspace">
+    Primitives are safe in recursion because each call gets its own copy. References point to the same shared object.
+    ```java
+    // Safe: 'count' is independent in every stack frame
+    void recurse(int count) { count++; recurse(count); }
+    
+    // Shared: 'path' list is mutated by all levels
+    void backtrack(List<String> path) { path.add("X"); ... }
+    ```
+  </Card>
+
+  <Card title="Pattern: Null Checks" icon="error">
+    Always check references for `null` before accessing methods to avoid `NullPointerException`.
+    ```java
+    if (node != null) { // Safety check
+        process(node.val);
+    }
+    ```
+  </Card>
+</CardGrid>
+
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Where are variables stored?" icon="information">
+    - **Local** → Stack (fast, auto-cleaned on method exit)
+    - **Instance** → Heap (inside the object)
+    - **Static** → Method Area / Metaspace (Java 8+)
+  </Card>
+  <Card title="Pass by value or reference?" icon="warning">
+    **Always pass-by-value.**
+    - Primitive → copy of value
+    - Object → copy of reference (address)
+
+    You can mutate the object. You cannot reassign the caller's reference.
+  </Card>
+  <Card title="Can primitive be null?" icon="error">
+    **No.** Only reference types can be `null`.
+    ```java
+    int x     = null; // ❌ C.E
+    Integer x = null; // ✅ wrapper (reference)
+    ```
+  </Card>
+  <Card title="Static from instance context?" icon="approve-check">
+    Static vars are accessible from both instance and static areas.
+    Instance vars **cannot** be accessed from a static method without an object reference.
+  </Card>
+</CardGrid>
+
+<Aside type="danger">
+  **Most common runtime crash:**
+  ```java
+  String s = null;
+  s.length(); // 💥 NullPointerException at runtime!
+  ```
+  Always null-check before calling methods on any reference type.
+</Aside>
+
+---
+
+## 🧩 DSA Connections
+
+<Tabs>
+  <TabItem label="Static — global DFS state">
+    <Code lang="java" title="Static variable shared across all recursive calls" code={`static int maxSum = Integer.MIN_VALUE;
+
+void dfs(TreeNode node) {
+    if (node == null) return;
+    maxSum = Math.max(maxSum, node.val); // updates shared state
+    dfs(node.left);
+    dfs(node.right);
+}`} />
+  </TabItem>
+
+  <TabItem label="Reference trap — 2D arrays">
+    <Code lang="java" title="Shallow copy of dp row — classic DSA bug" code={`int[][] dp = new int[n][m];
+int[] row = dp[0];   // row is a REFERENCE to dp[0]!
+row[0] = 99;
+System.out.println(dp[0][0]); // 99 😱 same object!
+
+// Fix: copy the row
+int[] row = Arrays.copyOf(dp[0], dp[0].length); // ✅`} />
+  </TabItem>
+
+  <TabItem label="Backtracking — reference sharing">
+    <Code lang="java" title="List is shared across recursion levels — must backtrack" code={`void dfs(List<Integer> path, int depth) {
+    path.add(depth);          // modifies the SAME list object
+    dfs(path, depth + 1);
+    path.remove(path.size() - 1); // ← must backtrack manually!
+}
+
+// But primitives are safe — each call gets its own copy:
+void dfs(int depth) {
+    dfs(depth + 1); // caller's depth is unaffected ✅
+}`} />
+  </TabItem>
+
+  <TabItem label="Overflow-safe mid">
+    <Code lang="java" title="Safe midpoint calculation — always use this" code={`int mid = (start + end) / 2;          // ❌ overflows if start+end > INT_MAX
+int mid = start + (end - start) / 2;  // ✅ always safe`} />
+  </TabItem>
+</Tabs>
+
+---
+
+## 🏢 Real-Life SDE Usage
+
+<Code lang="java" title="All four variable types in a production service" code={`public class OrderService {
+
+    // static — shared config across all instances
+    private static final String BASE_URL = "https://api.payments.com";
+    private static int totalOrders = 0;
+
+    // instance — per-object data
+    private String orderId;
+    private double amount;
+
+    public void processOrder(double amount) {  // parameter
+        double tax   = amount * 0.18;          // local
+        double total = amount + tax;           // local
+
+        this.amount = total;  // 'this' disambiguates from parameter
+        totalOrders++;
+    }
+}
+
+// ✅ Defensive copy — prevent callers from mutating internals
+class Config {
+    private int[] allowedPorts;
+
+    // ❌ Bad — caller can mutate your internal array!
+    public int[] getPorts() { return allowedPorts; }
+
+    // ✅ Good — return an independent copy
+    public int[] getPorts() {
+        return Arrays.copyOf(allowedPorts, allowedPorts.length);
+    }
+}
+
+// ✅ Immutability — why String is safe to share as a reference
+String url = "https://api.example.com";
+// Multiple threads can share 'url' safely
+// because String objects are immutable — nobody can change "https://api.example.com"`} />

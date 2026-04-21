@@ -8,4 +8,4 @@ Computer Languages Lists
 
 ### All Languages
 
-- [JAVA](/computer-science-notes/computer-languages/java/topics)
+- [JAVA](/computer-science-notes/computer-languages/java)

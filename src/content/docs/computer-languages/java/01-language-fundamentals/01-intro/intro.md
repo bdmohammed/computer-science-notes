@@ -1,6 +1,6 @@
 ---
 title: JAVA Intro
-slug: computer-languages/java/topics/intro
+slug: computer-languages/java/language-fundamentals/intro
 description: JAVA Intro
 ---
 
