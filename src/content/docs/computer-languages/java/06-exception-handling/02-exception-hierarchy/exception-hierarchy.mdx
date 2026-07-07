@@ -1,0 +1,1128 @@
+---
+title: What is an Exception Hierarchy?
+slug: computer-languages/java/exception-handling/exception-hierarchy
+description: What is an Exception Hierarchy in Java?
+---
+
+## 🌳 Throwable in Java
+
+---
+
+### 🧠 What It Is
+
+`Throwable` is the **root class** of Java's entire exception hierarchy. Only instances of `Throwable` (or its subclasses) can be **thrown** by the JVM or by `throw` keyword, and only `Throwable` subclasses can appear in a `catch` block. Everything else — no matter how catastrophic — cannot participate in Java's exception mechanism.
+
+---
+
+### 🔬 Throwable in the Hierarchy
+
+```
+java.lang.Object
+       │
+java.lang.Throwable          ← ROOT
+       │
+       ├── java.lang.Error
+       │       ├── OutOfMemoryError
+       │       ├── StackOverflowError
+       │       ├── VirtualMachineError
+       │       └── AssertionError
+       │
+       └── java.lang.Exception
+               ├── IOException
+               ├── SQLException
+               ├── CloneNotSupportedException
+               └── RuntimeException
+                       ├── NullPointerException
+                       ├── IllegalArgumentException
+                       └── ArrayIndexOutOfBoundsException
+```
+
+---
+
+### 🔬 Throwable — Key Fields (JDK Source)
+
+```java
+public class Throwable implements Serializable {
+
+    private String detailMessage;          // getMessage() returns this
+    private Throwable cause;               // getCause() returns this
+    private StackTraceElement[] stackTrace;// captured at construction
+    private List<Throwable> suppressedExceptions; // try-with-resources
+
+    // called in constructor — walks call stack → O(n) in stack depth
+    private native Throwable fillInStackTrace();
+}
+```
+
+```
+Throwable object on heap:
+┌────────────────────────────────────────────────┐
+│  detailMessage  : "Connection refused"         │
+│  cause          : → SocketException object     │
+│  stackTrace     : → StackTraceElement[12]      │
+│                     [0] ServiceA.connect():45  │
+│                     [1] ServiceA.init():30     │
+│                     ...                        │
+│  suppressed     : → ArrayList (may be empty)   │
+└────────────────────────────────────────────────┘
+```
+
+---
+
+### 📋 Throwable — Every Method
+
+| Method | Returns | What It Does |
+|--------|---------|--------------|
+| `getMessage()` | `String` | The detail message passed to constructor |
+| `getLocalizedMessage()` | `String` | Override in subclass for locale-specific msg; defaults to `getMessage()` |
+| `getCause()` | `Throwable` | The exception that caused this one (`null` if none) |
+| `toString()` | `String` | `ClassName: message` |
+| `printStackTrace()` | `void` | Prints full trace to `System.err` |
+| `printStackTrace(PrintStream)` | `void` | Prints to given stream |
+| `printStackTrace(PrintWriter)` | `void` | Prints to given writer |
+| `getStackTrace()` | `StackTraceElement[]` | Raw stack trace array |
+| `fillInStackTrace()` | `Throwable` | Re-captures current stack — returns `this` |
+| `initCause(Throwable)` | `Throwable` | Sets cause if not set in constructor |
+| `addSuppressed(Throwable)` | `void` | Adds suppressed exception (try-with-resources) |
+| `getSuppressed()` | `Throwable[]` | Returns all suppressed exceptions |
+
+---
+
+### 💻 Real-World Code — Full Throwable API in Production
+
+```java
+public class DatabaseService {
+
+    void connect(String url) throws ServiceException {
+        try {
+            openSocket(url);                          // throws IOException
+        } catch (IOException e) {
+            // Wrap low-level cause in domain exception
+            throw new ServiceException("DB connection failed: " + url, e);
+        }
+    }
+
+    void openSocket(String url) throws IOException {
+        throw new IOException("Connection refused: " + url);
+    }
+}
+
+// Caller
+public class App {
+    public static void main(String[] args) {
+        DatabaseService db = new DatabaseService();
+        try {
+            db.connect("jdbc:mysql://prod-db:3306");
+        } catch (ServiceException e) {
+
+            System.out.println(e.getMessage());
+            // "DB connection failed: jdbc:mysql://prod-db:3306"
+
+            System.out.println(e.toString());
+            // "ServiceException: DB connection failed: jdbc:mysql://prod-db:3306"
+
+            System.out.println(e.getCause().getMessage());
+            // "Connection refused: jdbc:mysql://prod-db:3306"
+
+            e.printStackTrace();
+            // ServiceException: DB connection failed...
+            //     at DatabaseService.connect(App.java:8)
+            //     at App.main(App.java:22)
+            // Caused by: IOException: Connection refused...
+            //     at DatabaseService.openSocket(App.java:14)
+            //     at DatabaseService.connect(App.java:6)
+
+            StackTraceElement[] frames = e.getStackTrace();
+            System.out.println(frames[0].getClassName());   // DatabaseService
+            System.out.println(frames[0].getMethodName());  // connect
+            System.out.println(frames[0].getLineNumber());  // 8
+        }
+    }
+}
+```
+
+---
+
+### 🔬 `StackTraceElement` — What Each Frame Contains
+
+```java
+StackTraceElement frame = e.getStackTrace()[0];
+
+frame.getClassName()   // "com.payments.DatabaseService"
+frame.getMethodName()  // "connect"
+frame.getFileName()    // "DatabaseService.java"
+frame.getLineNumber()  // 8
+frame.isNativeMethod() // false (true for JNI methods)
+```
+
+```
+Stack trace output maps directly to StackTraceElement[]:
+    at com.payments.DatabaseService.connect(DatabaseService.java:8)
+        │                           │       │                    │
+   getClassName()            getMethodName() getFileName()  getLineNumber()
+```
+
+---
+
+### 🔬 `fillInStackTrace()` — When to Use
+
+```java
+class AppException extends RuntimeException {
+
+    // Default: captures stack at throw site
+    AppException(String msg) {
+        super(msg);   // fillInStackTrace() called here
+    }
+
+    // Override: skip stack capture — used for performance in known-safe rethrows
+    @Override
+    public synchronized Throwable fillInStackTrace() {
+        return this;   // no-op — stackTrace stays null
+    }
+}
+```
+
+```java
+// Real use case: rethrowing with original stack preserved
+try {
+    riskyOp();
+} catch (AppException e) {
+    // DON'T do this — loses original stack, captures rethrow site
+    throw new AppException("rewrapped");
+
+    // DO this — preserves original throw site
+    throw e;
+
+    // OR: add context but keep original stack
+    e.fillInStackTrace();   // re-captures current position if needed
+    throw e;
+}
+```
+
+---
+
+### 🔬 `initCause()` — The Two-Phase Cause Pattern
+
+```java
+// Modern way — cause in constructor (preferred)
+throw new ServiceException("failed", cause);
+
+// Legacy way — two-phase (for old APIs that have no cause constructor)
+ServiceException ex = new ServiceException("failed");
+ex.initCause(originalCause);    // can only be called ONCE
+throw ex;
+
+// Second call to initCause() throws:
+ex.initCause(anotherCause);     // IllegalStateException: Can't overwrite cause
+```
+
+`initCause()` exists because `Throwable(Throwable cause)` constructor was added in Java 1.4. Pre-1.4 exceptions had no cause constructor — `initCause()` was the only way to attach a cause.
+
+---
+
+### 🔬 Suppressed Exceptions
+
+```java
+// try-with-resources generates suppressed exceptions automatically
+try (Connection conn = getConnection()) {       // close() may throw
+    conn.execute("SELECT 1");                   // may throw
+}
+// If execute() throws AND close() throws:
+//   execute() exception is the PRIMARY
+//   close() exception is SUPPRESSED (attached to primary)
+
+// Manual suppressed exception handling
+ServiceException primary = new ServiceException("primary failure");
+primary.addSuppressed(new IOException("cleanup also failed"));
+throw primary;
+
+// Reading suppressed:
+catch (ServiceException e) {
+    for (Throwable suppressed : e.getSuppressed()) {
+        logger.warn("Suppressed: {}", suppressed.getMessage());
+    }
+}
+```
+
+---
+
+## ⚔️ Error vs Exception in Java
+
+---
+
+### 🧠 What It Is
+
+Both `Error` and `Exception` extend `Throwable`. The split represents a fundamental design decision: **who is responsible** and **can the program recover**. `Error` = JVM/system broke, not your fault, don't recover. `Exception` = something went wrong in program logic or external systems, handle it.
+
+---
+
+### 🔬 The Split
+
+```
+Throwable
+│
+├── Error                          ← JVM / environment level
+│   │   "The house is on fire"
+│   │   Cause: JVM internals, OS, hardware
+│   │   Recovery: Almost never
+│   │
+│   ├── VirtualMachineError
+│   │   ├── OutOfMemoryError
+│   │   ├── StackOverflowError
+│   │   └── InternalError
+│   │
+│   ├── AssertionError
+│   ├── LinkageError
+│   │   ├── NoClassDefFoundError
+│   │   ├── ClassFormatError
+│   │   └── UnsatisfiedLinkError
+│   │
+│   └── ThreadDeath              ← deprecated Java 20+
+│
+└── Exception                      ← Application level
+    │   "Something went wrong"
+    │   Cause: Logic, I/O, network, bad input
+    │   Recovery: Yes — handle and continue
+    │
+    ├── Checked Exception
+    │   ├── IOException
+    │   ├── SQLException
+    │   └── ClassNotFoundException
+    │
+    └── Unchecked (RuntimeException)
+        ├── NullPointerException
+        ├── IllegalArgumentException
+        └── ArrayIndexOutOfBoundsException
+```
+
+---
+
+### 📋 Core Differences
+
+| | `Error` | `Exception` |
+|--|---------|------------|
+| **Package** | `java.lang` | `java.lang` |
+| **Cause** | JVM / system failure | Application / logic failure |
+| **Checked?** | ❌ Never | ✅ Some (checked), ❌ Some (unchecked) |
+| **Should catch?** | ❌ Almost never | ✅ Yes — that's the point |
+| **Should declare in `throws`?** | ❌ No | ✅ If checked |
+| **Recoverable?** | ❌ Rarely | ✅ Usually |
+| **Compiler enforces handling?** | ❌ No | ✅ For checked only |
+| **Created by** | JVM itself | JVM or application code |
+
+---
+
+### 🔬 Every Major Error — What Triggers It
+
+| Error | Trigger | Prod Cause |
+|-------|---------|-----------|
+| `OutOfMemoryError` | Heap exhausted | Memory leak, large object allocation, too many threads |
+| `StackOverflowError` | Stack exhausted | Unbounded recursion, infinite mutual calls |
+| `NoClassDefFoundError` | Class present at compile, missing at runtime | JAR missing in prod, ClassLoader issue |
+| `AssertionError` | `assert` statement fails with `-ea` flag | Logic invariant violated |
+| `InternalError` | JVM bug | Rare — JVM implementation failure |
+| `UnsatisfiedLinkError` | Native library (`.so`/`.dll`) not found | Missing native lib in prod environment |
+| `ClassFormatError` | Corrupt `.class` file | Bad build, disk corruption |
+| `ExceptionInInitializerError` | Exception thrown in static initializer | Failed `static {}` block — wraps original |
+
+---
+
+### 💻 Real-World Code — Each Error Triggered
+
+**OutOfMemoryError:**
+```java
+// Prod scenario: unbounded cache, no eviction policy
+class SessionCache {
+    private static final Map<String, byte[]> cache = new HashMap<>();
+
+    void store(String sessionId) {
+        cache.put(sessionId, new byte[1024 * 1024]);  // 1MB per session
+        // No eviction — cache grows forever
+        // Under load: millions of sessions → heap exhausted
+    }
+}
+// java.lang.OutOfMemoryError: Java heap space
+// JVM cannot allocate new object — throws from allocator
+```
+
+**StackOverflowError:**
+```java
+// Prod scenario: circular JSON serialization
+class Order {
+    Customer customer;
+}
+class Customer {
+    Order lastOrder;    // circular reference
+}
+// Jackson serializes Order → Customer → Order → Customer → ...
+// Each serialize() call = new stack frame
+// java.lang.StackOverflowError
+//     at Order.getCustomer(Order.java:5)  [repeated 1000x]
+```
+
+**NoClassDefFoundError:**
+```java
+// Compiles fine — MyDependency.jar in compile classpath
+import com.vendor.MyDependency;
+
+public class PaymentService {
+    void pay() {
+        new MyDependency().process();
+    }
+}
+// Prod deploy: MyDependency.jar missing from runtime classpath
+// java.lang.NoClassDefFoundError: com/vendor/MyDependency
+// NOT ClassNotFoundException — class WAS available at compile time
+```
+
+**ExceptionInInitializerError:**
+```java
+class Config {
+    static final int TIMEOUT;
+    static {
+        String val = System.getenv("TIMEOUT_MS");
+        TIMEOUT = Integer.parseInt(val);    // val is null in prod → NumberFormatException
+    }
+}
+
+// First access to Config:
+// java.lang.ExceptionInInitializerError        ← wraps the real cause
+// Caused by: java.lang.NumberFormatException: null
+//     at Config.<clinit>(Config.java:5)
+
+// Every subsequent access to Config:
+// java.lang.NoClassDefFoundError: Could not initialize class Config
+// ← original ExceptionInInitializerError is GONE
+```
+
+🔴 **Prod trap:** First request fails with `ExceptionInInitializerError` (logged). Every subsequent request fails with `NoClassDefFoundError` pointing nowhere near the real cause. Ops team spends hours debugging the wrong thing.
+
+---
+
+### 💻 Real-World Code — Exception Recovery
+
+```java
+// Exception = recoverable — program continues
+public class DataPipeline {
+
+    void processFiles(List<Path> files) {
+        for (Path file : files) {
+            try {
+                process(file);
+            } catch (IOException e) {
+                // One file failed — log, skip, continue with others
+                log.error("Failed to process {}: {}", file, e.getMessage(), e);
+                metrics.increment("pipeline.file.failures");
+                // Pipeline continues — not a JVM crisis
+            }
+        }
+    }
+
+    void process(Path file) throws IOException {
+        Files.readAllBytes(file);   // may throw IOException
+    }
+}
+```
+
+---
+
+### 🔬 When Catching Error Is Acceptable — The 3 Exceptions
+
+```java
+// 1. Top-level framework loop — log and restart worker
+class WorkerThread extends Thread {
+    public void run() {
+        while (!shutdown) {
+            try {
+                processNextTask();
+            } catch (Exception e) {
+                log.error("Task failed", e);
+            } catch (Error e) {
+                log.error("FATAL: worker dying", e);
+                // Can't recover — let thread die
+                // But at least we logged it
+                throw e;   // rethrow — don't swallow Error
+            }
+        }
+    }
+}
+
+// 2. StackOverflowError — shallow stack at catch point, can recover
+try {
+    parseDeepJson(input);
+} catch (StackOverflowError e) {
+    // Stack was deep in parseDeepJson, now we're shallow — safe
+    throw new InvalidInputException("Input nesting too deep", e);
+}
+
+// 3. Testing — asserting that an Error is thrown
+assertThrows(OutOfMemoryError.class, () -> allocateHugeArray());
+```
+
+---
+
+### 🔬 `NoClassDefFoundError` vs `ClassNotFoundException`
+
+```
+ClassNotFoundException          vs       NoClassDefFoundError
+──────────────────────────────────────────────────────────────
+Checked Exception                        Error (unchecked)
+
+Thrown when:                             Thrown when:
+Class.forName("com.X")                   Class was present at
+  → class not in classpath               compile time but
+  → explicit dynamic load fails          MISSING at runtime
+
+Cause:                                   Cause:
+Dynamic class loading failed             Classpath mismatch
+(you asked for a class                   between build and
+that doesn't exist)                      deployment
+
+catch (ClassNotFoundException e)         Almost impossible to
+→ handle gracefully, try                 handle → deployment
+  alternative                            is broken
+```
+
+```java
+// ClassNotFoundException — you caused this, handle it
+try {
+    Class<?> driver = Class.forName("com.mysql.cj.jdbc.Driver");
+} catch (ClassNotFoundException e) {
+    throw new RuntimeException("MySQL driver not in classpath", e);
+}
+
+// NoClassDefFoundError — deployment is broken, can't handle
+// Appears at: new MyService() where MyService's dependency is missing
+// No point catching — fix the deployment
+```
+
+---
+
+## 🌳 Exception Hierarchy Tree
+
+---
+
+### 🧠 What It Is
+
+The complete inheritance tree rooted at `Throwable`. Every class in this tree can be thrown, caught, and declared. Knowing the tree tells you exactly what a `catch` block catches, what `throws` declares, and why catch order matters.
+
+#### Exception:
+Most of the cases exceptions are caused by our program and these are recoverable.
+Ex : If FileNotFoundException occurs then we can use local file and we can continue rest of the program execution normally.
+
+#### Error:
+Most of the cases errors are not caused by our program these are due to lack of system resources and these are non-recoverable.
+Ex :If OutOfMemoryError occurs being a programmer we can't do anything the program will be terminated abnormally.System Admin or Server Admin is responsible to raise/increase heap memory
+---
+
+### 🔬 Full Hierarchy Tree
+
+```
+java.lang.Object
+       │
+java.lang.Throwable  (implements Serializable)
+       │
+       ├──────────────────────────────────────────────────────┐
+       │                                                      │
+java.lang.Error                                  java.lang.Exception
+(unchecked — never catch)                        (root of all exceptions)
+       │                                                      │
+       ├── VirtualMachineError                                │
+       │   ├── OutOfMemoryError                               │
+       │   ├── StackOverflowError                             │
+       │   └── InternalError                                  │
+       │                                                      │
+       ├── LinkageError                                       │
+       │   ├── NoClassDefFoundError                           │
+       │   ├── ClassCircularityError                          │
+       │   ├── ClassFormatError                               │
+       │   │   └── UnsupportedClassVersionError               │
+       │   ├── ExceptionInInitializerError                    │
+       │   ├── IncompatibleClassChangeError                   │
+       │   │   ├── AbstractMethodError                        │
+       │   │   ├── NoSuchFieldError                           │
+       │   │   └── NoSuchMethodError                          │
+       │   └── UnsatisfiedLinkError                           │
+       │                                                      │
+       ├── AssertionError                                     │
+       ├── ThreadDeath (deprecated)                           │
+       └── IOError                                            │
+                                                              │
+                              ┌───────────────────────────────┘
+                              │
+                    java.lang.Exception
+                              │
+          ┌───────────────────┴──────────────────────────┐
+          │                                              │
+   Checked Exceptions                        java.lang.RuntimeException
+   (compiler enforced)                       (unchecked — not enforced)
+          │                                              │
+          ├── IOException                                ├── NullPointerException
+          │   ├── FileNotFoundException                  ├── IllegalArgumentException
+          │   ├── SocketException                        │   └── NumberFormatException
+          │   │   └── ConnectException                   ├── IllegalStateException
+          │   ├── SSLException                           ├── IndexOutOfBoundsException
+          │   └── EOFException                           │   ├── ArrayIndexOutOfBoundsException
+          │                                              │   └── StringIndexOutOfBoundsException
+          ├── SQLException                               ├── ClassCastException
+          │   └── SQLTimeoutException                    ├── ArithmeticException
+          │                                              ├── UnsupportedOperationException
+          ├── ClassNotFoundException                     ├── ConcurrentModificationException
+          ├── CloneNotSupportedException                 ├── NoSuchElementException
+          ├── InterruptedException                       ├── NegativeArraySizeException
+          ├── ReflectiveOperationException               ├── ArrayStoreException
+          │   ├── ClassNotFoundException                 ├── EnumConstantNotPresentException
+          │   ├── NoSuchMethodException                  └── StackOverflowError
+          │   ├── NoSuchFieldException                       (also under Error)
+          │   └── IllegalAccessException                
+          └── ParseException                            
+```
+
+---
+
+### 📋 The Only Two Categories That Matter in Practice
+
+| Category | Root | Compiler Enforced | Must Declare | Should Catch |
+|----------|------|-------------------|--------------|--------------|
+| **Checked** | `Exception` (not via `RuntimeException`) | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Unchecked** | `RuntimeException` | ❌ No | ❌ No | Situational |
+| **Error** | `Error` | ❌ No | ❌ No | ❌ Almost never |
+
+---
+
+### 🔬 Checked Exception Subtree — Most Used in Prod
+
+The exceptions which are checked by the compiler whether programmer handling or not, for smooth execution of the program at runtime, are called checked exceptions.
+1. HallTicketMissingException
+2. PenNotWorkingException
+3. FileNotFoundException
+
+```
+IOException  ──────────────────────────────────────────────┐
+├── FileNotFoundException    (file doesn't exist)           │
+├── EOFException             (unexpected end of stream)     │  All require
+├── SocketException                                         │  try-catch or
+│   └── ConnectException     (connection refused)           │  throws decl
+├── SSLException             (TLS handshake failure)        │
+└── HttpRetryException                                      │
+                                                            │
+SQLException ───────────────────────────────────────────────┤
+├── SQLTimeoutException      (query timeout)                │
+├── SQLIntegrityConstraintViolationException                │
+└── BatchUpdateException                                    │
+                                                            │
+InterruptedException ───────────────────────────────────────┘
+(thread interrupted during sleep/wait)
+```
+
+---
+
+### 🔬 Unchecked Exception Subtree — Most Common Bugs
+The exceptions which are not checked by the compiler whether programmer handing or not ,are called unchecked exceptions.
+1. BombBlastException
+2. ArithmeticException
+3. NullPointerException
+
+```
+RuntimeException
+│
+├── NullPointerException          ← most common in prod
+├── IllegalArgumentException      ← bad method input
+│   └── NumberFormatException     ← parseInt("abc")
+├── IllegalStateException         ← object in wrong state
+├── UnsupportedOperationException ← unmodifiableList().add()
+├── ClassCastException            ← (String) integerObj
+├── ArithmeticException           ← divide by zero
+├── ConcurrentModificationException ← modify list while iterating
+├── NoSuchElementException        ← iterator.next() on empty
+│
+└── IndexOutOfBoundsException
+    ├── ArrayIndexOutOfBoundsException   ← arr[10] on arr[5]
+    └── StringIndexOutOfBoundsException  ← str.charAt(100)
+```
+
+Note:RuntimeException and its child classes, Error and its child classes are unchecked and all the remaining are considered as checked exceptions.
+
+Note: Whether exception is checked or unchecked compulsory it should occurs at runtime only and there is no chance of occurring any exception at compile time. 
+
+---
+
+### Fully checked Vs Partially checked
+A checked exception is said to be fully checked if and only if all its child classes are also checked.
+Example:
+1) IOException
+2) InterruptedException
+
+A checked exception is said to be partially checked if and only if some of its child classes are unchecked.
+Example:
+Exception
+Note :The only possible partially checked exceptions in java are:
+1. Throwable.
+2. Exception.
+
+---
+
+### 🔬 Inheritance Determines What Gets Caught
+
+```java
+// catch(IOException) catches ALL of these:
+//   FileNotFoundException  (subclass of IOException)
+//   SocketException        (subclass of IOException)
+//   ConnectException       (subclass of SocketException → IOException)
+
+try {
+    Files.readAllBytes(path);
+} catch (IOException e) {
+    // catches FileNotFoundException, EOFException, all subtypes
+}
+
+// catch(Exception) catches ALL checked + ALL unchecked:
+try {
+    anything();
+} catch (Exception e) {
+    // catches IOException, SQLException, NPE, IllegalArgument...
+    // does NOT catch Error subtypes
+}
+
+// catch(Throwable) catches EVERYTHING:
+try {
+    anything();
+} catch (Throwable t) {
+    // catches Exception + Error — use only in framework code
+}
+```
+
+```
+Catch coverage visualization:
+
+catch(FileNotFoundException)  ──────────────────────┐
+catch(IOException)            ─────────────────┐    │ ⊂
+catch(Exception)              ────────────┐    │ ⊂  │
+catch(Throwable)              ───────┐    │ ⊂  │    │
+                                     │    │    │    │
+                             Error ──┘    │    │    │
+                         Exception  ──────┘    │    │
+                          IOException  ─────────┘    │
+                     FileNotFoundException  ──────────┘
+```
+
+---
+
+### 💻 Real-World Code — Hierarchy Drives Catch Strategy
+
+```java
+public class FileUploadService {
+
+    void upload(String path, byte[] data) throws IOException {
+        try {
+            writeToStorage(path, data);
+        } catch (FileNotFoundException e) {
+            // Most specific — directory doesn't exist
+            createDirectory(path);
+            writeToStorage(path, data);              // retry
+        } catch (SSLException e) {
+            // Specific — TLS issue with storage backend
+            throw new StorageAuthException("TLS failed", e);
+        } catch (IOException e) {
+            // General — anything else IO-related
+            throw new StorageException("Upload failed", e);
+        }
+        // Note: most specific subclass caught FIRST
+        // FileNotFoundException before IOException — mandatory
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Put `catch(IOException)` before `catch(FileNotFoundException)` — compiler error: "exception FileNotFoundException has already been caught."
+
+---
+
+### 🔬 Hierarchy — Package Locations
+
+| Package | Exceptions |
+|---------|-----------|
+| `java.lang` | `Throwable`, `Error`, `Exception`, `RuntimeException`, `NPE`, `IllegalArgument`, `ClassCast`, `ArithmeticException`, `StackOverflow` |
+| `java.io` | `IOException`, `FileNotFoundException`, `EOFException` |
+| `java.net` | `SocketException`, `ConnectException`, `UnknownHostException` |
+| `java.sql` | `SQLException`, `SQLTimeoutException` |
+| `java.util` | `NoSuchElementException`, `ConcurrentModificationException` |
+| `java.lang.reflect` | `ReflectiveOperationException` and subtypes |
+
+---
+
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — `toString()` vs `getMessage()` in logs**
+
+```java
+catch (Exception e) {
+    log.error("Failed: " + e.getMessage());   // ❌ — getMessage() can be null
+    log.error("Failed: " + e);               // ✅ — calls toString() = "ClassName: msg"
+    log.error("Failed", e);                  // ✅✅ — logs message + full stack trace
+}
+```
+
+`getMessage()` returns `null` if exception was created with `new RuntimeException()` (no message). `null` in string concat → `"Failed: null"` in logs. Senior devs miss this because most exceptions they write always have messages.
+
+---
+
+**🪤 Trap 2 — `printStackTrace()` is not production logging**
+
+```java
+catch (Exception e) {
+    e.printStackTrace();    // ❌ NEVER in production code
+    // Goes to System.err
+    // Not captured by log aggregators (Splunk, ELK, CloudWatch)
+    // No log level, no correlation ID, no structured format
+    // In async contexts: interleaves with other thread output → garbled
+}
+
+// ✅ Production:
+catch (Exception e) {
+    log.error("Payment processing failed for order {}", orderId, e);
+    // SLF4J/Logback captures full stack trace in structured format
+}
+```
+
+---
+
+**🪤 Trap 3 — Catching `Throwable` catches `Error`**
+
+```java
+// Looks defensive. Is dangerous.
+try {
+    processPayment();
+} catch (Throwable t) {         // catches OutOfMemoryError, StackOverflowError
+    log.error("caught", t);
+    // JVM is now in undefined state
+    // Logging itself may throw OutOfMemoryError
+    // Returning normally from here = pretending JVM is fine
+}
+```
+
+Catching `Throwable` is only acceptable in:
+- Top-level thread loop (to log + restart)
+- Framework infrastructure (Spring's `DispatcherServlet`)
+- Never in business logic
+
+---
+
+**🪤 Trap 4 — `fillInStackTrace()` in exception chaining doubles stack cost**
+
+```java
+try {
+    dbCall();
+} catch (SQLException e) {
+    RuntimeException wrapped = new RuntimeException("DB failed", e);
+    // wrapped.fillInStackTrace() called in RuntimeException constructor
+    // Now TWO stack traces in memory:
+    //   1. SQLException's stackTrace (original)
+    //   2. RuntimeException's stackTrace (wrap site)
+    // Both are StackTraceElement[] arrays on heap
+    throw wrapped;
+}
+```
+
+Deep call stacks (50+ frames) × frequent exception wrapping = significant heap allocation per request. Profilers show this as `Throwable.fillInStackTrace()` high allocation rate.
+
+---
+
+**🪤 Trap 5 — `Throwable` is `Serializable` — stack traces serialize too**
+
+```java
+// Throwable implements Serializable
+// StackTraceElement implements Serializable
+// Sending exceptions over RPC/messaging:
+objectOutputStream.writeObject(exception);
+// Serializes: message + cause chain + FULL stack trace array
+// Large stack traces = large serialized payload
+// In high-throughput RPC = network + GC overhead
+```
+
+RPC frameworks (gRPC, RMI) that serialize exceptions over wire pay the cost of full stack trace serialization. Prod fix: strip stack trace before sending — `exception.setStackTrace(new StackTraceElement[0])`.
+
+**🪤 Trap 6 — `OutOfMemoryError` is sometimes catchable and recoverable**
+
+```java
+// Large image processing — try, fall back to smaller allocation
+try {
+    byte[] fullRes = new byte[500 * 1024 * 1024];  // 500MB
+    processFullResolution(fullRes);
+} catch (OutOfMemoryError e) {
+    // Heap couldn't satisfy 500MB — but smaller allocation might work
+    byte[] lowRes = new byte[10 * 1024 * 1024];    // 10MB
+    processLowResolution(lowRes);
+    // Valid pattern IF: catch site is shallow, no other threads affected
+}
+```
+
+Valid only when: the failed allocation was the cause, stack is shallow at catch point, and other threads are not affected. If OOM happened because heap is genuinely full — any allocation inside catch throws again.
+
+---
+
+**🪤 Trap 7 — `Error` subclasses are unchecked but not `RuntimeException`**
+
+```java
+void method() throws Exception {    // does NOT cover Error subtypes
+    // ...
+}
+
+// Error is NOT a subclass of Exception
+// throws Exception  ← does NOT mean "throws anything"
+// throws Throwable  ← means "throws anything"
+
+// Common mistake:
+try {
+    method();
+} catch (Exception e) {
+    // OutOfMemoryError thrown inside method()
+    // NOT caught here — Error bypasses catch(Exception)
+}
+```
+
+`catch(Exception e)` does **not** catch `Error`. Only `catch(Throwable t)` does. Senior devs write "catch-all" handlers with `catch(Exception e)` thinking it covers everything.
+
+---
+
+**🪤 Trap 8 — `AssertionError` only fires with `-ea` flag**
+
+```java
+void transfer(double amount) {
+    assert amount > 0 : "amount must be positive";  // silent without -ea
+    // In prod: -ea is almost NEVER enabled
+    // This assertion NEVER fires in production
+    // Prod deploy with amount = -500 → silent wrong transfer
+}
+```
+
+`assert` statements are **disabled by default**. JVM flag `-ea` (enable assertions) must be explicitly passed. Prod JVMs almost never use `-ea`. Using `assert` for input validation = validation that silently disappears in prod.
+
+---
+
+**🪤 Trap 9 — `ExceptionInInitializerError` wraps the real cause — logging must unwrap**
+
+```java
+catch (ExceptionInInitializerError e) {
+    log.error("Init failed: " + e.getMessage());    // null — no message
+    log.error("Init failed: " + e.getCause());      // ← real cause is HERE
+    // e.getMessage() = null always
+    // e.getCause() = the actual exception from static block
+}
+```
+
+`ExceptionInInitializerError` wraps the original exception as its **cause**. Its own `getMessage()` returns `null`. Logging only the outer error = logging nothing useful.
+
+**🪤 Trap 10 — `RuntimeException` IS-A `Exception` — catch(Exception) catches unchecked too**
+
+```java
+try {
+    list.get(100);                          // IndexOutOfBoundsException (unchecked)
+} catch (Exception e) {
+    // ← catches it — RuntimeException extends Exception
+    System.out.println("caught: " + e);
+}
+// Many devs think catch(Exception) = catch(CheckedException only)
+// Wrong. It catches RuntimeException subtypes too.
+```
+
+---
+
+**🪤 Trap 11 — `NumberFormatException` is unchecked but feels checked**
+
+```java
+// Feels like it should be checked — parsing user input, can clearly fail
+int port = Integer.parseInt(System.getenv("PORT"));
+// NumberFormatException is RuntimeException → unchecked
+// No compiler warning if you don't catch it
+// Prod: PORT env var missing → null → parseInt(null) → NumberFormatException
+// App crashes silently on startup
+```
+
+`NumberFormatException extends IllegalArgumentException extends RuntimeException`. Compiler never warns you. Uncaught in startup code = silent crash.
+
+---
+
+**🪤 Trap 12 — `InterruptedException` is checked but almost always mishandled**
+
+```java
+// ❌ Swallowed — the interrupted flag is now lost forever
+try {
+    Thread.sleep(1000);
+} catch (InterruptedException e) {
+    // do nothing — "it'll be fine"
+}
+
+// ❌ Logged but flag still lost
+try {
+    Thread.sleep(1000);
+} catch (InterruptedException e) {
+    log.warn("interrupted");  // flag not restored
+}
+
+// ✅ Correct — restore interrupt flag
+try {
+    Thread.sleep(1000);
+} catch (InterruptedException e) {
+    Thread.currentThread().interrupt();   // restore the flag
+    throw new RuntimeException("Task interrupted", e);
+}
+```
+
+Swallowing `InterruptedException` without restoring the interrupt flag breaks thread pool shutdown, graceful service termination, and `Future.cancel()`. Happens constantly because compiler forces you to handle it but doesn't enforce **correct** handling.
+
+---
+
+**🪤 Trap 13 — `Error` subclasses are in `java.lang` but some feel like `Exception`**
+```java
+// AssertionError feels like a runtime exception — it's an Error
+// NoSuchMethodError feels like reflection exception — it's an Error
+// AbstractMethodError feels like a class issue — it's an Error
+
+catch (Exception e) { }   // none of the above are caught here
+// They bypass all Exception handlers silently
+// Classic prod symptom: catch-all handler doesn't catch the crash
+```
+
+---
+
+**🪤 Trap 14 — Hierarchy determines `throws` contract for overriding**
+
+```java
+class Base {
+    void process() throws IOException { }
+}
+
+class Child extends Base {
+    // ✅ Can throw narrower (subclass of IOException)
+    void process() throws FileNotFoundException { }
+
+    // ✅ Can throw nothing
+    // void process() { }
+
+    // ❌ Cannot throw broader or unrelated checked exception
+    // void process() throws Exception { }        // COMPILE ERROR
+    // void process() throws SQLException { }     // COMPILE ERROR
+}
+```
+
+Overriding method can only throw the **same or narrower** checked exceptions. Unchecked exceptions have no restriction — you can add/remove freely. Violates Liskov Substitution if broader throws were allowed — caller prepared for `IOException` would be blindsided by `SQLException`.
+
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Linked list — cause chain; array — stack trace**
+
+```
+Cause chain = singly linked list of Throwable objects:
+  ServiceException
+       │ cause →
+  IOException
+       │ cause →
+  SocketException
+       │ cause → null
+
+Traversal:
+  Throwable t = e;
+  while (t != null) {
+      System.out.println(t.getMessage());
+      t = t.getCause();          // linked list traversal
+  }
+
+Stack trace = array of StackTraceElement:
+  stackTrace[0]  = throw site    (most recent)
+  stackTrace[n]  = entry point   (oldest)
+  Random access: O(1)
+  Capture cost:  O(depth) — fillInStackTrace walks the stack
+```
+
+**Underlying primitive: Class state machine — class initialization states**
+
+The JVM maintains initialization state per class:
+
+```
+Class States:
+  UNINITIALIZED
+       │ class loading triggered
+       ▼
+  INITIALIZING  ← <clinit> running (static blocks)
+       │
+       ├── success → INITIALIZED  ← normal — class usable
+       │
+       └── exception thrown
+                │
+                ▼
+           FAILED  ← permanent failure state
+                │
+                Any future access to class
+                ▼
+           NoClassDefFoundError thrown
+           (original ExceptionInInitializerError is gone)
+```
+
+Once a class enters `FAILED` state, it **never recovers** in that ClassLoader. Only a new ClassLoader can retry. This is a JVM-level state machine — not fixable at the Java level.
+
+**Underlying primitive: Tree + instanceof — `catch` matching is linear search on type hierarchy**
+
+```
+When exception E is thrown, JVM checks each catch block in order:
+  for each catch(Type T):
+      if E instanceof T → execute this catch, skip rest
+
+instanceof = tree traversal upward:
+  Is E exactly T?           → yes → match
+  Is E's parent exactly T?  → yes → match
+  Is E's parent's parent T? → yes → match
+  ... up to Throwable
+  No match found            → unwind to caller frame
+
+Cost: O(depth of hierarchy) per catch block
+      O(catch_blocks × depth) total per exception
+      Irrelevant in practice — exception paths are cold
+```
+
+This is why **most specific must come first** — JVM checks top to bottom, first match wins. `catch(IOException)` before `catch(FileNotFoundException)` means `FileNotFoundException` is caught by `IOException` (because `FileNotFoundException instanceof IOException = true`) — `FileNotFoundException` block is unreachable → compile error.
+
+---
+
+### 📊 Throwable Constructors
+
+| Constructor | Use Case |
+|-------------|---------|
+| `Throwable()` | No message, no cause |
+| `Throwable(String message)` | Message only |
+| `Throwable(Throwable cause)` | Cause only — message = cause.toString() |
+| `Throwable(String message, Throwable cause)` | Both — **most common in prod** |
+| `Throwable(String, Throwable, boolean, boolean)` | `protected` — suppress stack capture or suppression; for performance-critical custom exceptions |
+
+```java
+// The 5th constructor — used in frameworks for lightweight exceptions
+protected Throwable(String message, Throwable cause,
+                    boolean enableSuppression,
+                    boolean writableStackTrace) {
+    // writableStackTrace = false → fillInStackTrace() skipped
+    // enableSuppression = false → addSuppressed() is no-op
+    // Result: ultra-lightweight exception object — no stack array allocated
+}
+```
+
+---
+
+### 📊 Error vs Exception — Decision Table
+
+| Situation | Throw | Catch? |
+|-----------|-------|--------|
+| Heap exhausted | `OutOfMemoryError` | Only if specific large alloc failed |
+| Stack exhausted | `StackOverflowError` | Only if input was too deep |
+| Missing class at runtime | `NoClassDefFoundError` | ❌ Fix deployment |
+| Static block threw | `ExceptionInInitializerError` | ❌ Fix the init code |
+| File not found | `IOException` | ✅ Handle or rethrow |
+| Null dereference | `NullPointerException` | ✅ Fix code or validate input |
+| Bad method arg | `IllegalArgumentException` | ✅ Validate at boundary |
+| DB unreachable | `SQLException` | ✅ Retry or fallback |
+| Dynamic class load fails | `ClassNotFoundException` | ✅ Try alternative |
+
+---
+

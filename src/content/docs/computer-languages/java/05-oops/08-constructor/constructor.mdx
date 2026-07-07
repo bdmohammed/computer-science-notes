@@ -1,0 +1,540 @@
+---
+title: Java Constructors
+slug: computer-languages/java/oops/constructor
+description: Master Java instance initialization — execution order, inheritance flow, constructor chaining, forward references, and production traps like polymorphic calls in constructors.
+sidebar:
+  label: "Constructors"
+  badge:
+    text: JVM Internals
+    variant: tip
+tags: [java, instance, jvm, object-creation, initialization, constructor, interview]
+---
+
+## 🏗️ Constructors in Java
+
+---
+
+### 🧠 What It Is
+
+A constructor is a **special method** invoked by the JVM during `new` to initialize an object. It is **not inherited**, **not a method** (no return type, not in method table), and compiles into `<init>()` bytecode. Its job: get the object from "memory allocated" to "ready to use."
+
+---
+
+### 📋 Constructor Rules
+
+| Rule | Detail |
+|------|--------|
+| Name | Must **exactly** match class name |
+| Return type | **None** — not even `void` |
+| Access modifiers | `public`, `protected`, `private`, `default` — all valid |
+| `abstract`, `final`, `static` | ❌ Never — compile error |
+| Can throw exceptions | ✅ Checked and unchecked |
+| Can be `synchronized` | ❌ Not directly — compile error |
+| Inheritance | ❌ Not inherited |
+| Overriding | ❌ Not possible (not inherited) |
+| Overloading | ✅ Multiple constructors, different signatures |
+```
+1. Parent class constructor by default won't available to the Child. Hence Inheritance concept is not applicable for constructors and hence overriding concept also not applicable to the constructors. But constructors can be overloaded.
+2. We can take constructor in any java class including abstract class also but we can't take constructor inside interface.
+3. class can have any number of constructors but constructor name must be same as class name and constructor must not have return type.
+```
+---
+
+### 🔬 Types of Constructors
+
+```
+Constructors
+├── Default Constructor
+│   ├── Compiler-provided (no-arg, empty body)
+│   └── Only when NO constructor is explicitly defined
+├── No-arg Constructor
+│   └── Explicitly written, zero parameters
+├── Parameterized Constructor
+│   └── One or more parameters
+└── Copy Constructor
+    └── Takes same-class instance as parameter (no JVM magic — manual)
+```
+
+---
+
+### 💻 Default Constructor — The Hidden Rule
+1. For every class in java including abstract classes also constructor concept is applicable.
+2. If we are not writing at least one constructor then compiler will generate default constructor.
+3. If we are writing at least one constructor then compiler won't generate any default constructor. Hence every class contains either compiler generated constructor (or) programmer written constructor but not both simultaneously.
+
+```java
+class Service {
+    int port;
+    // No constructor written → compiler inserts:
+    // Service() { super(); }
+}
+
+class SecureService extends Service {
+    String key;
+    // compiler inserts:
+    // SecureService() { super(); }  ← calls Service(), which calls Object()
+}
+
+class Test {
+    void Test(){}
+}
+class Test {
+    Test() {
+        super();
+    }
+    void Test(){}
+}
+
+```
+
+```java
+class Server {
+    Server(int port) { }          // explicit constructor defined
+    // compiler inserts:
+    // super(); Compiler inserts super(); as FIRST statement inside constructor.  
+}
+
+class ApiServer extends Server {
+    ApiServer() {
+        // implicit super() → tries Server() → DOESN'T EXIST
+        // COMPILE ERROR: no suitable constructor found
+    }
+}
+```
+
+🔴 **What breaks:** Adding a parameterized constructor to a base class breaks all subclasses that relied on the implicit no-arg. Happens constantly in team codebases. No warning — just compile failure in a distant subclass.
+
+---
+
+## Overloaded Constructors
+Having multiple constructors in same class is called: **constructor overloading**. Each constructor must have a unique parameter list (different number or types). This allows flexible object creation with different initial data.
+```java
+class Test {
+
+    Test() { this(0); }  // calls Test(int) — constructor chaining
+    Test(int x) { this(10f); }  // calls Test(double)
+    Test(double y ) { this("default"); }  // calls Test(String)
+    Test(String s) { }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        new Test(); // calls Test() → Test(int) → Test(double) → Test(String)
+        new Test(5); // calls Test(int) → Test(double) → Test(String)
+        new Test("hello"); // calls Test(String) directly
+
+        new Test(5l); // Test(double) → Test(String)
+
+    }
+}
+```
+
+```java
+class Test {
+
+    Test() { }
+    Test(int x) { }
+    Test(double y ) { }
+    Test(String s) { }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        new Test(); // calls Test()
+        new Test(5); // calls Test(int)
+        new Test("hello"); // calls Test(String)
+        new Test(5l); // Test(double)
+    }
+}
+```
+
+```java
+class Test {
+    static int count = 0;
+    {
+        count++;
+    }
+    Test() { }
+    Test(int x) { }
+    Test(String s) { }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        new Test();
+        new Test(5);
+        new Test("hello");
+        System.out.println(Test.count);  // Output: 3
+        // it tells no. of objects created because instance initializer block is executed every time an object is created, regardless of which constructor is called.
+    }
+}
+
+```
+
+---
+
+### 💻 Real-World Code — Builder Pattern Constructor Design
+
+```java
+public class HttpRequest {
+    private final String url;
+    private final String method;
+    private final int timeoutMs;
+    private final Map<String, String> headers;
+
+    // Private: forces builder usage
+    private HttpRequest(Builder builder) {
+        this.url       = Objects.requireNonNull(builder.url, "url required");
+        this.method    = builder.method;
+        this.timeoutMs = builder.timeoutMs;
+        this.headers   = Collections.unmodifiableMap(builder.headers);
+    }
+
+    public static class Builder {
+        private String url;
+        private String method = "GET";
+        private int timeoutMs = 3000;
+        private Map<String, String> headers = new HashMap<>();
+
+        public Builder url(String url)         { this.url = url; return this; }
+        public Builder method(String method)   { this.method = method; return this; }
+        public Builder timeout(int ms)         { this.timeoutMs = ms; return this; }
+        public Builder header(String k, String v) {
+            this.headers.put(k, v); return this;
+        }
+        public HttpRequest build()             { return new HttpRequest(this); }
+    }
+}
+
+// Usage:
+HttpRequest req = new HttpRequest.Builder()
+    .url("https://api.payments.com/charge")
+    .method("POST")
+    .timeout(5000)
+    .header("Authorization", "Bearer token")
+    .build();
+```
+
+🔴 **What breaks if done wrong:** Public parameterized constructor with 8+ fields → caller passes args in wrong order (two `String` params swapped) → silent bug, no compile error, wrong data sent to payment API.
+
+---
+
+### 🔀 Constructor Chaining — `this()` and `super()`
+
+```
+this()  → calls another constructor in SAME class
+super() → calls constructor in PARENT class
+
+1. Both MUST be the first statement in constructor body.
+
+2. We can use either super() (or) this() but not both simultaneously. 
+Output:
+Compile time error.
+Call to this must be first statement in constructor
+
+
+```
+
+```java
+public class RateLimiter {
+    private final int maxRequests;
+    private final long windowMs;
+    private final String scope;
+
+    // Terminal constructor — all real logic here
+    public RateLimiter(int maxRequests, long windowMs, String scope) {
+        if (maxRequests <= 0) throw new IllegalArgumentException("maxRequests must be > 0");
+        this.maxRequests = maxRequests;
+        this.windowMs    = windowMs;
+        this.scope       = scope;
+    }
+
+    // Convenience overloads chain to terminal
+    public RateLimiter(int maxRequests, long windowMs) {
+        this(maxRequests, windowMs, "global");    // ← this()
+    }
+
+    public RateLimiter(int maxRequests) {
+        this(maxRequests, 1000L);                 // ← this()
+    }
+}
+```
+
+```
+Chaining flow for new RateLimiter(100):
+  RateLimiter(100)
+       │ this(100, 1000L)
+       ▼
+  RateLimiter(100, 1000L)
+       │ this(100, 1000L, "global")
+       ▼
+  RateLimiter(100, 1000L, "global")  ← validation + assignment runs here
+       │
+  returns up the chain
+```
+
+✅ **Pattern:** All validation in one terminal constructor. Overloads just supply defaults. Prevents duplicated validation logic across constructors.
+
+---
+
+### 🔒 `super()` — Implicit vs Explicit
+
+```java
+class EventSource {
+    String name;
+
+    EventSource(String name) {
+        this.name = name;
+    }
+    // No no-arg constructor
+}
+
+class KafkaSource extends EventSource {
+
+    KafkaSource(String topic) {
+        super(topic);               // ✅ explicit — required, no default in parent
+        // anything after this is fine
+    }
+
+    KafkaSource() {
+        // implicit super() → EventSource() → DOESN'T EXIST → COMPILE ERROR
+    }
+}
+```
+
+```
+super() placement rule:
+┌─────────────────────────────────────────────────┐
+│  Constructor body                               │
+│  ┌─────────────────────┐                        │
+│  │ super(...) or this()│ ← must be LINE 1       │
+│  └─────────────────────┘                        │
+│  ... rest of constructor body ...               │
+└─────────────────────────────────────────────────┘
+
+If neither written → compiler inserts super() at line 1.
+If parent has no no-arg → compile error.
+```
+
+---
+
+### 🔒 Private Constructor — Patterns
+
+```java
+// Pattern 1: Singleton
+public class ConfigManager {
+    private static final ConfigManager INSTANCE = new ConfigManager();
+
+    private ConfigManager() {
+        // load config once
+    }
+
+    public static ConfigManager getInstance() { return INSTANCE; }
+}
+
+// Pattern 2: Utility class — prevent instantiation
+public final class StringUtils {
+    private StringUtils() {
+        throw new UnsupportedOperationException("Utility class");
+    }
+    public static String sanitize(String s) { ... }
+}
+
+// Pattern 3: Static factory with private constructor
+public class Connection {
+    private Connection() { }
+    public static Connection create() { return new Connection(); }
+    public static Connection createPooled() {
+        Connection c = new Connection();
+        c.pooled = true;
+        return c;
+    }
+}
+```
+
+---
+
+### ⚠️ Exception in Constructor
+
+```java
+public class FileProcessor {
+    private final FileInputStream fis;
+    private final BufferedReader reader;
+
+    public FileProcessor(String path) throws IOException {
+        fis    = new FileInputStream(path);   // may throw
+        reader = new BufferedReader(new InputStreamReader(fis));
+        // If line above throws: fis is open, reader is null
+        // Object is HALF-INITIALIZED — fis leaks
+    }
+}
+```
+
+🔴 **Prod bug:** Object creation fails midway. `fis` is open. Garbage collector won't call `close()` (no finalizer). File descriptor leaks. Under load, exhausts OS file descriptors → `Too many open files`.
+
+**Fix:**
+```java
+public FileProcessor(String path) throws IOException {
+    try {
+        fis    = new FileInputStream(path);
+        reader = new BufferedReader(new InputStreamReader(fis));
+    } catch (IOException e) {
+        if (fis != null) fis.close();    // cleanup partial state
+        throw e;                          // rethrow — object creation fails cleanly
+    }
+}
+```
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — Constructor looks like a method**
+
+```java
+class Cache {
+    int size;
+
+    void Cache() {              // ← has return type (void) → NOT a constructor
+        size = 100;             //   it's a regular method named Cache
+    }
+}
+
+Cache c = new Cache();          // size = 0 — compiler-generated no-arg constructor ran
+c.Cache();                      // this is just a method call
+```
+
+`void Cache()` is a **method**, not a constructor. Compiler provides the real no-arg constructor. `size` stays `0`. Silent initialization failure.
+
+---
+
+**🪤 Trap 2 — `this()` not first statement**
+
+```java
+class Worker {
+    Worker() {
+        System.out.println("init");
+        this(5);               // COMPILE ERROR: call to this must be first statement
+    }
+    Worker(int threads) { }
+}
+```
+
+Even a single statement before `this()` or `super()` is a compile error — no exceptions, no workarounds. JVM requires parent to be initialized before any code runs.
+
+---
+
+**🪤 Trap 3 — Constructors and serialization**
+
+```java
+class Token implements Serializable {
+    private final String secret;
+
+    Token(String secret) {
+        if (secret == null) throw new IllegalArgumentException();
+        this.secret = secret;
+    }
+}
+
+// Deserialization bypasses the constructor entirely
+// Validation in constructor → does NOT run during readObject()
+// secret can be null after deserialization
+// Attacker can craft a serialized byte stream with null secret
+```
+
+`ObjectInputStream.readObject()` reconstructs objects **without calling any constructor**. All validation in constructors is **invisible to deserialization**. Fix: override `readObject()` or `readResolve()` with explicit validation.
+
+---
+
+**🪤 Trap 4 — `final` field visible as default in another thread**
+
+```java
+class Config {
+    final int port;
+    Config() {
+        // simulate expensive init
+        this.port = 8080;
+    }
+}
+
+// Without safe publication:
+Config c = new Config();           // Thread A
+// Thread B reads c.port → could see 0 (default) under JMM
+// if reference 'c' was published without synchronization
+```
+
+JMM guarantees `final` fields are visible **after constructor completes** only if the object is **safely published** (via `volatile`, `synchronized`, `final` field, or `java.util.concurrent`). Unsafely published `final` fields can appear as `0`/`null` to other threads.
+
+---
+
+**🪤 Trap 5 — Recursive constructor chaining**
+
+```java
+class Node {
+    Node() {
+        this(0);           // calls Node(int)
+    }
+    Node(int val) {
+        this();            // calls Node() → infinite loop
+    }
+}
+// COMPILE ERROR: recursive constructor invocation
+// Java detects direct cycles at compile time
+// But indirect cycles through 3+ constructors may not be caught
+```
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Stack frame activation + heap allocation + `<init>` dispatch**
+
+```
+new RateLimiter(100) bytecode sequence:
+  new          → allocates object on heap (all fields zeroed — TLAB)
+  dup          → duplicates reference on operand stack
+  bipush 100   → pushes argument
+  invokespecial RateLimiter.<init>(int) → calls constructor
+  astore       → stores reference in local variable
+```
+
+`invokespecial` (not `invokevirtual`) — constructor calls are **not polymorphic**. The exact `<init>` to call is resolved at **compile time**, not runtime. This is why you cannot override a constructor.
+
+```
+Heap object layout after new, before <init>:
+┌──────────────────────────────────┐
+│  mark word (GC + lock metadata)  │
+│  klass pointer → RateLimiter     │
+│  maxRequests = 0  ← zeroed       │
+│  windowMs    = 0  ← zeroed       │
+│  scope       = null ← zeroed     │
+└──────────────────────────────────┘
+After <init> completes:
+┌──────────────────────────────────┐
+│  mark word                       │
+│  klass pointer                   │
+│  maxRequests = 100               │
+│  windowMs    = 1000              │
+│  scope       = "global"          │
+└──────────────────────────────────┘
+```
+
+---
+
+### 📊 Constructor vs Method
+
+| | Constructor | Method |
+|--|------------|--------|
+| **Return type** | None (not even void) | Required |
+| **Name** | Must match class | Any valid identifier |
+| **Inheritance** | ❌ Not inherited | ✅ Inherited |
+| **Overriding** | ❌ Impossible | ✅ Possible |
+| **Overloading** | ✅ Yes | ✅ Yes |
+| **`static`** | ❌ Never | ✅ Yes |
+| **`abstract`** | ❌ Never | ✅ Yes |
+| **`final`** | ❌ Never | ✅ Yes |
+| **Compiled into** | `<init>()` | named bytecode method |
+| **Dispatch** | `invokespecial` | `invokevirtual` / `invokespecial` |
+| **Call trigger** | `new` keyword | explicit call |
+
+---

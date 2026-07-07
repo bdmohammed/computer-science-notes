@@ -1,0 +1,1207 @@
+---
+title: C++ Exception Hierarchy & Mechanics
+slug: computer-languages/cpp/exception-handling/exception-hierarchy
+description: Deep dive into std::exception, stack unwinding, RAII, noexcept, and the differences from Java's hierarchy.
+sidebar:
+  label: "Exception Internals"
+  badge:
+    text: Advanced
+    variant: tip
+tags: [cpp, exception, std-exception, stack-unwinding, raii, noexcept, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🌳 The C++ Exception Landscape
+
+---
+
+### 🧠 What It Is
+
+Unlike Java, C++ **does not have a mandatory root class** for exceptions. You can throw an `int`, a `string`, or a custom object. However, the standard library provides `std::exception` as the conventional base class.
+
+There is **no distinction** between "Checked" and "Unchecked" exceptions in C++. The compiler **never forces** you to catch or declare exceptions.
+
+```text
+std::exception (Standard Base)
+       │
+       ├── std::logic_error (Program Logic Errors)
+       │   ├── std::invalid_argument
+       │   ├── std::out_of_range
+       │   ├── std::length_error
+       │   └── std::domain_error
+       │
+       ├── std::runtime_error (External/Runtime Events)
+       │   ├── std::range_error
+       │   ├── std::overflow_error
+       │   ├── std::underflow_error
+       │   └── std::system_error (OS errors, e.g., file/Network)
+       │
+       ├── std::bad_alloc (Memory Allocation Failure)
+       ├── std::bad_cast (Dynamic Cast Failure)
+       └── std::bad_exception (Unexpected Exception)
+```
+
+<Aside type="note">
+**Java vs C++**: 
+- Java: `Throwable` is the root. Checked exceptions exist.
+- C++: `std::exception` is a convention. All exceptions are unchecked. You can throw primitives (don't do it).
+</Aside>
+
+---
+
+### 🔬 `std::exception` — The Interface
+
+The standard base class is simple. It primarily provides a way to get an error message.
+
+```cpp
+namespace std {
+    class exception {
+    public:
+        virtual ~exception() noexcept;
+        virtual const char* what() const noexcept; // Returns error string
+    };
+}
+```
+
+#### Key Methods
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `what()` | `const char*` | Null-terminated string describing the error. |
+| `~exception()` | `void` | Virtual destructor (crucial for polymorphic deletion). |
+
+<Code lang="cpp" title="Using std::exception" code={`
+#include <iostream>
+#include <exception>
+#include <stdexcept>
+
+void risky() {
+    throw std::runtime_error("Something went wrong");
+}
+
+int main() {
+    try {
+        risky();
+    } catch (const std::exception& e) {
+        // e.what() returns "Something went wrong"
+        std::cerr << "Error: " << e.what() << '\\n';
+    }
+    return 0;
+}
+`} />
+
+---
+
+### 💻 Real-World Code — Custom Exceptions
+
+In production C++, you typically derive from `std::runtime_error` or `std::logic_error`.
+
+<Code lang="cpp" title="Custom Exception Hierarchy" code={`
+#include <stdexcept>
+#include <string>
+
+// Domain-specific base exception
+class DatabaseError : public std::runtime_error {
+public:
+    explicit DatabaseError(const std::string& msg) 
+        : std::runtime_error(msg) {}
+};
+
+// Specific error types
+class ConnectionFailed : public DatabaseError {
+public:
+    ConnectionFailed() : DatabaseError("Connection Failed") {}
+};
+
+class QueryTimeout : public DatabaseError {
+public:
+    QueryTimeout() : DatabaseError("Query Timed Out") {}
+};
+
+// Usage
+void connect() {
+    throw ConnectionFailed();
+}
+
+void process() {
+    try {
+        connect();
+    } catch (const ConnectionFailed& e) {
+        // Handle specific case
+    } catch (const DatabaseError& e) {
+        // Handle general DB errors
+    } catch (const std::exception& e) {
+        // Handle anything else
+    }
+}
+`} />
+
+---
+
+## ⚔️ Logic Error vs Runtime Error
+
+C++ splits `std::exception` into two main conceptual branches. This is similar to Java's `RuntimeException` vs `IOException`, but **neither is checked**.
+
+### 🔬 The Split
+
+```text
+std::exception
+│
+├── std::logic_error
+│   │   "Bug in the code"
+│   │   Should have been prevented by checks
+│   │
+│   ├── invalid_argument   (Bad function param)
+│   ├── out_of_range       (Vector::at() failed)
+│   └── length_error       (String too long)
+│
+└── std::runtime_error
+    │   "Environment/External failure"
+    │   Could happen even with perfect code
+    │
+    ├── system_error       (IO, Network, OS)
+    ├── bad_alloc          (OOM)
+    └── range_error        (Math overflow)
+```
+
+### 📋 Core Differences
+
+| Feature | `std::logic_error` | `std::runtime_error` |
+|---------|--------------------|----------------------|
+| **Cause** | Programmer bug | External factor (Disk, Net, Memory) |
+| **Recoverable?** | Rarely (Fix the bug) | Sometimes (Retry, Fallback) |
+| **Example** | `vec.at(100)` on size 5 | `std::ifstream` fail to open |
+| **Java Equivalent** | `RuntimeException` | `IOException` / `Error` |
+
+---
+
+### 🔬 Major Standard Exceptions — Triggers
+
+| Exception | Trigger | Prod Cause |
+|-----------|---------|-----------|
+| `std::bad_alloc` | `new` fails to allocate memory | Heap exhaustion, fragmentation |
+| `std::out_of_range` | `.at()` access out of bounds | Logic error in index calculation |
+| `std::invalid_argument` | Function receives bad param | Parsing user input failed |
+| `std::system_error` | OS API returns error code | File missing, Permission denied, Network down |
+| `std::bad_cast` | `dynamic_cast` on reference fails | Polymorphic type mismatch |
+
+---
+
+### 💻 Real-World Code — Handling Specific Errors
+
+```cpp
+#include <vector>
+#include <iostream>
+#include <system_error>
+#include <fstream>
+
+void readFile(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        // Throw a system_error with OS error code
+        throw std::system_error(errno, std::generic_category(), "Failed to open file");
+    }
+    // ... read data
+}
+
+void processData(std::vector<int>& data, int index) {
+    try {
+        int val = data.at(index); // Throws std::out_of_range if invalid
+        std::cout << "Value: " << val << '\\n';
+    } catch (const std::out_of_range& e) {
+        std::cerr << "Index error: " << e.what() << '\\n';
+    }
+}
+```
+
+---
+
+## 🌳 Exception Hierarchy Tree
+
+---
+
+### 🔬 Full Hierarchy Tree
+
+```text
+std::exception
+       │
+       ├──────────────────────────────────────────────┐
+       │                                              │
+std::logic_error                            std::runtime_error
+       │                                              │
+       ├── domain_error                               ├── range_error
+       ├── invalid_argument                           ├── overflow_error
+       │   └── future_error                           ├── underflow_error
+       ├── length_error                               ├── system_error
+       └── out_of_range                               ├── bad_alloc
+                                                      ├── bad_cast
+                                                      ├── bad_typeid
+                                                      └── bad_weak_ptr
+```
+
+<Aside type="caution">
+**Note**: C++ does **not** have `NullPointerException` or `ArrayIndexOutOfBoundsException` thrown automatically. Accessing `arr[i]` out of bounds is **Undefined Behavior**. You must use `.at()` to get `std::out_of_range`. Dereferencing `nullptr` usually causes a Segmentation Fault (Signal), not a C++ exception.
+</Aside>
+
+---
+
+### 📋 The Only Two Categories That Matter in Practice
+
+| Category | Root | Compiler Enforced? | Should Catch? |
+|----------|------|--------------------|---------------|
+| **Logic Errors** | `std::logic_error` | ❌ No | ❌ No (Fix the bug) |
+| **Runtime Errors** | `std::runtime_error` | ❌ No | ✅ Yes (Handle external failures) |
+
+---
+
+### 🔬 Inheritance Determines What Gets Caught
+
+C++ `catch` blocks work similarly to Java's `instanceof`. They catch the specified type and **all derived types**.
+
+```cpp
+try {
+    throw std::out_of_range("Index bad");
+} catch (const std::logic_error& e) {
+    // ✅ Catches out_of_range (because it derives from logic_error)
+    std::cerr << "Logic Error: " << e.what() << '\\n';
+}
+
+try {
+    throw std::runtime_error("IO Fail");
+} catch (const std::exception& e) {
+    // ✅ Catches runtime_error (derives from exception)
+    std::cerr << "General Error: " << e.what() << '\\n';
+}
+```
+
+<Code lang="cpp" title="Catch Order Matters" code={`
+try {
+    // ...
+} catch (const std::out_of_range& e) {
+    // Specific handler first
+} catch (const std::logic_error& e) {
+    // General handler second
+} catch (...) {
+    // Catch-all (last resort)
+}
+`} />
+
+🔴 **Rule**: Always catch **most specific** exceptions first. If you catch `std::exception` first, the specific handlers below it become unreachable (compiler warning/error).
+
+---
+
+## 💣 Interview Traps & Best Practices
+
+<CardGrid>
+  <Card title="Trap 1: Catch by Value vs Reference" icon="error">
+    **Never catch by value.** It causes **Object Slicing**.
+    
+    ```cpp
+    try {
+        throw std::out_of_range("err");
+    } catch (std::exception e) { // ❌ SLICED! Loses specific type info
+        // e.what() works, but dynamic_cast fails
+    }
+    ```
+    ✅ **Always catch by const reference**: `catch (const std::exception& e)`.
+  </Card>
+  
+  <Card title="Trap 2: Exceptions in Destructors" icon="shield">
+    **NEVER throw from a destructor.**
+    
+    If an exception is already active (during stack unwinding) and a destructor throws another one, the C++ runtime calls `std::terminate()` immediately. You cannot have two active exceptions.
+    
+    ```cpp
+    ~MyClass() {
+        // if (error) throw ...; // ❌ CRASH!
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 3: `noexcept` and Performance" icon="rocket">
+    Use `noexcept` to tell the compiler a function won't throw.
+    
+    ```cpp
+    void moveData(MyClass&& other) noexcept {
+        // Compiler optimizes: no unwind tables needed
+        // std::vector uses this for efficient moves
+    }
+    ```
+    If a `noexcept` function throws, `std::terminate()` is called. No unwinding.
+  </Card>
+
+  <Card title="Trap 4: Raw Pointers & Leaks" icon="caution">
+    If you `new` and then throw before `delete`, you leak.
+    
+    ```cpp
+    void risky() {
+        int* p = new int(10);
+        throw std::runtime_error("fail"); // ❌ Leak!
+        delete p;
+    }
+    ```
+    ✅ **Use Smart Pointers** (`std::unique_ptr`). RAII ensures cleanup during unwinding.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### Stack Unwinding & RAII
+
+When an exception is thrown, the C++ runtime walks up the stack (**Unwinding**). For every scope it leaves, it calls the **destructors** of all local objects.
+
+This is the core of **RAII** (Resource Acquisition Is Initialization).
+
+```cpp
+void process() {
+    FileHandle f("data.txt"); // Constructor opens file
+    NetworkConn n("server");  // Constructor connects
+    
+    doWork(); // Throws exception
+    
+    // n.~NetworkConn() called automatically (disconnects)
+    // f.~FileHandle() called automatically (closes file)
+} // Exception propagates up
+```
+
+In Java, you need `finally` or try-with-resources. In C++, this is **automatic** and guaranteed by the language standard.
+
+### Cost of Exceptions
+
+1. **Zero-Cost Model**: Modern C++ compilers (GCC, Clang, MSVC) use a "zero-cost" model. If **no exception is thrown**, there is **zero runtime overhead** (no extra checks in the hot path).
+2. **Throw Cost**: Throwing is **expensive**. It involves:
+   - Walking the stack to find a handler.
+   - Unwinding frames (calling destructors).
+   - Allocating/copying the exception object.
+   
+✅ **Best Practice**: Use exceptions for **rare** errors. Do not use them for control flow (e.g., loop termination).
+
+---
+
+### 📊 Decision Table: Throw or Return?
+
+| Situation | C++ Approach |
+|-----------|--------------|
+| Invalid Argument | `throw std::invalid_argument` |
+| File Not Found | `throw std::system_error` or Return `std::optional` |
+| Out of Memory | `std::bad_alloc` (thrown by `new`) |
+| Expected "Empty" Result | Return `std::optional<T>` or `std::expected<T, E>` (C++23) |
+| Logic Bug (Index OOB) | `throw std::out_of_range` (or assert in Debug) |
+
+---
+
+### 🔑 Quick Reference Summary
+
+### Standard Exceptions
+| Exception | Use Case |
+|-----------|----------|
+| `std::exception` | Base class |
+| `std::runtime_error` | External failures (IO, Network) |
+| `std::logic_error` | Programming bugs (Invalid Arg, OOB) |
+| `std::bad_alloc` | Memory allocation failed |
+| `std::system_error` | OS-level errors (errno) |
+
+### Best Practices
+1. ✅ **Throw by Value**, **Catch by Reference** (`const&`).
+2. ✅ Derive from `std::runtime_error` or `std::logic_error`.
+3. ✅ Use **RAII** for cleanup (no `finally` needed).
+4. ✅ Mark move operations `noexcept`.
+5. ❌ Never throw from destructors.
+6. ❌ Don't use exceptions for normal control flow.
+
+<Aside type="tip">
+**Modern C++ (C++23)**: Look into `std::expected<T, E>`. It provides a Rust-like Result type for error handling without exceptions, which is often preferred in high-performance or embedded systems where exceptions are disabled.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct A {
+    ~A() { std::cout << "A "; }
+};
+
+void foo() {
+    A a;
+    throw std::runtime_error("err");
+}
+
+int main() {
+    try {
+        foo();
+    } catch (const std::exception& e) {
+        std::cout << "Caught ";
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: A Caught 
+
+Explanation:
+1. foo() creates 'a'.
+2. Exception thrown.
+3. Stack unwinds: 'a' is destroyed → prints "A ".
+4. Control jumps to catch block → prints "Caught ".
+```
+</details>
+
+---
+
+# ⚠️ C++ Exception Hierarchy
+
+---
+
+# 📁 01 — Throwable
+
+## 📌 What Is Throwable in C++?
+
+**Anything.** C++ imposes zero type restrictions on what you can throw.
+
+```cpp
+throw 42;                              // int
+throw 3.14;                            // double
+throw "error";                         // const char*
+throw true;                            // bool
+throw std::runtime_error("oops");      // std::exception derived
+throw MyClass{};                       // any user-defined type
+throw std::vector<int>{1, 2, 3};       // STL container
+throw nullptr;                         // std::nullptr_t (legal, useless)
+```
+
+> 🔑 Unlike Java (`Throwable` base class mandatory), C++ has **no enforced base class** for exceptions.
+
+---
+
+### What Gets Thrown — Object Lifecycle
+
+```cpp
+class MyException {
+    std::string msg_;
+public:
+    MyException(std::string m) : msg_(std::move(m)) {
+        std::cout << "construct\n";
+    }
+    MyException(const MyException& o) : msg_(o.msg_) {
+        std::cout << "copy\n";
+    }
+    ~MyException() { std::cout << "destroy\n"; }
+    const char* what() const { return msg_.c_str(); }
+};
+
+try {
+    throw MyException("test");   // construct + possible copy
+} catch (const MyException& e) { // catch by reference — NO copy
+    std::cout << e.what() << "\n";
+}   // destroy here — after catch block exits
+```
+
+```
+Output:
+construct           ← exception object created
+(no copy)           ← caught by reference — no copy
+test                ← handler runs
+destroy             ← exception object destroyed after handler
+```
+
+---
+
+### Throw by Value, Catch by Reference
+
+```cpp
+class Base { public: virtual const char* what() const { return "Base"; } };
+class Derived : public Base {
+public: const char* what() const override { return "Derived"; } };
+
+try {
+    throw Derived{};       // thrown by value — object stored in exception buffer
+
+} catch (Base e) {         // ❌ catch by VALUE — object sliced to Base
+    std::cout << e.what(); // → "Base" — Derived-ness lost
+
+} catch (Base& e) {        // ✅ catch by REFERENCE — no slicing
+    std::cout << e.what(); // → "Derived" — polymorphism preserved
+
+} catch (const Base& e) {  // ✅ BEST — const reference, no copy, no slice
+    std::cout << e.what(); // → "Derived"
+}
+```
+
+```
+Rules:
+  throw T{}     → T constructed in exception buffer (NOT on stack)
+  catch(T)      → COPY from buffer → slicing for polymorphic types
+  catch(T&)     → REFERENCE to buffer object → no slice
+  catch(const T&) → const reference → no copy, no slice ← standard practice
+```
+
+---
+
+### Exception Object Lifetime
+
+```cpp
+std::exception_ptr saved;
+
+try {
+    throw std::runtime_error("captured");
+} catch (...) {
+    saved = std::current_exception();  // extend lifetime
+}   // exception object NOT destroyed — saved keeps it alive
+
+// Later — in another context, another thread:
+if (saved) {
+    try {
+        std::rethrow_exception(saved);  // rethrow the saved exception
+    } catch (const std::runtime_error& e) {
+        std::cout << e.what();  // → "captured"
+    }
+}
+// exception object destroyed when saved is reset or destroyed
+```
+
+---
+
+### What Should Be Thrown — Best Practice
+
+```
+✅ THROW:    std::exception derived types
+✅ THROW:    Your own exception hierarchy derived from std::exception
+❌ AVOID:    int, double, const char* — can't catch at library boundaries
+❌ AVOID:    Pointer to exception — memory management nightmare
+❌ NEVER:    Throw in destructors
+❌ NEVER:    Throw in noexcept functions
+```
+
+```cpp
+// ❌ Throwing int — uncatchable at boundaries
+void library_func() { throw 42; }
+
+// In user code:
+try { library_func(); }
+catch (const std::exception&) { }  // misses int!
+catch (int i) { }                  // user must know library's convention
+catch (...) { }                    // only way — loses type info
+
+// ✅ Throwing std::exception derived
+void library_func() { throw std::runtime_error("failed"); }
+
+try { library_func(); }
+catch (const std::exception& e) {  // always catches it
+    log(e.what());
+}
+```
+
+---
+
+# 📁 02 — Error vs Exception
+
+## 📌 The Distinction
+
+C++ does not have formal `Error` and `Exception` types like Java. The **distinction is conceptual** — implemented through `std::logic_error` vs `std::runtime_error`.
+
+```
+std::logic_error    ← "Error" equivalent
+  → Programming mistakes — bugs
+  → Preventable with correct code
+  → Indicates programmer error
+  → Should NEVER occur in correct code
+
+std::runtime_error  ← "Exception" equivalent
+  → Runtime conditions — environmental failures
+  → Not preventable even with correct code
+  → Expected part of operation
+  → Must be handled at runtime
+```
+
+---
+
+### Logic Error — Programming Bugs
+
+```cpp
+// Logic errors = the programmer did something wrong
+// These SHOULD NOT happen if code is correct
+// Analogous to Java's Error (but catchable in C++)
+
+class Stack {
+    std::vector<int> data_;
+public:
+    void pop() {
+        if (data_.empty())
+            throw std::logic_error("pop() on empty stack");
+            // ← This is a BUG — caller shouldn't pop empty stack
+            // Correct code would check empty() first
+        data_.pop_back();
+    }
+};
+
+// Other logic_error examples:
+throw std::invalid_argument("negative size not allowed");  // caller passed bad arg
+throw std::out_of_range("index 99 in size-5 array");       // caller exceeded bounds
+throw std::length_error("requested size exceeds maximum"); // structural violation
+throw std::domain_error("sqrt of negative number");        // mathematical violation
+```
+
+---
+
+### Runtime Error — Environmental Failures
+
+```cpp
+// Runtime errors = correct code, bad environment
+// CAN happen even in perfectly written code
+// Analogous to Java's Exception (checked)
+
+void load_config(const std::string& path) {
+    std::ifstream file(path);
+    if (!file)
+        throw std::runtime_error("config file not found: " + path);
+        // ← NOT a bug — file might legitimately be missing
+        // Caller MUST handle this
+}
+
+void send_payment(double amount) {
+    if (!network_available())
+        throw std::runtime_error("network unavailable");
+        // ← NOT a bug — network goes down
+        // Caller MUST handle this
+
+    if (amount > get_balance())
+        throw std::runtime_error("insufficient funds");
+        // ← NOT a bug — balance can be low
+}
+
+// Other runtime_error examples:
+throw std::overflow_error("value exceeds representable range");
+throw std::underflow_error("value below representable range");
+throw std::system_error(errno, std::generic_category(), "open()");
+```
+
+---
+
+### The Conceptual Divide
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    LOGIC ERROR                                  │
+│  Question: "Is this a bug?"  Answer: YES                       │
+│  Prevention: Fix the calling code                              │
+│  Should it reach production? NO                                │
+│  Example: passing null to function documented as non-null      │
+│           accessing element beyond container bounds            │
+│           calling method on object in invalid state            │
+├─────────────────────────────────────────────────────────────────┤
+│                    RUNTIME ERROR                               │
+│  Question: "Is this a bug?"  Answer: NO                       │
+│  Prevention: Not possible — environment controls it            │
+│  Should it reach production? YES — handled gracefully          │
+│  Example: file not found, network timeout, out of memory       │
+│           database connection refused, disk full               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Production Decision: Throw or Assert?
+
+```cpp
+// Logic errors in DEBUG → assert (fast)
+// Logic errors in RELEASE → throw (graceful degradation) OR undefined behavior
+// Runtime errors → always throw
+
+class Connection {
+    bool connected_ = false;
+public:
+    void send(const std::string& data) {
+        // Option 1: assert — crashes in debug, UB in release
+        assert(connected_ && "send() called on disconnected connection");
+
+        // Option 2: throw logic_error — always safe
+        if (!connected_)
+            throw std::logic_error("send() on disconnected Connection");
+
+        // Option 3: both
+        assert(connected_);           // debug catch
+        if (!connected_)              // release safety net
+            throw std::logic_error("send() on disconnected Connection");
+
+        do_send(data);
+    }
+};
+```
+
+---
+
+### Custom Error vs Exception Hierarchy
+
+```cpp
+// Model the logic/runtime distinction in your own hierarchy
+class AppError : public std::exception {
+    std::string msg_;
+public:
+    explicit AppError(std::string m) : msg_(std::move(m)) { }
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
+// "Error" — programming mistakes (rare, shouldn't happen)
+class AppLogicError : public AppError {
+public: using AppError::AppError;
+};
+
+class NullArgumentError   : public AppLogicError {
+public: using AppLogicError::AppLogicError; };
+class InvalidStateError   : public AppLogicError {
+public: using AppLogicError::AppLogicError; };
+
+// "Exception" — runtime conditions (expected, must handle)
+class AppRuntimeError : public AppError {
+public: using AppError::AppError;
+};
+
+class NetworkError      : public AppRuntimeError {
+public: using AppRuntimeError::AppRuntimeError; };
+class DatabaseError     : public AppRuntimeError {
+public: using AppRuntimeError::AppRuntimeError; };
+class AuthError         : public AppRuntimeError {
+public: using AppRuntimeError::AppRuntimeError; };
+```
+
+---
+
+# 📁 03 — Checked vs Unchecked
+
+## 📌 C++ Has No Checked Exceptions
+
+Java has `checked` (must declare/handle) and `unchecked` (optional) exceptions.
+
+```java
+// Java — checked: compiler FORCES you to handle or declare
+void readFile() throws IOException { }   // MUST declare
+
+// Java — unchecked: NullPointerException, ArrayIndexOutOfBoundsException
+```
+
+**C++ has NO checked exceptions.** All exceptions are unchecked — no compile-time enforcement.
+
+```cpp
+// C++ — NO throws declaration required or enforced
+void read_file(const std::string& path) {
+    // May throw std::ios_base::failure — nobody knows from signature
+    // May throw std::bad_alloc — nobody knows
+    // Caller has NO compile-time indication
+}
+```
+
+---
+
+### C++'s Answer — `noexcept` Specification
+
+C++ flips the direction: instead of declaring WHAT you throw, you declare if you throw NOTHING.
+
+```cpp
+// ❌ Old (deprecated C++11) — throw specification (ignored by compilers)
+void foo() throw(std::runtime_error);   // deprecated
+void bar() throw();                     // deprecated = noexcept
+
+// ✅ Modern C++ — noexcept
+void safe_op() noexcept;          // WILL NOT throw — static contract
+void risky_op();                  // MAY throw — no guarantee
+
+// Conditional noexcept
+template<typename T>
+void forward_op(T&& val) noexcept(noexcept(inner(std::forward<T>(val))));
+//                        ↑ noexcept iff inner() is noexcept
+```
+
+---
+
+### `noexcept` — Compile-Time Checkable
+
+```cpp
+#include <type_traits>
+
+void safe()  noexcept { }
+void unsafe()         { }
+
+// Check at compile time
+static_assert(noexcept(safe()),   "safe must not throw");
+static_assert(!noexcept(unsafe()),"unsafe may throw");
+
+// Use in templates
+template<typename T>
+void process(T val) noexcept(noexcept(val.compute())) {
+    val.compute();   // noexcept propagated from T::compute
+}
+```
+
+---
+
+### Simulating Checked Exceptions — Alternatives
+
+C++ devs use these patterns instead of checked exceptions:
+
+```cpp
+// Pattern 1: std::expected (C++23) — error as return value
+std::expected<int, std::string> divide(int a, int b) {
+    if (b == 0) return std::unexpected("division by zero");
+    return a / b;
+}
+// Caller MUST handle both cases — compiler enforces via type system
+auto result = divide(10, 2);
+if (result) use(*result);
+else        handle(result.error());
+
+// Pattern 2: std::optional — absence of value
+std::optional<Config> load_config(const std::string& path) {
+    if (!file_exists(path)) return std::nullopt;
+    return parse_config(path);
+}
+// Caller must check — optional won't give value without check
+if (auto cfg = load_config("app.conf"))
+    apply(*cfg);
+
+// Pattern 3: Result type (pre-C++23)
+template<typename T, typename E>
+class Result {
+    std::variant<T, E> data_;
+public:
+    static Result ok(T val) { return Result{std::move(val)}; }
+    static Result err(E e)  { return Result{std::move(e)}; }
+    bool  is_ok()  const { return std::holds_alternative<T>(data_); }
+    T&    value()        { return std::get<T>(data_); }
+    E&    error()        { return std::get<E>(data_); }
+};
+
+Result<int, std::string> safe_divide(int a, int b) {
+    if (b == 0) return Result<int,std::string>::err("division by zero");
+    return Result<int,std::string>::ok(a / b);
+}
+```
+
+---
+
+### Why C++ Rejected Checked Exceptions
+
+```
+1. Generic code incompatibility:
+   template<typename T>
+   T process(T val) {
+       return val.compute();  // What does compute() throw?
+                               // Unknown — varies by T
+                               // Checked exceptions → impossible to declare
+   }
+
+2. Callsite pollution:
+   Every intermediate function must declare/handle
+   Even if it can't meaningfully handle the error
+   → throw specifications become meaningless boilerplate
+
+3. Runtime performance:
+   Exception tables vs checked at compile time
+   Throw spec checking has runtime cost (Java's experience)
+
+4. Version compatibility:
+   Adding a new throw to a function = breaking change
+   All callers must update their declarations
+   → library evolution becomes impossible
+
+Result: C++ standards committee explicitly rejected checked exceptions.
+        noexcept is the only compile-time exception annotation that matters.
+```
+
+---
+
+### Practical C++ — What to Do Instead
+
+| Java Pattern | C++ Equivalent |
+|---|---|
+| Checked exception | `std::expected<T,E>` (C++23) / Result type |
+| Unchecked exception | `std::runtime_error` derived |
+| `throws IOException` declaration | `noexcept(false)` (implicit default) |
+| `throws nothing` | `noexcept` |
+| Try-with-resources | RAII + destructors |
+
+---
+
+# 📁 04 — Hierarchy Tree
+
+## 📌 Full Standard Exception Hierarchy
+
+```
+std::exception
+│  what() → const char* noexcept
+│
+├── std::logic_error                 [<stdexcept>]
+│   │  Programming errors — bugs in code
+│   │
+│   ├── std::invalid_argument        argument value is invalid
+│   ├── std::domain_error            mathematical domain violation
+│   ├── std::length_error            exceeds maximum allowed length
+│   ├── std::out_of_range            access beyond valid range
+│   └── std::future_error            [<future>] async operation error
+│
+├── std::runtime_error               [<stdexcept>]
+│   │  Runtime conditions — environmental failures
+│   │
+│   ├── std::range_error             computation result out of range
+│   ├── std::overflow_error          arithmetic overflow
+│   ├── std::underflow_error         arithmetic underflow
+│   ├── std::regex_error             [<regex>] regex engine error
+│   ├── std::system_error            [<system_error>] OS-level error
+│   │   └── std::ios_base::failure   [<ios>] I/O operation failure
+│   └── std::filesystem::filesystem_error  [<filesystem>] C++17
+│
+├── std::bad_alloc                   [<new>]    new/malloc failure
+│   └── std::bad_array_new_length    [<new>]    invalid array size for new
+│
+├── std::bad_cast                    [<typeinfo>] dynamic_cast<T&> failure
+│
+├── std::bad_typeid                  [<typeinfo>] typeid on null pointer
+│
+├── std::bad_exception               [<exception>] unexpected exception type
+│
+├── std::bad_function_call           [<functional>] call empty std::function
+│
+├── std::bad_optional_access         [<optional>]  C++17 optional.value() empty
+│
+├── std::bad_variant_access          [<variant>]   C++17 get<T> wrong type
+│
+└── std::bad_weak_ptr                [<memory>] shared_ptr from expired weak_ptr
+```
+
+---
+
+### Each Node — When Thrown, How to Catch
+
+```cpp
+// std::invalid_argument
+std::stoi("not_a_number");              // throws invalid_argument
+std::regex("(unclosed");               // throws regex_error
+
+// std::out_of_range
+std::vector<int> v = {1,2,3};
+v.at(99);                               // throws out_of_range
+std::string s = "hi";
+s.at(99);                               // throws out_of_range
+std::stoi("99999999999999999999");      // throws out_of_range (overflow)
+
+// std::length_error
+std::string s;
+s.resize(s.max_size() + 1);            // throws length_error
+
+// std::overflow_error / underflow_error
+// NOT thrown automatically by arithmetic — must throw manually
+// Thrown by: some math libraries, bignum implementations
+
+// std::system_error — wraps errno
+try {
+    std::filesystem::copy("a", "b");   // may throw filesystem_error
+} catch (const std::filesystem::filesystem_error& e) {
+    std::cout << e.path1() << "\n";     // extra info
+    std::cout << e.code() << "\n";      // std::error_code
+    std::cout << e.what() << "\n";      // human readable
+}
+
+// std::bad_alloc
+try {
+    auto* p = new int[999'999'999'999LL]; // throws bad_alloc
+} catch (const std::bad_alloc& e) {
+    std::cerr << "Out of memory: " << e.what();
+}
+
+// std::bad_cast
+class Base { public: virtual ~Base(){} };
+class Derived : public Base {};
+Base b;
+try {
+    Derived& d = dynamic_cast<Derived&>(b);  // throws bad_cast
+} catch (const std::bad_cast& e) {
+    std::cerr << "bad cast: " << e.what();
+}
+
+// std::bad_optional_access (C++17)
+std::optional<int> opt;
+try {
+    int v = opt.value();   // throws bad_optional_access
+} catch (const std::bad_optional_access&) { }
+
+// std::bad_variant_access (C++17)
+std::variant<int, std::string> v = 42;
+try {
+    std::get<std::string>(v);   // throws bad_variant_access
+} catch (const std::bad_variant_access&) { }
+
+// std::bad_function_call
+std::function<void()> f;   // empty
+try {
+    f();   // throws bad_function_call
+} catch (const std::bad_function_call&) { }
+```
+
+---
+
+### Catch Order — Most Specific First
+
+```cpp
+try {
+    operation();
+} catch (const std::out_of_range& e) {   // most specific first
+    handle_oob(e);
+} catch (const std::logic_error& e) {    // parent of out_of_range
+    handle_logic(e);
+} catch (const std::exception& e) {      // parent of all std exceptions
+    handle_standard(e);
+} catch (...) {                          // catch anything else
+    handle_unknown();
+}
+
+// ❌ Wrong order — out_of_range caught by logic_error first
+try {
+    operation();
+} catch (const std::exception& e) {      // catches EVERYTHING here
+    handle();
+} catch (const std::out_of_range& e) {  // NEVER REACHED
+    handle_oob(e);                        // dead code — compiler warns
+}
+```
+
+---
+
+### `std::system_error` — OS Error Integration
+
+```cpp
+#include <system_error>
+
+// Wraps errno / OS error codes into exception hierarchy
+void open_file(const std::string& path) {
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd == -1) {
+        throw std::system_error(
+            errno,                          // error code
+            std::generic_category(),        // POSIX errors
+            "open(" + path + ")"           // context
+        );
+    }
+}
+
+try {
+    open_file("/nonexistent");
+} catch (const std::system_error& e) {
+    std::cout << e.what();          // "open(/nonexistent): No such file"
+    std::cout << e.code().value();  // 2 (ENOENT)
+    std::cout << e.code().message(); // "No such file or directory"
+
+    if (e.code() == std::errc::no_such_file_or_directory) {
+        create_default_config();   // handle specific error
+    }
+}
+```
+
+---
+
+### Building a Production Exception Hierarchy
+
+```cpp
+// Application-level hierarchy built on std::exception
+class AppException : public std::exception {
+    std::string      message_;
+    std::string      context_;
+    std::error_code  code_;
+
+public:
+    AppException(std::string msg,
+                 std::string ctx = "",
+                 std::error_code ec = {})
+        : message_(std::move(msg))
+        , context_(std::move(ctx))
+        , code_(ec) { }
+
+    const char* what() const noexcept override {
+        return message_.c_str();
+    }
+    const std::string& context()    const noexcept { return context_; }
+    const std::error_code& code()   const noexcept { return code_; }
+};
+
+// Domain-specific hierarchy
+class InfrastructureError : public AppException {
+public: using AppException::AppException; };
+
+    class DatabaseError  : public InfrastructureError {
+    public: using InfrastructureError::InfrastructureError; };
+
+        class ConnectionPoolExhausted : public DatabaseError {
+        public: using DatabaseError::DatabaseError; };
+
+        class QueryTimeout            : public DatabaseError {
+        public: using DatabaseError::DatabaseError; };
+
+    class NetworkError   : public InfrastructureError {
+    public: using InfrastructureError::InfrastructureError; };
+
+        class ServiceUnavailable : public NetworkError {
+        public: using NetworkError::NetworkError; };
+
+class DomainError : public AppException {
+public: using AppException::AppException; };
+
+    class ValidationError    : public DomainError {
+    public: using DomainError::DomainError; };
+
+    class AuthorizationError : public DomainError {
+    public: using DomainError::DomainError; };
+
+    class NotFoundError      : public DomainError {
+    public: using DomainError::DomainError; };
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+catch (std::exception e)          // vs
+catch (const std::exception& e)   // difference?
+```
+> By value: copies the exception object — **slices** derived types. `e.what()` returns base class message. By `const&`: references original — no slicing, polymorphism preserved. **Always** `const std::exception&`.
+
+**Trap 2:**
+```
+"std::bad_alloc is uncatchable — agree?"
+```
+> **Disagree.** `std::bad_alloc` is fully catchable. `new` throws it when allocation fails. Some believe it can't be caught because by that point there's no memory — but the exception object itself is stored in a pre-allocated exception buffer, not on the heap. Always catch `bad_alloc` in critical systems.
+
+**Trap 3:**
+```cpp
+try {
+    std::vector<int> v;
+    v.at(0);          // throws?
+    v[0];             // throws?
+}
+```
+> `v.at(0)` → throws `std::out_of_range` (bounds-checked). `v[0]` → **UB** — no bounds check, no exception. `at()` vs `operator[]` is the checked/unchecked distinction within STL.
+
+**Trap 4:**
+```
+"std::logic_error should never be caught — agree?"
+```
+> **Mostly agree** — logic errors indicate bugs. In an ideal codebase, `logic_error` is never thrown in production. BUT: in practice, high-availability servers catch everything at the top level rather than crashing. Library code may throw `invalid_argument` legitimately. The distinction is: `logic_error` = fix the code; `runtime_error` = handle at runtime.
+
+**Trap 5:**
+```cpp
+// What does this catch?
+catch (const std::system_error& e) { }
+catch (const std::runtime_error& e) { }
+```
+> First catch handles `system_error` (it derives from `runtime_error`). Second catch handles all other `runtime_error`s. Because `system_error` IS-A `runtime_error`, catching `runtime_error` first would catch `system_error` too — losing `system_error`-specific info (`code()`, `category()`). More specific always first.
+
+---

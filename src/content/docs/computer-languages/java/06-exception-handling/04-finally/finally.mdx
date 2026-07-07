@@ -1,0 +1,1889 @@
+---
+title: Java finally Block
+slug: computer-languages/java/exception-handling/finally
+description: "Master Java's finally block: guaranteed execution, return/throw interactions, and real-world cleanup patterns. Understand how finally works under the hood with JVM bytecode."
+sidebar:
+  label: "finally Block"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [java, exceptions, finally, control-flow, interview]
+---
+
+## 🔒 finally Block
+
+---
+
+### 🧠 What It Is
+
+`finally` is a block that **always executes** after a `try-catch`, regardless of whether an exception was thrown, caught, or propagated. Its purpose: guaranteed cleanup — close connections, release locks, flush buffers. The JVM provides this guarantee at the bytecode level, not just as a convention.
+
+---
+
+### 🔬 Syntax — Valid Forms
+
+```java
+// Form 1 — try + catch + finally
+try {
+    riskyOp();
+} catch (IOException e) {
+    handle(e);
+} finally {
+    cleanup();          // always runs
+}
+
+// Form 2 — try + finally (no catch)
+// exception still propagates — finally just runs before it leaves
+try {
+    riskyOp();
+} finally {
+    cleanup();          // always runs — exception not swallowed
+}
+
+// Form 3 — try + multiple catch + finally
+try {
+    riskyOp();
+} catch (IOException e) {
+    handleIo(e);
+} catch (SQLException e) {
+    handleSql(e);
+} finally {
+    cleanup();          // always runs regardless of which catch fired
+}
+```
+
+---
+
+### 🔬 Execution — Every Scenario
+
+```
+Scenario 1: No exception
+  try    → runs completely
+  catch  → skipped
+  finally→ ✅ runs
+  after  → ✅ runs
+
+Scenario 2: Exception, catch matches
+  try    → stops at throw
+  catch  → ✅ runs
+  finally→ ✅ runs
+  after  → ✅ runs
+
+Scenario 3: Exception, no catch / catch mismatch
+  try    → stops at throw
+  catch  → skipped
+  finally→ ✅ runs
+  after  → ❌ skipped — exception still propagating
+
+Scenario 4: Exception inside catch
+  try    → stops at throw
+  catch  → partially runs, then throws new exception
+  finally→ ✅ runs
+  after  → ❌ skipped — new exception propagating
+```
+
+```java
+void demo(int x) {
+    try {
+        System.out.println("try");
+        if (x == 0) throw new RuntimeException("zero");
+        System.out.println("try end");
+    } catch (RuntimeException e) {
+        System.out.println("catch");
+    } finally {
+        System.out.println("finally");
+    }
+    System.out.println("after");
+}
+
+// demo(1) → try  try-end  finally  after
+// demo(0) → try  catch    finally  after
+```
+
+---
+
+### 💻 Real-World Code — Resource Cleanup Pattern
+
+```java
+public class ReportExporter {
+
+    public void export(String reportId, OutputStream out) throws ExportException {
+        Connection conn   = null;
+        PreparedStatement stmt = null;
+        ResultSet rs      = null;
+
+        try {
+            conn = dataSource.getConnection();
+            stmt = conn.prepareStatement(
+                "SELECT * FROM reports WHERE id = ?"
+            );
+            stmt.setString(1, reportId);
+            rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                out.write(serialize(rs));           // may throw IOException
+            }
+
+        } catch (SQLException e) {
+            throw new ExportException("DB failure for report: " + reportId, e);
+        } catch (IOException e) {
+            throw new ExportException("Write failure for report: " + reportId, e);
+        } finally {
+            // Guaranteed cleanup — runs even if exception thrown and rethrown
+            closeQuietly(rs);
+            closeQuietly(stmt);
+            closeQuietly(conn);
+        }
+    }
+
+    private void closeQuietly(AutoCloseable resource) {
+        if (resource != null) {
+            try {
+                resource.close();
+            } catch (Exception e) {
+                log.warn("Failed to close resource", e);   // log but don't rethrow
+            }
+        }
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No `finally` → any exception between `getConnection()` and end of method = connection leak. Under load, connection pool exhausted → all requests hang → cascading failure.
+
+---
+
+### 🔬 `finally` with `return` — The Override Trap
+
+```java
+int compute() {
+    try {
+        return 1;           // ① sets return value to 1
+    } finally {
+        return 2;           // ② OVERRIDES — method returns 2
+    }
+}
+// returns 2 — try's return value DISCARDED
+```
+
+```java
+int compute() {
+    try {
+        return 1;           // ① return value 1 saved
+    } catch (Exception e) {
+        return 3;
+    } finally {
+        // ② finally runs — no return here
+        System.out.println("cleanup");
+    }
+    // ③ saved return value 1 returned
+}
+// returns 1 — finally ran but didn't override
+```
+
+```
+Return value mechanics with finally:
+  1. return expression evaluated → value saved in temp slot
+  2. finally block executes
+  3a. if finally has return → temp slot overwritten → finally's value returned
+  3b. if finally has no return → temp slot value returned
+```
+
+---
+
+### 🔬 `finally` with `throw` — Exception Override
+
+```java
+void process() {
+    try {
+        throw new IOException("original");      // ① thrown
+    } finally {
+        throw new RuntimeException("finally");  // ② REPLACES original
+        // IOException is GONE — no chaining, no wrapping
+    }
+}
+// Caller sees: RuntimeException("finally")
+// IOException("original"): completely lost
+```
+
+🔴 **Prod consequence:** Real root cause (disk full, DB down) replaced by secondary failure in cleanup. Stack trace points to cleanup code. Engineers debug the wrong thing for hours.
+
+---
+
+### 🔬 `finally` Always Runs — Except These 3 Cases
+
+```java
+// Case 1: System.exit()
+try {
+    System.exit(0);         // JVM terminates — finally SKIPPED
+} finally {
+    System.out.println("never");    // ❌ never prints
+}
+
+// Case 2: JVM crash (SIGSEGV, kill -9)
+// OS kills process — no chance for finally to run
+
+// Case 3: Infinite loop / deadlock inside try
+try {
+    while (true) { }        // finally never gets control
+} finally {
+    System.out.println("never");    // ❌ never prints
+}
+```
+
+```
+"finally always runs" = true EXCEPT:
+  ├── System.exit()         → JVM dead
+  ├── Runtime.halt()        → JVM dead
+  ├── JVM crash / kill -9   → OS killed process
+  └── Thread never exits try → infinite loop, deadlock
+```
+
+---
+
+### 🔬 `finally` in Inheritance — Overriding Methods
+
+```java
+class Base {
+    int getValue() {
+        try {
+            return compute();
+        } finally {
+            System.out.println("Base finally");
+        }
+    }
+}
+
+class Child extends Base {
+    @Override
+    int getValue() {
+        try {
+            return super.getValue();    // Base.finally runs inside here
+        } finally {
+            System.out.println("Child finally");
+        }
+    }
+}
+
+// new Child().getValue()
+// Output:
+// Base finally     ← inner finally (Base) runs first
+// Child finally    ← outer finally (Child) runs second
+```
+
+---
+
+### 🔬 Bytecode — How JVM Guarantees finally
+
+```java
+void method() {
+    try {
+        riskyOp();
+    } finally {
+        cleanup();
+    }
+}
+```
+
+JVM compiles `finally` by **duplicating** the finally block into every exit path:
+
+```
+Compiled bytecode (conceptual):
+  try {
+      riskyOp();
+      cleanup();          // ← finally code inlined here (normal path)
+  } catch (Throwable t) {
+      cleanup();          // ← finally code inlined here (exception path)
+      throw t;            // rethrow
+  }
+```
+
+`finally` is not a JVM primitive — it's a **compile-time transformation**. Every exit path from the `try` block gets a copy of the finally code. This is why `finally` always runs — it's literally in every code path.
+
+---
+
+## 🔀 Control Flow in try-catch-finally
+
+---
+
+### 🧠 What It Is
+
+Adding `finally` to `try-catch` introduces a **third execution layer** that runs on every exit path. The flow is no longer just "did exception occur or not" — it becomes "what runs, in what order, and what value/exception survives when multiple exits compete."
+
+---
+
+### 🔬 Base Execution Order — The Rule
+
+```
+try → catch (if exception) → finally → after (if no active exception)
+
+finally ALWAYS runs between "try-catch ends" and "method continues/returns"
+```
+
+---
+
+### 🔬 All 5 Scenarios — Exact Flow
+
+**Scenario 1 — No exception**
+
+```
+try     → ✅ all statements run
+catch   → ❌ skipped
+finally → ✅ runs
+after   → ✅ runs
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+    } catch (Exception e) {
+        System.out.println("B");
+    } finally {
+        System.out.println("C");
+    }
+    System.out.println("D");
+}
+// Output: A C D
+```
+
+---
+
+**Scenario 2 — Exception thrown, catch matches**
+
+```
+try     → stops at throw
+catch   → ✅ runs
+finally → ✅ runs
+after   → ✅ runs
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new ArithmeticException();
+        System.out.println("B");    // ❌
+    } catch (ArithmeticException e) {
+        System.out.println("C");
+    } finally {
+        System.out.println("D");
+    }
+    System.out.println("E");
+}
+// Output: A C D E
+```
+
+---
+
+**Scenario 3 — Exception thrown, catch does NOT match**
+
+```
+try     → stops at throw
+catch   → ❌ skipped (type mismatch)
+finally → ✅ runs
+after   → ❌ skipped — exception still propagating
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new NullPointerException();
+    } catch (ArithmeticException e) {
+        System.out.println("B");    // ❌ mismatch
+    } finally {
+        System.out.println("C");    // ✅
+    }
+    System.out.println("D");        // ❌ NPE propagating
+}
+// Output: A C
+// NPE propagates to caller
+```
+
+---
+
+**Scenario 4 — Exception thrown, catch matches, exception in catch**
+
+```
+try     → stops at throw
+catch   → partially runs, then throws NEW exception
+finally → ✅ runs
+after   → ❌ skipped — new exception propagating
+original exception → LOST
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new IOException("original");
+    } catch (IOException e) {
+        System.out.println("B");
+        throw new RuntimeException("from catch");   // new exception
+        System.out.println("C");                    // ❌
+    } finally {
+        System.out.println("D");                    // ✅
+    }
+    System.out.println("E");                        // ❌
+}
+// Output: A B D
+// RuntimeException propagates — IOException gone
+```
+
+---
+
+**Scenario 5 — Exception in finally**
+
+```
+try     → throws OR completes
+catch   → runs OR skipped
+finally → starts, throws NEW exception
+after   → ❌ skipped
+active exception → REPLACED by finally's exception
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new IOException("real cause");        // ①
+    } catch (IOException e) {
+        System.out.println("B");                    // ✅
+    } finally {
+        System.out.println("C");                    // ✅
+        throw new RuntimeException("from finally"); // ② replaces — nothing was propagating after catch handled it
+    }
+    System.out.println("D");                        // ❌
+}
+// Output: A B C
+// RuntimeException propagates — IOException was already handled by catch
+// but RuntimeException now active
+```
+
+---
+
+### 🔬 `return` Interaction — Full Matrix
+
+```java
+// Case 1: return in try, no return in finally
+int demo() {
+    try {
+        return 1;           // ① value 1 saved in return slot
+    } catch (Exception e) {
+        return 2;
+    } finally {
+        System.out.println("finally");  // ② runs — no return
+        // ③ saved value 1 returned
+    }
+}
+// Output: finally
+// Returns: 1
+```
+
+```java
+// Case 2: return in try, return in finally
+int demo() {
+    try {
+        return 1;           // ① value 1 saved
+    } finally {
+        return 2;           // ② OVERWRITES return slot — returns 2
+    }
+}
+// Returns: 2 — try's return DISCARDED
+```
+
+```java
+// Case 3: return in catch, return in finally
+int demo() {
+    try {
+        throw new RuntimeException();
+    } catch (RuntimeException e) {
+        return 3;           // ① value 3 saved
+    } finally {
+        return 4;           // ② OVERWRITES — returns 4
+    }
+}
+// Returns: 4 — catch's return DISCARDED
+```
+
+```java
+// Case 4: exception in try, return in finally — exception suppressed
+int demo() {
+    try {
+        throw new RuntimeException("lost");  // ① exception active
+    } finally {
+        return 5;           // ② return SUPPRESSES exception — returns 5
+    }
+}
+// Returns: 5
+// RuntimeException: GONE — no trace, no log
+```
+
+---
+
+### 🔬 Complete Flow Decision Tree
+
+```
+                     try block
+                         │
+              ┌──────────┴──────────┐
+         no exception          exception thrown
+              │                      │
+         catch skipped          catch blocks checked
+              │                      │
+              │              ┌───────┴────────┐
+              │         type matches      no match
+              │              │                │
+              │         catch runs        catch skipped
+              │              │                │
+              │         ┌────┴────┐           │
+              │    no exception  exception     │
+              │    in catch      in catch      │
+              │         │            │         │
+              └────►────┘            │         │
+                         │           │         │
+                    ┌────┴───────────┴─────────┘
+                    │
+               finally runs  ← ALWAYS (except System.exit, JVM crash)
+                    │
+          ┌─────────┴──────────┐
+     no exception           exception OR
+     in finally              return in finally
+          │                      │
+    ┌─────┴─────┐           finally's value/
+    │           │           exception WINS
+  active      no active     original LOST
+  exception   exception
+    │              │
+  propagates   code after
+  to caller    try-catch runs
+```
+
+---
+
+### 💻 Real-World Code — Database Transaction Manager
+
+```java
+public class TransactionManager {
+
+    public <T> T execute(Supplier<T> operation) {
+        Connection conn = null;
+        boolean committed = false;
+
+        try {
+            conn = dataSource.getConnection();
+            conn.setAutoCommit(false);
+
+            T result = operation.get();         // may throw anything
+
+            conn.commit();
+            committed = true;
+            return result;                      // ① return value saved
+
+        } catch (SQLException e) {
+            log.error("SQL failure — rolling back", e);
+            throw new RepositoryException("Transaction failed", e);
+
+        } catch (RuntimeException e) {
+            log.error("Runtime failure — rolling back", e);
+            throw e;                            // rethrow same
+
+        } finally {
+            // ② finally runs — BEFORE saved return value is returned
+            if (conn != null) {
+                try {
+                    if (!committed) {
+                        conn.rollback();        // rollback if not committed
+                    }
+                } catch (SQLException e) {
+                    log.warn("Rollback failed", e);  // log — never rethrow
+                } finally {
+                    try {
+                        conn.close();           // nested finally for close
+                    } catch (SQLException e) {
+                        log.warn("Close failed", e);
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No `finally` → exception during `operation.get()` = connection never closed, transaction never rolled back. DB holds locks indefinitely → deadlocks cascade → system-wide slowdown.
+
+---
+
+### 🔬 Nested try-catch-finally Flow
+
+```java
+void demo() {
+    try {                                           // outer try
+        System.out.println("A");
+
+        try {                                       // inner try
+            System.out.println("B");
+            throw new IOException("inner");
+        } catch (NullPointerException e) {
+            System.out.println("C");                // ❌ mismatch
+        } finally {
+            System.out.println("D");                // ✅ inner finally
+        }
+        // IOException not caught by inner — propagates
+        System.out.println("E");                    // ❌
+
+    } catch (IOException e) {
+        System.out.println("F");                    // ✅ outer catches it
+    } finally {
+        System.out.println("G");                    // ✅ outer finally
+    }
+
+    System.out.println("H");                        // ✅
+}
+// Output: A B D F G H
+```
+
+```
+Flow:
+  inner try throws IOException
+       │
+  inner catch(NPE) — mismatch — skipped
+       │
+  inner finally — D prints ✅
+       │
+  IOException exits inner block — propagates
+       │
+  outer try — exception active — E skipped
+       │
+  outer catch(IOException) — F prints ✅
+       │
+  outer finally — G prints ✅
+       │
+  H prints ✅
+```
+
+---
+
+## 🔀 Control Flow in Nested try-catch-finally
+
+---
+
+### 🧠 What It Is
+
+Nested try-catch-finally means a `try-catch-finally` block placed **inside** another `try`, `catch`, or `finally` block. Each level has its own exception table, its own scope, and its own resolution. The key question at every level: does this exception get handled here, or does it propagate outward?
+
+---
+
+### 🔬 Nesting Locations — All Valid Forms
+
+```
+try nested inside try         ← most common
+try nested inside catch       ← cleanup with retry
+try nested inside finally     ← resource close safety
+catch nested inside catch     ← impossible (catch has one type per block)
+finally nested inside finally ← rare but valid
+```
+
+---
+
+### 🔬 Resolution Order — The Core Rule
+
+```
+Exception thrown at innermost level
+         │
+         ▼
+Inner exception table checked
+         │
+    ┌────┴────┐
+ matched    not matched
+    │            │
+inner catch   exception exits inner block
+runs              │
+    │             ▼
+    │        inner finally runs (if any)
+    │             │
+    │             ▼
+    │        exception propagates to enclosing block
+    │        enclosing exception table checked
+    │             │
+    │        ┌────┴────┐
+    │     matched    not matched
+    │        │            │
+    │   outer catch   propagates further up
+    │   runs          call stack
+    │
+    ▼
+inner finally runs
+    │
+    ▼
+outer finally runs (if any)
+    │
+    ▼
+code continues
+```
+
+---
+
+### 🔬 Case 1 — try Inside try
+
+```java
+void demo() {
+    try {                                           // outer try
+        System.out.println("A");
+
+        try {                                       // inner try
+            System.out.println("B");
+            throw new IOException("inner");         // 💥
+            System.out.println("C");                // ❌
+        } catch (IOException e) {
+            System.out.println("D");                // ✅ inner catches it
+        } finally {
+            System.out.println("E");                // ✅ inner finally
+        }
+
+        System.out.println("F");                    // ✅ inner handled — continues
+
+    } catch (Exception e) {
+        System.out.println("G");                    // ❌ nothing propagated out
+    } finally {
+        System.out.println("H");                    // ✅ outer finally
+    }
+
+    System.out.println("I");                        // ✅
+}
+// Output: A B D E F H I
+```
+
+---
+
+### 🔬 Case 2 — Inner NOT Caught — Outer Catches
+
+```java
+void demo() {
+    try {                                           // outer try
+        System.out.println("A");
+
+        try {                                       // inner try
+            System.out.println("B");
+            throw new IOException("inner");         // 💥
+        } catch (NullPointerException e) {
+            System.out.println("C");                // ❌ mismatch
+        } finally {
+            System.out.println("D");                // ✅ inner finally runs
+        }
+
+        System.out.println("E");                    // ❌ IOException still active
+
+    } catch (IOException e) {
+        System.out.println("F");                    // ✅ outer catches
+    } finally {
+        System.out.println("G");                    // ✅ outer finally
+    }
+
+    System.out.println("H");                        // ✅
+}
+// Output: A B D F G H
+```
+
+```
+Flow:
+  inner throw IOException
+       │
+  inner catch(NPE) — mismatch — skipped
+       │
+  inner finally — D ✅
+       │
+  IOException exits inner block
+       │
+  outer try — E skipped
+       │
+  outer catch(IOException) — F ✅
+       │
+  outer finally — G ✅
+       │
+  H ✅
+```
+
+---
+
+### 🔬 Case 3 — try Inside catch
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new IOException("primary");           // 💥
+    } catch (IOException e) {
+        System.out.println("B");                    // ✅
+
+        try {                                       // try inside catch
+            System.out.println("C");
+            recover();                              // may throw
+            System.out.println("D");
+        } catch (RuntimeException re) {
+            System.out.println("E");                // ✅ if recover() throws RE
+        } finally {
+            System.out.println("F");                // ✅ always
+        }
+
+        System.out.println("G");                    // ✅ if no unhandled exception
+    } finally {
+        System.out.println("H");                    // ✅ outer finally
+    }
+
+    System.out.println("I");
+}
+
+// If recover() succeeds:   A B C D F G H I
+// If recover() throws RE:  A B C E F G H I
+// If recover() throws CE:  A B C F H  (CE propagates — G,I skipped)
+```
+
+🔴 **Prod pattern:** Retry logic inside catch — first failure triggers catch, catch attempts recovery, recovery itself might fail. Each level independently handled.
+
+---
+
+### 🔬 Case 4 — try Inside finally
+
+```java
+void demo() {
+    Connection conn = getConnection();
+
+    try {
+        System.out.println("A");
+        process(conn);                              // may throw
+    } catch (SQLException e) {
+        System.out.println("B");
+        throw new RepositoryException("failed", e); // rethrows
+    } finally {
+        System.out.println("C");                    // ✅ always
+
+        try {                                       // try inside finally
+            conn.close();                           // close may throw
+            System.out.println("D");
+        } catch (SQLException e) {
+            System.out.println("E");                // handles close failure
+            log.warn("Close failed", e);            // absorb — don't rethrow
+        }
+
+        System.out.println("F");                    // ✅
+    }
+
+    System.out.println("G");
+}
+
+// process() succeeds:      A C D F G
+// process() throws SQL:    A B C D F   (RepositoryException propagates — G skipped)
+// process() throws, close fails: A B C E F  (RepositoryException propagates)
+```
+
+✅ **This is the correct pattern** for resource cleanup — try-inside-finally prevents close() failures from masking the original exception.
+
+---
+
+### 🔬 Case 5 — Exception in Inner finally Propagates Through Outer
+
+```java
+void demo() {
+    try {                                           // outer try
+        System.out.println("A");
+
+        try {                                       // inner try
+            System.out.println("B");
+            throw new IOException("original");      // ①
+        } finally {
+            System.out.println("C");                // ✅
+            throw new RuntimeException("finally");  // ② replaces ①
+        }
+
+    } catch (IOException e) {
+        System.out.println("D");                    // ❌ — IOException replaced
+    } catch (RuntimeException e) {
+        System.out.println("E");                    // ✅ — catches RuntimeException
+    } finally {
+        System.out.println("F");                    // ✅
+    }
+
+    System.out.println("G");                        // ✅
+}
+// Output: A B C E F G
+// IOException gone — RuntimeException from inner finally propagates to outer
+```
+
+---
+
+### 🔬 Case 6 — Three Levels Deep
+
+```java
+void demo() {
+    try {                                           // level 1
+        try {                                       // level 2
+            try {                                   // level 3
+                System.out.println("A");
+                throw new NullPointerException();   // 💥
+            } finally {
+                System.out.println("B");            // ✅ L3 finally
+            }
+        } finally {
+            System.out.println("C");                // ✅ L2 finally
+        }
+    } catch (NullPointerException e) {
+        System.out.println("D");                    // ✅ L1 catches
+    } finally {
+        System.out.println("E");                    // ✅ L1 finally
+    }
+
+    System.out.println("F");                        // ✅
+}
+// Output: A B C D E F
+```
+
+```
+NPE thrown at L3
+     │
+L3 finally runs → B
+     │
+NPE exits L3 — no catch at L3
+     │
+L2 finally runs → C
+     │
+NPE exits L2 — no catch at L2
+     │
+L1 catch(NPE) matches → D
+     │
+L1 finally runs → E
+     │
+F runs
+```
+
+---
+
+### 🔬 `return` in Nested Levels
+
+```java
+int demo() {
+    try {
+        try {
+            return 1;               // ① saved
+        } finally {
+            return 2;               // ② overrides inner — returns 2
+        }
+    } finally {
+        return 3;                   // ③ overrides outer — returns 3
+    }
+}
+// Returns: 3
+// Outermost finally's return always wins
+```
+
+```java
+int demo() {
+    try {
+        try {
+            throw new RuntimeException("x");    // ①
+        } finally {
+            return 10;              // ② suppresses RuntimeException — returns 10
+        }
+    } finally {
+        return 20;                  // ③ overrides 10 — returns 20
+    }
+}
+// Returns: 20
+// RuntimeException: GONE
+// Both finally returns compete — outermost wins
+```
+
+---
+
+### 💻 Real-World Code — Multi-Resource Transaction
+
+```java
+public class ReportPipeline {
+
+    public void run(String reportId) throws PipelineException {
+        Connection dbConn    = null;
+        S3Client   s3Client  = null;
+        FileWriter writer    = null;
+
+        try {                                           // outer — full pipeline
+
+            dbConn   = db.getConnection();
+            s3Client = s3.connect();
+
+            try {                                       // inner — data fetch
+                ResultSet rs = dbConn.query(reportId);
+                writer = new FileWriter("/tmp/" + reportId);
+
+                try {                                   // innermost — row processing
+                    while (rs.next()) {
+                        writer.write(transform(rs));    // may throw IOException
+                    }
+                } catch (IOException e) {
+                    log.error("Row write failed", e);
+                    throw new PipelineException("Transform failed", e);
+                } finally {
+                    rs.close();                         // always close ResultSet
+                }
+
+            } catch (SQLException e) {
+                log.error("Query failed for report {}", reportId, e);
+                throw new PipelineException("Data fetch failed", e);
+            } finally {
+                if (writer != null) {                   // always flush writer
+                    try {
+                        writer.flush();
+                        writer.close();
+                    } catch (IOException e) {
+                        log.warn("Writer close failed", e);
+                    }
+                }
+            }
+
+            s3Client.upload("/tmp/" + reportId);        // may throw S3Exception
+
+        } catch (S3Exception e) {
+            log.error("Upload failed for report {}", reportId, e);
+            throw new PipelineException("Upload failed", e);
+        } finally {                                     // outermost — always clean up
+            if (dbConn != null) {
+                try { dbConn.close(); } catch (SQLException e) {
+                    log.warn("DB close failed", e);
+                }
+            }
+            if (s3Client != null) {
+                try { s3Client.disconnect(); } catch (Exception e) {
+                    log.warn("S3 disconnect failed", e);
+                }
+            }
+        }
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No nested finally for `rs.close()` — `ResultSet` leaks on every `IOException`. Under load: DB cursor exhaustion → all queries fail → system down.
+
+---
+
+## ⚔️ final vs finally vs finalize
+
+---
+
+### 🧠 What They Are
+
+Three unrelated Java keywords/methods that share a prefix and nothing else. Confused in interviews constantly. `final` = modifier. `finally` = block. `finalize` = deprecated method.
+
+---
+
+### 🔬 One-Line Distinction
+
+```
+final      → keyword — restricts modification (variable, method, class)
+finally    → block   — guaranteed cleanup after try-catch
+finalize() → method  → called by GC before object reclaimed (deprecated Java 9+)
+```
+
+---
+
+### 🔬 `final` — Three Completely Different Uses
+
+```
+final
+├── final variable    → value cannot be reassigned after initialization
+├── final method      → cannot be overridden in subclass
+└── final class       → cannot be subclassed
+```
+
+**final variable:**
+
+```java
+// Primitive — value cannot change
+final int MAX_CONNECTIONS = 100;
+MAX_CONNECTIONS = 200;              // ❌ COMPILE ERROR
+
+// Reference — reference cannot change, object CAN be mutated
+final List<String> list = new ArrayList<>();
+list = new ArrayList<>();           // ❌ COMPILE ERROR — reference reassignment
+list.add("item");                   // ✅ — object mutation allowed
+
+// Blank final — must be assigned exactly once before use
+final int port;                     // declared but not assigned
+port = 8080;                        // ✅ first assignment
+port = 9090;                        // ❌ already assigned
+
+// final parameter — cannot reassign inside method
+void connect(final String host) {
+    host = "other";                 // ❌ COMPILE ERROR
+}
+```
+
+**final method:**
+
+```java
+class Base {
+    final void authenticate() {     // locked — cannot override
+        // security-critical logic
+    }
+
+    void process() { }              // overridable
+}
+
+class Child extends Base {
+    @Override
+    void authenticate() { }         // ❌ COMPILE ERROR — cannot override final
+    void process() { }              // ✅
+}
+```
+
+**final class:**
+
+```java
+final class SSLContext {            // cannot be subclassed
+    // security implementation
+}
+
+class MySSLContext extends SSLContext { } // ❌ COMPILE ERROR
+
+// JDK examples of final classes:
+// String, Integer, Long, Double, Boolean
+// All wrapper classes are final
+```
+
+---
+
+### 🔬 `finally` — Already Covered, Key Points Only
+
+```java
+try {
+    riskyOp();
+} catch (IOException e) {
+    handle(e);
+} finally {
+    cleanup();      // always runs
+                    // except: System.exit(), JVM crash, infinite loop
+}
+```
+
+```
+finally facts recap:
+  ├── part of try-catch-finally syntax
+  ├── always executes — no condition
+  ├── return in finally overrides try/catch return
+  ├── throw in finally replaces active exception
+  └── one finally per try — mandatory last position
+```
+
+---
+
+### 🔬 `finalize()` — The Deprecated Relic
+
+```java
+// Defined in java.lang.Object
+protected void finalize() throws Throwable { }
+
+// Called by GC before reclaiming object
+// Override to perform cleanup — the original intent
+class OldResource {
+    private FileInputStream fis;
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            if (fis != null) fis.close();
+        } finally {
+            super.finalize();
+        }
+    }
+}
+```
+
+```
+finalize() lifecycle:
+  Object created
+       │
+  Object becomes unreachable (no references)
+       │
+  GC marks object — checks if finalize() overridden
+       │
+       ├── not overridden → reclaimed immediately
+       │
+       └── overridden → placed on finalization queue
+                │
+           Finalizer thread calls finalize()
+                │
+           Object becomes unreachable AGAIN
+                │
+           Next GC cycle → reclaimed
+```
+
+---
+
+### 🔬 Why `finalize()` Is Broken — Every Problem
+
+| Problem | Detail |
+|---------|--------|
+| **Not guaranteed to run** | JVM may exit before GC collects the object |
+| **Timing unpredictable** | May run seconds, minutes, or never after unreachability |
+| **Performance** | Finalizable objects need 2 GC cycles to collect |
+| **Resurrection possible** | `finalize()` can make object reachable again — permanent leak |
+| **Finalizer thread** | Single thread — slow finalizer blocks ALL finalization |
+| **Exceptions swallowed** | Exception in `finalize()` is silently ignored |
+| **Security** | Finalizer attacks — subclass finalizer runs even if constructor threw |
+
+```java
+// Resurrection — the worst finalize() abuse
+class Zombie {
+    static Zombie instance;
+
+    @Override
+    protected void finalize() {
+        instance = this;    // makes itself reachable again
+        // GC cannot collect — object resurrected
+        // finalize() won't be called again — permanent leak
+    }
+}
+```
+
+---
+
+### 💻 Real-World Code — What to Use Instead of `finalize()`
+
+**❌ Old pattern — finalize()**
+
+```java
+class DatabaseConnection {
+    private Connection conn;
+
+    DatabaseConnection() {
+        conn = DriverManager.getConnection(url);
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            if (conn != null) conn.close();     // timing unknown — too late
+        } finally {
+            super.finalize();
+        }
+    }
+}
+```
+
+**✅ New pattern — AutoCloseable + try-with-resources**
+
+```java
+class DatabaseConnection implements AutoCloseable {
+    private final Connection conn;
+
+    DatabaseConnection(String url) throws SQLException {
+        conn = DriverManager.getConnection(url);
+    }
+
+    public ResultSet query(String sql) throws SQLException {
+        return conn.prepareStatement(sql).executeQuery();
+    }
+
+    @Override
+    public void close() throws SQLException {
+        if (conn != null && !conn.isClosed()) {
+            conn.close();                       // deterministic — called by JVM
+        }
+    }
+}
+
+// Usage — close() guaranteed via try-with-resources
+try (DatabaseConnection db = new DatabaseConnection(url)) {
+    ResultSet rs = db.query("SELECT * FROM orders");
+    process(rs);
+}   // ← db.close() called HERE — deterministic, immediate
+```
+
+**✅ Java 9+ — Cleaner API (replacement for finalize)**
+
+```java
+class NativeResource {
+    private final long nativeHandle;
+    private final Cleaner.Cleanable cleanable;
+
+    private static final Cleaner cleaner = Cleaner.create();
+
+    NativeResource(long handle) {
+        this.nativeHandle = handle;
+        // Register cleanup action — runs when NativeResource becomes unreachable
+        this.cleanable = cleaner.register(this, new CleanAction(handle));
+    }
+
+    // Separate static class — MUST NOT hold reference to outer NativeResource
+    private static class CleanAction implements Runnable {
+        private final long handle;
+
+        CleanAction(long handle) { this.handle = handle; }
+
+        @Override
+        public void run() {
+            releaseNativeHandle(handle);    // deterministic cleanup
+        }
+    }
+
+    @Override
+    public void close() {
+        cleanable.clean();                  // explicit close — preferred path
+    }
+}
+```
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — `return` in `finally` swallows exception silently**
+
+```java
+int riskyOp() {
+    try {
+        throw new RuntimeException("critical failure");
+    } finally {
+        return 42;      // ← return in finally SUPPRESSES the exception
+    }
+}
+
+int result = riskyOp();   // returns 42 — no exception thrown
+// RuntimeException is gone — no log, no trace, no indication
+// Caller thinks operation succeeded and got value 42
+```
+
+`return` in `finally` **suppresses any active exception** — it's gone with no trace. No compiler warning. No runtime indicator. Production data silently corrupted while code reports success.
+
+---
+
+**🪤 Trap 2 — `finally` modifies object but can't change primitive return**
+
+```java
+// Primitive — finally cannot change returned value
+int getCount() {
+    int x = 0;
+    try {
+        return x;       // x = 0 copied into return slot
+    } finally {
+        x = 100;        // modifies local variable — return slot unaffected
+    }
+}
+// returns 0 — not 100
+
+// Object — finally CAN affect returned state if object is mutated
+List<String> getList() {
+    List<String> list = new ArrayList<>();
+    try {
+        list.add("item");
+        return list;        // reference copied into return slot
+    } finally {
+        list.add("extra");  // mutates the SAME object — caller sees "extra"
+    }
+}
+// returns ["item", "extra"] — finally mutated the returned object
+```
+
+---
+
+**🪤 Trap 3 — Exception in `finally` during exception propagation**
+
+```java
+void process() throws IOException {
+    try {
+        throw new IOException("DB down");       // ① active exception
+    } finally {
+        cleanup();                              // ② throws NullPointerException
+        // IOException is REPLACED by NullPointerException
+        // No chaining — IOException gone forever
+    }
+}
+
+// Caller:
+try {
+    process();
+} catch (IOException e) {
+    // NEVER REACHED — NullPointerException propagates, not IOException
+} catch (NullPointerException e) {
+    // THIS catches it — but original IOException lost
+}
+```
+
+🔴 **Prod pattern:** `cleanup()` calls `connection.close()` where `connection` is `null` (because earlier code failed before connection was established). NPE from cleanup masks the real failure.
+
+**Fix:**
+```java
+} finally {
+    if (connection != null) {
+        try {
+            connection.close();
+        } catch (Exception e) {
+            log.warn("Close failed", e);   // log, never rethrow from finally
+        }
+    }
+}
+```
+
+---
+
+**🪤 Trap 4 — `continue` / `break` in `finally` inside loop**
+
+```java
+for (int i = 0; i < 3; i++) {
+    try {
+        if (i == 1) throw new RuntimeException("x");
+    } finally {
+        if (i == 1) continue;   // ← swallows RuntimeException for i=1
+    }
+    System.out.println("after try: " + i);
+}
+// Output:
+// after try: 0
+//            ← i=1 exception swallowed by continue in finally
+// after try: 2
+```
+
+`break`, `continue`, or `return` inside `finally` **suppresses any active exception** — same as `return`. The exception is silently discarded. No compiler warning.
+
+---
+
+**🪤 Trap 5 — `finally` runs on the same thread — thread death skips it**
+
+```java
+Thread t = new Thread(() -> {
+    try {
+        throw new RuntimeException("worker died");
+    } finally {
+        System.out.println("finally in worker");    // ✅ runs — same thread
+    }
+});
+t.start();
+
+// BUT: if thread is stopped via deprecated Thread.stop():
+// ThreadDeath Error injected — finally MAY run but state is undefined
+// if JVM killed (kill -9) — finally NEVER runs
+```
+
+`finally` runs in the **same thread** as the `try`. If that thread is externally killed (not interrupted — actually killed), `finally` doesn't run.
+
+---
+
+**🪤 Trap 6 — `return` in `finally` discards exception silently**
+
+```java
+String fetchConfig() {
+    try {
+        throw new RuntimeException("config server down");
+    } finally {
+        return "default";   // ← silently swallows RuntimeException
+    }
+}
+
+String config = fetchConfig();  // returns "default" — no exception seen
+// Caller: config server is DOWN but code continues with "default"
+// No log, no alert, no indication anything failed
+// Silent data corruption if "default" is wrong config for prod
+```
+
+---
+
+**🪤 Trap 7 — Object mutation in `finally` affects returned reference**
+
+```java
+List<String> getItems() {
+    List<String> items = new ArrayList<>();
+    try {
+        items.add("real");
+        return items;           // ① reference saved in return slot
+    } finally {
+        items.add("injected");  // ② mutates object at saved reference
+        // return slot still holds same reference — object changed
+    }
+}
+
+List<String> result = getItems();
+System.out.println(result);     // [real, injected]
+// finally didn't return — but mutated the returned object
+```
+
+The return slot holds a **reference**, not a copy. `finally` mutating the object changes what the caller receives, even without a `return` in `finally`.
+
+---
+
+**🪤 Trap 8 — Which exception survives when both catch and finally throw**
+```java
+void process() {
+    try {
+        throw new IOException("try");           // ①
+    } catch (IOException e) {
+        throw new SQLException("catch");        // ② replaces ①
+    } finally {
+        throw new RuntimeException("finally");  // ③ replaces ②
+    }
+}
+// Caller sees: RuntimeException("finally")
+// IOException and SQLException: both GONE
+// finally's exception always wins — last thrower wins
+```
+
+---
+
+**🪤 Trap 9 — `return` value in try with `finally` that has side effects**
+
+```java
+int counter = 0;
+
+int increment() {
+    try {
+        return ++counter;       // counter=1, return slot = 1
+    } finally {
+        ++counter;              // counter=2 — but return slot still = 1
+    }
+}
+
+int val = increment();
+System.out.println(val);        // 1 — return slot value
+System.out.println(counter);    // 2 — field was mutated by finally
+```
+
+Return slot captured `counter` value **at time of `return` statement**. `finally` incremented the field after — field changed, return value did not. Confuses devs who expect `val` to reflect post-finally state.
+
+---
+
+**🪤 Trap 10 — `finally` still runs after `throw` in catch even without outer catch**
+```java
+void caller() {
+    inner();                    // does "finally" in inner() run?
+}
+
+void inner() {
+    try {
+        throw new RuntimeException("x");
+    } catch (RuntimeException e) {
+        throw new IllegalStateException("y");   // rethrows different exception
+    } finally {
+        System.out.println("inner finally");    // ✅ YES — runs before exception exits method
+    }
+}
+// Output: "inner finally"
+// Then IllegalStateException propagates to caller()
+```
+
+`finally` runs **before** the exception exits the method — even when catch rethrows. Control goes: catch rethrows → finally runs → exception exits method → caller's stack frame checked.
+
+---
+
+**🪤 Trap 11 — Inner finally runs BEFORE outer catch**
+
+```java
+void demo() {
+    try {
+        try {
+            throw new RuntimeException("x");
+        } finally {
+            System.out.println("inner finally");    // ① runs first
+        }
+    } catch (RuntimeException e) {
+        System.out.println("outer catch");          // ② runs second
+    }
+}
+// Output:
+// inner finally
+// outer catch
+```
+
+Devs assume catch runs before finally at the same level. Wrong — inner `finally` always runs before the exception reaches outer `catch`. The exception has to exit the inner block completely (including its finally) before the outer catch sees it.
+
+---
+
+**🪤 Trap 12 — Exception in inner finally blocks outer catch**
+
+```java
+void demo() {
+    try {
+        try {
+            throw new IOException("original");          // ①
+        } finally {
+            throw new RuntimeException("from finally"); // ② replaces ①
+        }
+    } catch (IOException e) {
+        System.out.println("IO caught");    // ❌ never — IOException replaced
+    } catch (RuntimeException e) {
+        System.out.println("RE caught");    // ✅
+    }
+}
+// Output: RE caught
+// IOException: GONE
+// Inner finally's exception travels to OUTER catch — not inner
+```
+
+---
+
+**🪤 Trap 13 — `return` in inner finally stops outer finally from seeing exception**
+
+```java
+int demo() {
+    try {
+        try {
+            throw new RuntimeException("x");    // ①
+        } finally {
+            return 99;  // ② suppresses RuntimeException — returns 99
+        }
+    } finally {
+        System.out.println("outer finally");    // ✅ still runs
+        // but exception is already gone — outer finally sees clean state
+    }
+}
+// Output: outer finally
+// Returns: 99
+// RuntimeException: gone before outer finally even runs
+```
+
+---
+
+**🪤 Trap 14 — Nested finally execution order when ALL levels throw**
+
+```java
+void demo() {
+    try {
+        try {
+            throw new IOException("L2");        // ①
+        } finally {
+            throw new SQLException("L2F");      // ② replaces ①
+        }
+    } finally {
+        throw new RuntimeException("L1F");      // ③ replaces ②
+    }
+}
+// IOException: gone
+// SQLException: gone
+// Caller sees: RuntimeException("L1F")
+// Outermost finally throw always wins
+```
+
+---
+
+**🪤 Trap 15 — `final` reference doesn't mean immutable object**
+
+```java
+final Map<String, String> config = new HashMap<>();
+config.put("host", "prod-db");      // ✅ — object mutated, reference unchanged
+config.put("port", "5432");         // ✅
+
+// In multithreaded code:
+// final guarantees reference visibility — NOT thread safety of the object
+// config.put() is not thread-safe even though config is final
+```
+
+Prod trap: shared `final` config map mutated by multiple threads → `ConcurrentModificationException` or silent data corruption. `final` is not `immutable` and not `thread-safe`.
+
+---
+
+**🪤 Trap 16 — `finalize()` exception is silently swallowed**
+
+```java
+class Resource {
+    @Override
+    protected void finalize() throws Throwable {
+        throw new RuntimeException("cleanup failed");   // silently swallowed
+        // no log, no alert, no indication
+        // resource never cleaned up
+        // JVM just ignores the exception and continues
+    }
+}
+```
+
+Any exception thrown in `finalize()` is **ignored by the JVM**. No stack trace. No thread death. Silent failure. Cleanup doesn't happen. Opposite of `close()` where exceptions propagate.
+
+---
+
+**🪤 Trap 17 — `finalize()` can be called on partially constructed objects**
+```java
+class SecureService {
+    private final Credentials creds;
+
+    SecureService(String key) {
+        if (key == null) throw new IllegalArgumentException(); // ① constructor throws
+        this.creds = new Credentials(key);
+    }
+
+    @Override
+    protected void finalize() {
+        creds.revoke();     // ② creds is null — constructor never completed
+        // NullPointerException in finalize — silently swallowed
+    }
+}
+
+// Attacker subclasses SecureService:
+class Attack extends SecureService {
+    Attack() { super(null); }   // constructor throws — but finalize() still runs
+    @Override
+    protected void finalize() {
+        // runs with partial SecureService state
+        // security invariants violated
+    }
+}
+```
+
+This is the **finalizer attack** — a known Java security vulnerability. `final` class prevents subclassing → prevents finalizer attack. That's one reason `String` is `final`.
+
+---
+
+**🪤 Trap 18 — `final` local variable and effectively final**
+
+```java
+// Explicit final
+void method() {
+    final int x = 10;
+    Runnable r = () -> System.out.println(x);   // ✅
+}
+
+// Effectively final — not declared final but never reassigned
+void method() {
+    int x = 10;                                 // no final keyword
+    Runnable r = () -> System.out.println(x);   // ✅ — effectively final
+    // x = 20;  ← this would make it NOT effectively final → compile error in lambda
+}
+
+// NOT effectively final
+void method() {
+    int x = 10;
+    x = 20;                                     // reassigned
+    Runnable r = () -> System.out.println(x);   // ❌ COMPILE ERROR
+}
+```
+
+---
+
+**🪤 Trap 19 — `finalize()` called at most once — resurrection then leaks**
+
+```java
+class Leak {
+    static final Set<Leak> live = new HashSet<>();
+
+    @Override
+    protected void finalize() {
+        live.add(this);         // resurrection — object reachable again
+        // finalize() will NOT be called again for this object
+        // When live.remove(this) eventually called, object collected without finalize
+    }
+}
+
+Leak obj = new Leak();
+obj = null;                     // unreachable → finalization queued
+// GC runs finalize() → obj resurrected into live set
+// live.remove(obj) → obj unreachable again
+// GC collects — finalize() NOT called again — guaranteed by JVM spec
+```
+
+`finalize()` is called **at most once** per object. Resurrected objects that become unreachable again are collected without finalization.
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Compiler code duplication + exception table catch-all row**
+
+```
+finally compiles into two things:
+
+1. Normal exit path — finally code inlined after try body
+2. Exception path — extra exception table row:
+
+Exception table for try-finally:
+┌───────┬─────┬────────┬───────┐
+│ Start │ End │ Target │ Type  │
+├───────┼─────┼────────┼───────┤
+│   0   │  8  │   12   │  any  │ ← "any" = catches ALL throwables
+└───────┴─────┴────────┴───────┘
+
+Target 12 = finally code + rethrow
+
+JVM:
+  normal path   → inline finally runs → method returns
+  exception     → catch-all fires → finally runs → rethrow
+  both paths    → finally code executes — guaranteed
+```
+
+`finally` is a compile-time illusion — the JVM has no `finally` instruction. It's code duplication + a catch-all exception table row. The guarantee is structural, not runtime magic.
+
+**Underlying primitive: Two-slot return mechanism + exception table catch-all**
+
+```
+JVM return mechanics with finally:
+
+Normal return path:
+  1. return expression evaluated → stored in local variable slot 0 (temp)
+  2. finally code executes (inlined by compiler)
+  3a. if finally does return → slot 0 overwritten with new value
+  3b. if finally completes normally → slot 0 value used
+  4. actual method return with slot 0 value
+
+Exception path:
+  1. exception object stored in hidden local slot
+  2. catch-all exception table row fires → finally code executes
+  3a. if finally does return → exception in hidden slot DISCARDED → return value used
+  3b. if finally throws → new exception replaces hidden slot
+  3c. if finally completes normally → hidden slot exception rethrown
+
+javap -c output shows finally block inlined at EVERY exit point:
+  → normal path: areturn preceded by finally code
+  → exception path: catch-all handler at end containing finally code + athrow
+
+**Underlying primitive: Stack of exception tables — one per method, nested ranges**
+
+```java
+Bytecode for nested try-finally compiles into
+a SINGLE exception table with overlapping ranges:
+
+void method() {
+    try {           // outer: offset 0–30
+        try {       // inner: offset 0–10
+            op();
+        } finally {
+            innerCleanup();   // offset 12–18
+        }
+        moreWork();           // offset 20–28
+    } finally {
+        outerCleanup();       // offset 32–40
+    }
+}
+
+Exception table:
+┌───────┬─────┬────────┬──────┐
+│ Start │ End │ Target │ Type │
+├───────┼─────┼────────┼──────┤
+│   0   │ 10  │   12   │ any  │ ← inner finally catch-all
+│   0   │ 30  │   32   │ any  │ ← outer finally catch-all
+└───────┴─────┴────────┴──────┘
+
+JVM checks innermost matching range first (smallest Start→End range
+that contains the throw offset).
+Multiple ranges can contain same offset — innermost wins first.
+```
+
+**Underlying primitive: Reference queue + finalizer thread (finalize) / compiler constraint (final) / exception table (finally)**
+
+```
+final — compile-time constraint:
+  JVM bytecode: final field → ACC_FINAL flag
+  Compiler: rejects any bytecode that writes to final after init
+  JIT: treats final fields as constants → inlining opportunities
+
+finally — exception table catch-all:
+  Compiler: inlines finally code at every exit path
+  JVM: catch-all row in exception table (type = any)
+  No runtime overhead on happy path
+
+finalize — reference queue mechanism:
+  Object with overridden finalize() → marked as "finalizable"
+  When unreachable: moved to JVM's finalization queue
+  Finalizer thread (daemon): dequeues, calls finalize()
+  Object added to "pending reference" list after finalize()
+  Next GC: collects if still unreachable
+
+  Cost: 2 full GC cycles per finalizable object
+        Finalizer thread bottleneck under load
+        Objects promoted to old gen before collected → more GC pressure
+```
+
+---
+

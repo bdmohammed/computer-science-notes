@@ -1,0 +1,1748 @@
+---
+title: JavaScript Constructors & Class Initialization
+slug: computer-languages/javascript/oop/constructors
+description: Master JS constructors, the `constructor` keyword, `super()`, and object initialization patterns in ES6 Classes.
+sidebar:
+  label: "Constructors"
+  badge:
+    text: OOP Fundamentals
+    variant: tip
+tags: [javascript, constructor, class, super, this, oop, interview]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🏗️ Constructors in JavaScript
+
+> In Java, a constructor is a special method with no return type.  
+> In **JavaScript**, the `constructor` is a **special method** inside a class that initializes the instance. Unlike Java, JS classes are syntactic sugar over prototypes, but the `constructor` behaves similarly regarding initialization order.
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+The `constructor` is just a function that runs when you call `new MyClass()`.  
+Its job: Set up `this` (the new object) and return it.  
+⚠️ **Key Difference**: In JS, if you don't define a `constructor`, one is provided implicitly. If you extend a class, you **MUST** call `super()` before using `this`.
+</Aside>
+
+---
+
+## 📋 Constructor Rules in JS
+
+| Rule | Detail |
+|------|--------|
+| **Name** | Must be exactly `constructor` |
+| **Return Type** | Can return an object (overrides `this`) or primitive (ignored) |
+| **Quantity** | Only **ONE** constructor per class (No overloading!) |
+| **Inheritance** | Not inherited. Subclasses must define their own or use default. |
+| **`super()`** | Mandatory in subclasses before accessing `this`. |
+| **Static** | ❌ Cannot be static. |
+| **Arrow Function** | ❌ Cannot be an arrow function. |
+
+<Aside type="caution">
+**🚨 No Constructor Overloading**:  
+Java allows `MyClass(int x)` and `MyClass(String s)`.  
+JS **does not**. You can only have **one** `constructor()` method.  
+✅ **Fix**: Use default parameters or factory methods.
+</Aside>
+
+---
+
+## 🔬 Types of Constructors
+
+### 1. Default Constructor
+If you don't write a constructor, JS provides one.
+
+```js
+class Service {
+    // Implicitly:
+    // constructor() {}
+}
+```
+
+### 2. Parameterized Constructor
+Accepts arguments to initialize state.
+
+```js
+class Server {
+    constructor(port) {
+        this.port = port;
+    }
+}
+```
+
+### 3. Subclass Constructor
+Must call `super()`.
+
+```js
+class ApiServer extends Server {
+    constructor(port, apiKey) {
+        super(port); // Initializes Parent
+        this.apiKey = apiKey;
+    }
+}
+```
+
+---
+
+## 💻 Real-World Code — Handling "Overloading"
+
+Since JS doesn't support overloading, we use **Default Parameters** or **Type Checking**.
+
+<Code lang="js" title="Simulating Overloading with Default Params" code={`
+class HttpRequest {
+    // One constructor handles all cases
+    constructor(url, method = 'GET', timeout = 5000) {
+        this.url = url;
+        this.method = method;
+        this.timeout = timeout;
+    }
+}
+
+// Usage:
+const req1 = new HttpRequest('/api/users'); // method='GET', timeout=5000
+const req2 = new HttpRequest('/api/data', 'POST'); // timeout=5000
+const req3 = new HttpRequest('/api/login', 'POST', 10000);
+`} />
+
+<Code lang="js" title="Simulating Overloading with Type Checking" code={`
+class Shape {
+    constructor(config) {
+        // Accept an object for flexibility
+        this.x = config.x || 0;
+        this.y = config.y || 0;
+        this.color = config.color || 'black';
+    }
+}
+
+// Usage:
+const s1 = new Shape({ x: 10, y: 20 });
+const s2 = new Shape({ x: 5, color: 'red' });
+`} />
+
+---
+
+## 🔀 Constructor Chaining — `super()` and `this`
+
+In Java, you use `this()` to chain constructors. In JS, you **cannot** call `this()` inside a constructor.  
+Instead, you handle logic via **helper methods** or **default parameters**.
+
+### The `super()` Rule
+
+> In a subclass, you **MUST** call `super()` before accessing `this`.
+
+<Code lang="js" title="Correct Inheritance Flow" code={`
+class Animal {
+    constructor(name) {
+        this.name = name;
+    }
+}
+
+class Dog extends Animal {
+    constructor(name, breed) {
+        // ❌ console.log(this); // ReferenceError!
+        
+        super(name); // ✅ Initializes Parent
+        
+        // ✅ Now 'this' is available
+        this.breed = breed;
+    }
+}
+`} />
+
+<Aside type="danger">
+**🚨 Production Bug**: Forgetting `super()` in a subclass throws a `ReferenceError`.  
+Also, calling `super()` twice is a syntax error.
+</Aside>
+
+---
+
+## 🔒 Private Constructors? (Singleton Pattern)
+
+JS doesn't have `private` constructors in the Java sense. However, we can simulate Singletons or prevent direct instantiation using **Factory Methods** or **Module Scope**.
+
+<Code lang="js" title="Singleton Pattern in JS" code={`
+class ConfigManager {
+    static #instance = null; // Private static field
+
+    constructor() {
+        if (ConfigManager.#instance) {
+            throw new Error("Use getInstance() instead");
+        }
+        ConfigManager.#instance = this;
+        this.config = {};
+    }
+
+    static getInstance() {
+        if (!ConfigManager.#instance) {
+            ConfigManager.#instance = new ConfigManager();
+        }
+        return ConfigManager.#instance;
+    }
+}
+
+// Usage:
+const cfg = ConfigManager.getInstance();
+// const bad = new ConfigManager(); // Throws Error if called twice
+`} />
+
+---
+
+## ⚠️ Exception Handling in Constructors
+
+If a constructor throws an error, the object creation fails.
+
+<Code lang="js" title="Handling Init Errors" code={`
+class FileProcessor {
+    constructor(path) {
+        if (!path) {
+            throw new Error("Path is required");
+        }
+        this.path = path;
+        // Simulate heavy init
+        this.data = this.loadData(); 
+    }
+
+    loadData() {
+        // ... logic
+        return "data";
+    }
+}
+
+try {
+    const fp = new FileProcessor(null);
+} catch (e) {
+    console.error(e.message); // "Path is required"
+    // Object 'fp' was never created
+}
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Returning Values from Constructor" icon="error">
+    ```js
+    class Test {
+        constructor() {
+            this.x = 10;
+            return { y: 20 }; // Returns THIS object, ignoring 'this.x'
+        }
+    }
+    const t = new Test();
+    console.log(t.x); // undefined
+    console.log(t.y); // 20
+    // Note: Returning a primitive (e.g., return 5) is ignored.
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Arrow Functions as Constructors" icon="error">
+    ```js
+    const MyClass = () => {};
+    // const m = new MyClass(); // 💥 TypeError: MyClass is not a constructor
+    // Arrow functions do not have a [[Construct]] method.
+    ```
+  </Card>
+
+  <Card title="Trap 3: `this` Before `super()`" icon="shield">
+    ```js
+    class Child extends Parent {
+        constructor() {
+            this.name = "Child"; // 💥 ReferenceError
+            super();
+        }
+    }
+    // Fix: Always call super() first.
+    ```
+  </Card>
+
+  <Card title="Trap 4: No Overloading" icon="caution">
+    ```js
+    class Calc {
+        constructor(a, b) { ... }
+        constructor(a) { ... } // 💥 SyntaxError: Duplicate constructor
+    }
+    // Fix: Use default params: constructor(a, b = 0) { ... }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 Internals — How JS Engines Handle It
+
+1.  **Allocation**: `new` creates a blank object.
+2.  **Prototype Link**: Sets `obj.__proto__` to `Class.prototype`.
+3.  **Binding**: Binds `this` to the new object.
+4.  **Execution**: Runs `constructor()` code.
+5.  **Return**: Returns `this` (unless constructor returns a different object).
+
+```js
+// Under the hood:
+function MyClass() {
+    // var this = Object.create(MyClass.prototype);
+    // ... your code ...
+    // return this;
+}
+```
+
+---
+
+## 📊 Constructor vs Method
+
+| Feature | Constructor | Method |
+|---------|-------------|--------|
+| **Name** | `constructor` | Any valid name |
+| **Count** | One per class | Many |
+| **Call** | `new MyClass()` | `obj.method()` |
+| **Return** | Defaults to `this` | Defaults to `undefined` |
+| **Static** | No | Yes |
+| **Inheritance** | Not inherited | Inherited |
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: Can you overload constructors in JS?" icon="error">
+    **No.** JS classes only allow one `constructor()`. Use default parameters or factory methods to handle different input signatures.
+  </Card>
+  
+  <Card title="Q: What happens if you don't define a constructor?" icon="information">
+    JS provides an empty default constructor: `constructor() {}`. If the class extends another, it implicitly calls `super(...args)`.
+  </Card>
+
+  <Card title="Q: Why must `super()` be called first?" icon="shield">
+    In subclasses, `this` is uninitialized until the parent constructor runs. Calling `super()` initializes the parent part of the object, allowing `this` to be used.
+  </Card>
+
+  <Card title="Q: Can a constructor return a value?" icon="caution">
+    Yes. If it returns an **object**, that object becomes the result of `new`. If it returns a **primitive**, it's ignored and `this` is returned.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+JS CONSTRUCTOR CHECKLIST
+
+1. Trigger:
+   new MyClass()
+
+2. Setup:
+   Create empty object -> Link Prototype -> Bind 'this'
+
+3. Execution:
+   Run constructor() body
+
+4. Return:
+   If constructor returns Object -> Return that Object
+   Else -> Return 'this'
+
+⚠️ Key Differences from Java:
+- No Overloading (Use default params)
+- Must call super() in subclasses
+- Can return objects to override instance
+- No private constructor keyword (Use static factories)
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use **default parameters** to simulate overloading.
+2. ✅ Always call **`super()`** first in subclasses.
+3. ✅ Use **static factory methods** (`static create()`) for complex creation logic.
+4. ✅ Avoid returning values from constructors unless intentional.
+
+Mastering constructors ensures robust object initialization in JS. ☕✨
+</Aside>
+```
+
+---
+
+## 🔄 Java Constructors → JS Constructors Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **Constructor Name** | `constructor()` | JS uses fixed name `constructor`. |
+| **Overloading** | Default Parameters | JS has no overloading. Use `constructor(a, b=0)`. |
+| **`this()` Chaining** | Helper Methods / Defaults | JS cannot call `this()` inside constructor. |
+| **`super()`** | `super()` | Mandatory in JS subclasses before `this`. |
+| **Private Constructor** | Static Factory / Module Scope | JS uses patterns, not keywords. |
+| **Return Type** | Optional Object Return | JS can return a different object from constructor. |
+| **Initialization Blocks** | Class Fields | JS uses `field = value` syntax. |
+
+---
+
+🧠 **Interview Power Move**: When asked about constructors, always mention:  
+1. **No Overloading**: Explain how default parameters solve this.  
+2. **`super()` Requirement**: Crucial for inheritance.  
+3. **Return Behavior**: Knowing that returning an object overrides `this`.  
+4. **Singleton Pattern**: How to enforce it in JS.  
+5. **Arrow Functions**: Why they can't be constructors.  
+
+---
+
+# 🏗️ JavaScript Constructor
+
+---
+
+## 🔰 What Is a Constructor?
+
+A constructor = **a special function that initializes a new object when called with `new`**. It sets up the object's initial state, assigns properties, and establishes the prototype chain.
+
+```js
+// Function constructor (ES5):
+function User(name, email) {
+  this.name  = name;   // set up state
+  this.email = email;
+}
+
+// Class constructor (ES6+):
+class User {
+  constructor(name, email) {
+    this.name  = name;
+    this.email = email;
+  }
+}
+
+const user = new User("Ali", "ali@example.com");
+// new → allocates object → runs constructor → returns object
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+JavaScript Constructors
+│
+├── 🔵 Function Constructors (ES5)
+│   ├── convention: PascalCase
+│   ├── this = new object
+│   ├── prototype chain
+│   └── return behavior
+│
+├── 🟢 Class Constructor (ES6+)
+│   ├── constructor() method
+│   ├── implicit constructor
+│   ├── field initialization order
+│   └── return override
+│
+├── 🔗 Inheritance Constructors
+│   ├── super() rules
+│   ├── new.target
+│   └── abstract class guard
+│
+├── 🏭 Constructor Patterns
+│   ├── static factory method
+│   ├── async construction
+│   ├── singleton constructor
+│   └── factory function (no new)
+│
+├── 🔧 Built-in Constructors
+│   ├── Object, Array, Function
+│   ├── primitive wrappers
+│   └── Symbol / BigInt — no new
+│
+├── ⚙️  new Operator Internals
+│   ├── allocation
+│   ├── prototype assignment
+│   └── return logic
+│
+└── 🔬 V8 Internals
+    ├── hidden class creation
+    ├── inline cache warm-up
+    └── constructor inlining
+```
+
+---
+
+## ⚙️ Deep Dive — What `new` Does in V8
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              new Constructor(args) — INTERNALS           │
+│                                                          │
+│  Step 1: ALLOCATE                                        │
+│  → Create empty JSObject on young-gen heap               │
+│  → Assign initial hidden class (empty shape)             │
+│                                                          │
+│  Step 2: SET PROTOTYPE                                    │
+│  → obj.[[Prototype]] = Constructor.prototype             │
+│                                                          │
+│  Step 3: RUN CONSTRUCTOR                                 │
+│  → Call Constructor with 'this' = new object             │
+│  → Each this.x = y → property write → shape transition  │
+│                                                          │
+│  Step 4: RETURN                                          │
+│  → Constructor returns an object?  → use THAT object    │
+│  → Returns primitive / undefined?  → use 'this'         │
+│                                                          │
+│  For derived class (extends):                            │
+│  → 'this' UNINITIALIZED until super() called             │
+│  → super() triggers parent's Steps 1-4                  │
+│  → child fields run AFTER super() returns                │
+│  → child constructor body continues                      │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Manual `new` Implementation
+
+```js
+function manualNew(Constructor, ...args) {
+  // Step 1 + 2: allocate + set prototype
+  const obj = Object.create(Constructor.prototype);
+
+  // Step 3: run constructor
+  const result = Constructor.apply(obj, args);
+
+  // Step 4: return logic
+  return (result !== null && typeof result === "object")
+    ? result
+    : obj;
+}
+
+class Point {
+  constructor(x, y) { this.x = x; this.y = y; }
+  distanceTo(other) {
+    return Math.sqrt((this.x - other.x) ** 2 + (this.y - other.y) ** 2);
+  }
+}
+
+const p1 = new Point(0, 0);
+const p2 = manualNew(Point, 3, 4);
+
+p1.distanceTo(p2);              // 5 ✅
+p2 instanceof Point;            // true ✅
+Object.getPrototypeOf(p2) === Point.prototype; // true ✅
+```
+
+---
+
+## 1️⃣ Function Constructor — ES5 Style
+
+### Basic Pattern
+
+```js
+// Convention: PascalCase signals "must call with new":
+function Animal(name, species) {
+  // 'this' = newly allocated object:
+  this.name    = name;
+  this.species = species;
+  this.alive   = true;
+}
+
+// Methods on prototype — shared across all instances:
+Animal.prototype.eat   = function() { return `${this.name} is eating`; };
+Animal.prototype.sleep = function() { return `${this.name} is sleeping`; };
+Animal.prototype.toString = function() {
+  return `${this.species}("${this.name}")`;
+};
+
+const lion = new Animal("Simba", "Panthera leo");
+lion.eat();    // "Simba is eating" ✅
+lion.sleep();  // "Simba is sleeping" ✅
+String(lion);  // "Panthera leo("Simba")" ✅
+
+// Verify prototype chain:
+Object.getPrototypeOf(lion) === Animal.prototype; // true
+lion instanceof Animal;                           // true
+lion.constructor === Animal;                      // true
+```
+
+### Forgetting `new` — Silent Disaster
+
+```js
+"use strict";
+
+function User(name) {
+  this.name = name;
+}
+
+// Called without new in STRICT mode:
+const user = User("Ali"); // ❌ TypeError: Cannot set properties of undefined
+// 'this' = undefined in strict mode
+
+// Called without new in SLOPPY mode:
+// 'this' = global object → pollutes window/global 😱
+const user = User("Ali");
+// user = undefined (no return)
+// global.name = "Ali" 😱
+
+// Fix 1 — strict mode (always use it)
+// Fix 2 — guard in constructor:
+function SafeUser(name) {
+  if (!(this instanceof SafeUser)) {
+    return new SafeUser(name); // force new
+  }
+  this.name = name;
+}
+
+SafeUser("Ali");           // ✅ still works — auto-corrects
+new SafeUser("Ali");       // ✅ normal path
+
+// Fix 3 — use class (syntax error without new)
+class StrictUser {
+  constructor(name) { this.name = name; }
+}
+StrictUser("Ali");         // ❌ TypeError — class enforces new ✅
+```
+
+### Constructor Property — The Fragile Reference
+
+```js
+function Dog(name) { this.name = name; }
+
+// Initially:
+Dog.prototype.constructor === Dog; // true ✅
+
+// Replacing prototype loses constructor:
+Dog.prototype = {
+  bark() { return `${this.name}: Woof!`; }
+};
+
+Dog.prototype.constructor === Dog;    // false 😱 → Object
+new Dog("Rex").constructor === Dog;   // false 😱
+
+// Always restore constructor when replacing prototype:
+Dog.prototype = {
+  constructor: Dog,                   // ← restore ✅
+  bark() { return `${this.name}: Woof!`; }
+};
+
+Dog.prototype.constructor === Dog;    // true ✅
+new Dog("Rex").constructor === Dog;   // true ✅
+```
+
+---
+
+## 2️⃣ Class Constructor — ES6+
+
+### Basic Class Constructor
+
+```js
+class Vehicle {
+  // Instance fields — initialized BEFORE constructor body:
+  type    = "vehicle";   // ①
+  active  = true;        // ②
+
+  constructor(make, model, year) {
+    // ③ Constructor body — fields already set:
+    this.make  = make;
+    this.model = model;
+    this.year  = year;
+  }
+
+  toString() {
+    return `${this.year} ${this.make} ${this.model}`;
+  }
+
+  get age() { return new Date().getFullYear() - this.year; }
+}
+
+const car = new Vehicle("Toyota", "Camry", 2020);
+car.type;     // "vehicle" ✅ — from field
+car.active;   // true ✅
+car.make;     // "Toyota" ✅ — from constructor
+String(car);  // "2020 Toyota Camry"
+```
+
+### Implicit Constructor
+
+```js
+// No constructor declared — engine provides default:
+class Point {
+  x = 0;
+  y = 0;
+  // Implicit for base class:
+  // constructor() {}
+
+  distanceTo(other) {
+    return Math.sqrt((this.x - other.x)**2 + (this.y-other.y)**2);
+  }
+}
+
+const p = new Point(); // ✅ — implicit constructor runs
+p.x; // 0 ✅
+p.y; // 0 ✅
+
+// Subclass — implicit constructor forwards all args to super:
+class Point3D extends Point {
+  z = 0;
+  // Implicit:
+  // constructor(...args) { super(...args); }
+}
+
+new Point3D(); // ✅ — implicit super() called
+```
+
+### Constructor Return Override
+
+```js
+class Foo {
+  constructor() {
+    this.created = true;
+
+    // Return object → replaces 'this':
+    return { hijacked: true };     // ← overrides
+  }
+}
+
+const f = new Foo();
+f.created;   // undefined 😱 — 'this' was replaced
+f.hijacked;  // true
+
+// Return primitive → ignored, 'this' used:
+class Bar {
+  constructor() {
+    this.created = true;
+    return 42;           // ← ignored (primitive)
+  }
+}
+new Bar().created; // true ✅
+
+// Legitimate use — singleton / cache:
+class Config {
+  static #instance = null;
+
+  constructor(data) {
+    if (Config.#instance) return Config.#instance; // return existing ✅
+    Object.assign(this, data);
+    Config.#instance = this;
+  }
+
+  static reset() { Config.#instance = null; }
+}
+
+const a = new Config({ debug: true });
+const b = new Config({ debug: false }); // returns existing instance
+a === b;            // true ✅ — same object
+b.debug;            // true ✅ — from first construction
+b instanceof Config; // true ✅ — same class returned
+```
+
+---
+
+## 3️⃣ Inheritance Constructor — `super()`
+
+### `super()` Rules
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              super() RULES — ALL MANDATORY               │
+│                                                          │
+│  1. MUST call super() in subclass constructor            │
+│  2. MUST call before any 'this' access                   │
+│  3. MUST call before returning                           │
+│  4. Automatically called if no constructor defined       │
+│  5. 'this' UNINITIALIZED until super() returns           │
+│  6. new.target = outermost class (not parent)            │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+class Animal {
+  #name;
+  #energy = 100;
+
+  constructor(name) {
+    this.#name   = name;
+    this.species = this.constructor.species ?? "Unknown"; // new.target aware
+  }
+
+  get name()   { return this.#name; }
+  get energy() { return this.#energy; }
+
+  move(distance) {
+    this.#energy -= distance;
+    return this;
+  }
+}
+
+class Dog extends Animal {
+  static species = "Canis lupus";
+  #breed;
+  #tricks = new Set();
+
+  constructor(name, breed) {
+    // 'this' NOT available yet:
+    // this.#breed = breed; ❌ ReferenceError
+
+    super(name);             // ← triggers Animal constructor
+                             // After this: 'this' is available
+
+    // Now safe to use 'this':
+    this.#breed = breed;
+  }
+
+  learn(trick) { this.#tricks.add(trick); return this; }
+  perform(trick) {
+    if (!this.#tricks.has(trick)) throw new Error(`Dog doesn't know ${trick}`);
+    this.move(2); // inherited method ✅
+    return `${this.name} performs ${trick}!`;
+  }
+
+  get breed()  { return this.#breed; }
+  get tricks() { return [...this.#tricks]; }
+}
+
+class GoldenRetriever extends Dog {
+  constructor(name) {
+    super(name, "Golden Retriever"); // calls Dog → Animal chain
+    // All ancestor constructors + fields complete ✅
+  }
+
+  fetch(item) {
+    this.move(5);
+    return `${this.name} fetches the ${item}!`;
+  }
+}
+
+const dog = new GoldenRetriever("Buddy");
+dog.name;     // "Buddy" ✅
+dog.breed;    // "Golden Retriever" ✅
+dog.species;  // "Canis lupus" ✅ — from Dog.species via new.target
+dog.energy;   // 100 ✅
+
+dog.learn("sit").learn("shake");
+dog.perform("sit"); // "Buddy performs sit!"
+dog.fetch("ball");  // "Buddy fetches the ball!"
+```
+
+### `new.target` — Polymorphic and Abstract
+
+```js
+// Abstract class guard:
+class Shape {
+  constructor(color) {
+    if (new.target === Shape) {
+      throw new TypeError("Shape is abstract — cannot instantiate directly");
+    }
+    this.color = color;
+    // new.target = actual subclass being constructed:
+    this.type = new.target.name;
+  }
+
+  area()      { throw new Error(`${this.constructor.name}.area() required`); }
+  perimeter() { throw new Error(`${this.constructor.name}.perimeter() required`); }
+}
+
+class Circle extends Shape {
+  #r;
+  constructor(r, color = "black") {
+    super(color);           // new.target = Circle ✅
+    this.#r = r;
+  }
+  area()      { return Math.PI * this.#r ** 2; }
+  perimeter() { return 2 * Math.PI * this.#r; }
+}
+
+new Shape("red");    // ❌ TypeError: Shape is abstract
+new Circle(5);       // ✅ — new.target = Circle throughout
+new Circle(5).type;  // "Circle" ✅ — from new.target.name
+
+// new.target in static — polymorphic factory:
+class Model {
+  static create(data) {
+    return new this(data); // 'this' = calling class
+  }
+
+  constructor(data) {
+    this.type = new.target.name; // always the outermost class
+    Object.assign(this, data);
+  }
+}
+
+class User extends Model { }
+class Product extends Model { }
+
+User.create({ name: "Ali" }).type;     // "User" ✅
+Product.create({ name: "Book" }).type; // "Product" ✅
+```
+
+---
+
+## 4️⃣ Constructor Patterns
+
+### Static Factory Method — Replacing Constructor
+
+```js
+// Private constructor + static factories:
+class Color {
+  #r; #g; #b; #a;
+
+  // Private — cannot be called directly:
+  constructor(r, g, b, a = 1) {
+    this.#r = Math.round(Math.min(255, Math.max(0, r)));
+    this.#g = Math.round(Math.min(255, Math.max(0, g)));
+    this.#b = Math.round(Math.min(255, Math.max(0, b)));
+    this.#a = Math.min(1, Math.max(0, a));
+  }
+
+  // Named factories — express INTENT:
+  static fromRGB(r, g, b)          { return new Color(r, g, b); }
+  static fromRGBA(r, g, b, a)      { return new Color(r, g, b, a); }
+
+  static fromHex(hex) {
+    const clean = hex.replace("#", "");
+    return new Color(
+      parseInt(clean.slice(0, 2), 16),
+      parseInt(clean.slice(2, 4), 16),
+      parseInt(clean.slice(4, 6), 16)
+    );
+  }
+
+  static fromHSL(h, s, l) {
+    // HSL → RGB conversion (complex math hidden behind clear name)
+    const c = (1 - Math.abs(2*l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c/2;
+    let r, g, b;
+    if (h < 60)       [r,g,b] = [c, x, 0];
+    else if (h < 120) [r,g,b] = [x, c, 0];
+    else if (h < 180) [r,g,b] = [0, c, x];
+    else if (h < 240) [r,g,b] = [0, x, c];
+    else if (h < 300) [r,g,b] = [x, 0, c];
+    else              [r,g,b] = [c, 0, x];
+    return new Color((r+m)*255, (g+m)*255, (b+m)*255);
+  }
+
+  static named(name) {
+    const NAMES = { red: "#FF0000", green: "#00FF00", blue: "#0000FF", white: "#FFFFFF" };
+    if (!NAMES[name]) throw new Error(`Unknown color: ${name}`);
+    return Color.fromHex(NAMES[name]);
+  }
+
+  // Public API:
+  toHex()   { return `#${[this.#r, this.#g, this.#b].map(c => c.toString(16).padStart(2, "0")).join("")}`; }
+  toRGBA()  { return `rgba(${this.#r},${this.#g},${this.#b},${this.#a})`; }
+  mix(other, ratio = 0.5) {
+    return new Color(
+      this.#r * (1-ratio) + other.#r * ratio,
+      this.#g * (1-ratio) + other.#g * ratio,
+      this.#b * (1-ratio) + other.#b * ratio,
+    );
+  }
+
+  [Symbol.toPrimitive](hint) {
+    return hint === "number" ? (this.#r << 16 | this.#g << 8 | this.#b) : this.toHex();
+  }
+}
+
+// Clear intent via named constructors:
+const red    = Color.fromRGB(255, 0, 0);
+const blue   = Color.fromHex("#0000FF");
+const gold   = Color.fromHSL(43, 1, 0.5);
+const orange = red.mix(Color.named("green"), 0.3);
+
+`Color: ${red}`;    // "#ff0000"
++red;               // 16711680 (0xFF0000)
+```
+
+### Async Construction Pattern
+
+```js
+// Constructor is synchronous — cannot await
+// Pattern: private constructor + static async factory
+
+class DatabasePool {
+  #pool;
+  #stats = { queries: 0, errors: 0 };
+
+  // Private — not directly callable:
+  constructor(pool) {
+    this.#pool = pool;
+  }
+
+  // The ONLY way to create a DatabasePool:
+  static async create({
+    host, port = 5432, database, user, password,
+    max = 10, idleTimeoutMs = 30000
+  }) {
+    // Validate:
+    if (!host || !database || !user) {
+      throw new TypeError("host, database, and user are required");
+    }
+
+    // Async setup:
+    const { Pool } = await import("pg");
+    const pool = new Pool({ host, port, database, user, password, max, idleTimeoutMillis: idleTimeoutMs });
+
+    // Validate connection before returning:
+    const client = await pool.connect();
+    try {
+      await client.query("SELECT 1");
+    } finally {
+      client.release();
+    }
+
+    const instance = new DatabasePool(pool);
+    console.log(`✅ DatabasePool connected to ${host}/${database}`);
+    return instance;
+  }
+
+  async query(sql, params = []) {
+    this.#stats.queries++;
+    try {
+      const { rows } = await this.#pool.query(sql, params);
+      return rows;
+    } catch (err) {
+      this.#stats.errors++;
+      throw err;
+    }
+  }
+
+  async transaction(fn) {
+    const client = await this.#pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  get stats()     { return { ...this.#stats }; }
+  async end()     { await this.#pool.end(); }
+}
+
+// Usage — always await creation:
+const db = await DatabasePool.create({
+  host:     process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASS,
+});
+
+const users = await db.query("SELECT * FROM users LIMIT $1", [10]);
+```
+
+### Factory Function Pattern — Without `new`
+
+```js
+// No class, no new — just a function that returns an object:
+function createEventEmitter() {
+  // Private state in closure:
+  const listeners = new Map();
+  let eventCount  = 0;
+
+  // Private helper:
+  function getOrCreate(event) {
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    return listeners.get(event);
+  }
+
+  // Public API:
+  return Object.freeze({
+    on(event, handler) {
+      if (typeof handler !== "function") throw new TypeError("handler must be a function");
+      getOrCreate(event).add(handler);
+      return () => listeners.get(event)?.delete(handler);
+    },
+
+    once(event, handler) {
+      const wrapper = (...args) => {
+        listeners.get(event)?.delete(wrapper);
+        return handler(...args);
+      };
+      wrapper._original = handler;
+      return this.on(event, wrapper);
+    },
+
+    off(event, handler) {
+      const set = listeners.get(event);
+      if (!set) return false;
+      const direct  = set.delete(handler);
+      const wrapped = [...set].find(h => h._original === handler);
+      if (wrapped) set.delete(wrapped);
+      return direct || !!wrapped;
+    },
+
+    emit(event, ...args) {
+      eventCount++;
+      getOrCreate(event).forEach(h => {
+        try { h(...args); } catch (err) { console.error(err); }
+      });
+    },
+
+    get eventCount() { return eventCount; },
+    listenerCount(event) { return listeners.get(event)?.size ?? 0; },
+  });
+}
+
+const emitter = createEventEmitter(); // no new needed ✅
+const off = emitter.on("data", chunk => console.log(chunk));
+emitter.emit("data", { id: 1 });
+emitter.eventCount; // 1 ✅
+emitter.listeners;  // undefined ✅ — truly private
+off();              // unsubscribe ✅
+```
+
+---
+
+## 5️⃣ Built-in Constructors
+
+### Object, Array, Function
+
+```js
+// Object constructor:
+new Object()      // same as {}
+new Object(5)     // Number { 5 } — wraps primitive
+new Object(null)  // {} — null/undefined → empty object
+
+// Array constructor — the TRAP:
+new Array(3)        // [empty × 3] — length 3, NO elements 😱
+new Array(1, 2, 3)  // [1, 2, 3]
+Array.of(3)         // [3] ← fixes the trap ✅
+
+// Function constructor — avoid, evaluates string:
+new Function("x", "y", "return x + y"); // eval-like 😱
+
+// All equivalent:
+typeof new Object()   // "object"
+typeof new Array()    // "object"
+typeof new Function() // "function"
+```
+
+### Primitive Wrappers — Never Use With `new`
+
+```js
+// new Number(), new String(), new Boolean() — AVOID:
+const numObj = new Number(42);
+const numPrim = 42;
+
+typeof numObj;  // "object" 😱 — NOT "number"
+typeof numPrim; // "number" ✅
+
+numObj == 42;   // true  — coercion
+numObj === 42;  // false 😱 — object !== primitive
+
+if (new Boolean(false)) {
+  console.log("This runs!"); // 😱 — objects are ALWAYS truthy
+}
+
+// Without new — type CONVERSION (fine to use):
+Number("42");   // 42      ✅ — conversion
+String(42);     // "42"    ✅ — conversion
+Boolean(0);     // false   ✅ — conversion
+
+// Symbol and BigInt — CANNOT use new:
+new Symbol("id");  // ❌ TypeError: Symbol is not a constructor
+new BigInt(42);    // ❌ TypeError: BigInt is not a constructor
+
+Symbol("id");      // ✅ — call without new
+BigInt(42);        // ✅ — call without new
+```
+
+---
+
+## 6️⃣ V8 Internals — Constructor Optimization
+
+### Hidden Class Transitions
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         CONSTRUCTOR + HIDDEN CLASSES                     │
+│                                                          │
+│  class Point {                                           │
+│    constructor(x, y) {                                   │
+│      this.x = x;   ← C0 → C1{x}                        │
+│      this.y = y;   ← C1 → C2{x,y}                      │
+│    }                                                     │
+│  }                                                       │
+│                                                          │
+│  All Point instances follow same transition:             │
+│  C0 → C1 → C2                                           │
+│  → ONE hidden class C2 shared by all instances          │
+│  → Property access: p.x → offset 0, p.y → offset 8     │
+│  → O(1) array-indexed lookup ✅                         │
+│                                                          │
+│  INCONSISTENT construction breaks this:                  │
+│  if (isAdmin) { this.permissions = []; }                 │
+│  Admin:   C0 → C1 → C2 → C3{permissions}                │
+│  Regular: C0 → C1 → C2                                  │
+│  → TWO different shapes → IC polymorphism → slower 😱   │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// CONSISTENT — all instances get same shape:
+class User {
+  constructor({ name, email, role = "user", active = true }) {
+    this.name   = name;    // always first
+    this.email  = email;   // always second
+    this.role   = role;    // always third — even with default
+    this.active = active;  // always fourth
+    // V8: ONE hidden class for ALL User instances ✅
+  }
+}
+
+// INCONSISTENT — conditional properties = multiple shapes:
+class BadUser {
+  constructor({ name, email, isAdmin }) {
+    this.name  = name;
+    this.email = email;
+    if (isAdmin) {
+      this.permissions = []; // 😱 only some instances
+      this.adminSince  = new Date();
+    }
+    // Admin instances → shape A
+    // Regular instances → shape B
+    // IC polymorphism on every BadUser method call
+  }
+}
+
+// Fix — always define all properties:
+class GoodUser {
+  constructor({ name, email, isAdmin = false }) {
+    this.name        = name;
+    this.email       = email;
+    this.permissions = isAdmin ? ["read", "write"] : [];   // ✅ always set
+    this.adminSince  = isAdmin ? new Date() : null;         // ✅ always set
+    // ONE hidden class for ALL instances ✅
+  }
+}
+```
+
+### Constructor Inlining — TurboFan Optimization
+
+```js
+// V8 TurboFan inlines small constructors at call site:
+class Vec2 {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function addVectors(a, b) {
+  return new Vec2(a.x + b.x, a.y + b.y); // hot constructor
+}
+
+// After 10,000+ calls — TurboFan:
+// → Inlines Vec2 constructor directly into addVectors
+// → No function call overhead for constructor
+// → Direct property writes in machine code
+// → Allocation elision if result doesn't escape (rare)
+
+// PREVENTS inlining:
+// 1. Constructor too large (>~50 bytecodes)
+// 2. Constructor has try/catch
+// 3. Constructor calls other non-inlined functions
+// 4. Multiple different constructors called at same call site (polymorphic)
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Value Object Constructor
+
+```js
+class Money {
+  #amount;
+  #currency;
+  static #CURRENCIES = new Set(["USD", "EUR", "INR", "GBP", "JPY"]);
+
+  constructor(amount, currency) {
+    // Validate in constructor — guarantee invariants:
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new RangeError(`Invalid amount: ${amount}`);
+    }
+    if (!Money.#CURRENCIES.has(currency)) {
+      throw new TypeError(`Unsupported currency: ${currency}`);
+    }
+
+    // Normalize: store as integer cents to avoid floating point:
+    this.#amount   = Math.round(amount * 100);
+    this.#currency = currency;
+
+    // Immutable after construction:
+    Object.freeze(this);
+  }
+
+  get amount()   { return this.#amount / 100; }
+  get currency() { return this.#currency; }
+  get cents()    { return this.#amount; }
+
+  add(other) {
+    if (other.#currency !== this.#currency) {
+      throw new TypeError(`Currency mismatch: ${this.#currency} vs ${other.#currency}`);
+    }
+    return new Money((this.#amount + other.#amount) / 100, this.#currency);
+  }
+
+  subtract(other) {
+    if (other.#currency !== this.#currency) throw new TypeError("Currency mismatch");
+    if (other.#amount > this.#amount) throw new RangeError("Insufficient funds");
+    return new Money((this.#amount - other.#amount) / 100, this.#currency);
+  }
+
+  multiply(factor) {
+    if (!Number.isFinite(factor) || factor < 0) throw new RangeError("Invalid factor");
+    return new Money((this.#amount * factor) / 100, this.#currency);
+  }
+
+  equals(other) {
+    return #amount in other &&
+           this.#amount   === other.#amount &&
+           this.#currency === other.#currency;
+  }
+
+  isGreaterThan(other) { return this.#amount > other.#amount; }
+
+  [Symbol.toPrimitive](hint) {
+    return hint === "number" ? this.#amount / 100 : `${this.#currency} ${(this.#amount/100).toFixed(2)}`;
+  }
+
+  toJSON() { return { amount: this.#amount / 100, currency: this.#currency }; }
+  toString() { return `${[Symbol.toPrimitive]}("string")`; }
+
+  // Named constructors for clarity:
+  static usd(amount) { return new Money(amount, "USD"); }
+  static eur(amount) { return new Money(amount, "EUR"); }
+  static inr(amount) { return new Money(amount, "INR"); }
+  static fromJSON({ amount, currency }) { return new Money(amount, currency); }
+}
+
+const price = Money.usd(19.99);
+const tax   = price.multiply(0.18);
+const total = price.add(tax);
+
+`Total: ${total}`;  // "Total: USD 23.59"
+total > 20;         // true — via toPrimitive
+price.equals(Money.usd(19.99)); // true ✅
+price.equals(Money.eur(19.99)); // false ✅
+```
+
+### Pattern 2 — Registry Constructor Pattern
+
+```js
+// Constructor auto-registers instances:
+class EventHandler {
+  static #handlers = new Map();
+
+  static get(eventType) {
+    return EventHandler.#handlers.get(eventType);
+  }
+
+  static getAll() {
+    return [...EventHandler.#handlers.entries()];
+  }
+
+  #eventType;
+  #handler;
+  #options;
+
+  constructor(eventType, handler, options = {}) {
+    if (typeof eventType !== "string" || !eventType.trim()) {
+      throw new TypeError("eventType must be non-empty string");
+    }
+    if (typeof handler !== "function") {
+      throw new TypeError("handler must be a function");
+    }
+    if (EventHandler.#handlers.has(eventType)) {
+      throw new Error(`Handler already registered for: ${eventType}`);
+    }
+
+    this.#eventType = eventType;
+    this.#handler   = handler;
+    this.#options   = { once: false, priority: 0, ...options };
+
+    // Auto-register at construction:
+    EventHandler.#handlers.set(eventType, this);
+  }
+
+  async invoke(data) {
+    try {
+      await this.#handler(data);
+      if (this.#options.once) {
+        EventHandler.#handlers.delete(this.#eventType);
+      }
+    } catch (err) {
+      console.error(`Handler ${this.#eventType} failed:`, err);
+      throw err;
+    }
+  }
+
+  get eventType() { return this.#eventType; }
+  get priority()  { return this.#options.priority; }
+
+  destroy() {
+    EventHandler.#handlers.delete(this.#eventType);
+  }
+}
+
+// Each construction = one registered handler:
+new EventHandler("user.registered",    async ({ userId }) => sendWelcomeEmail(userId));
+new EventHandler("order.placed",       async ({ orderId }) => processOrder(orderId), { priority: 10 });
+new EventHandler("payment.succeeded",  async ({ paymentId }) => fulfillOrder(paymentId));
+new EventHandler("payment.failed",     async ({ userId }) => notifyUser(userId), { once: true });
+
+EventHandler.get("user.registered");  // the handler ✅
+EventHandler.getAll().length;          // 4 ✅
+```
+
+### Pattern 3 — Builder via Constructor
+
+```js
+// Fluent builder for complex object construction:
+class QueryBuilder {
+  #table;
+  #conditions = [];
+  #columns    = ["*"];
+  #orderBys   = [];
+  #limit      = null;
+  #offset     = null;
+  #joins      = [];
+  #params     = [];
+  #paramCount = 0;
+
+  constructor(table) {
+    if (!table || typeof table !== "string") {
+      throw new TypeError("table name required");
+    }
+    this.#table = table;
+  }
+
+  // Each method returns 'this' for chaining:
+  select(...columns)   { this.#columns = columns; return this; }
+
+  where(condition, ...values) {
+    values.forEach(v => this.#params.push(v));
+    const paramRefs = values.map(() => `$${++this.#paramCount}`);
+    let paramIdx = 0;
+    const resolved = condition.replace(/\?/g, () => paramRefs[paramIdx++]);
+    this.#conditions.push(resolved);
+    return this;
+  }
+
+  orderBy(column, direction = "ASC") {
+    this.#orderBys.push(`${column} ${direction}`);
+    return this;
+  }
+
+  limit(n)  { this.#limit = n; return this; }
+  offset(n) { this.#offset = n; return this; }
+
+  join(table, on, type = "INNER") {
+    this.#joins.push(`${type} JOIN ${table} ON ${on}`);
+    return this;
+  }
+
+  build() {
+    const parts = [
+      `SELECT ${this.#columns.join(", ")}`,
+      `FROM ${this.#table}`,
+      ...this.#joins,
+      this.#conditions.length ? `WHERE ${this.#conditions.join(" AND ")}` : "",
+      this.#orderBys.length   ? `ORDER BY ${this.#orderBys.join(", ")}` : "",
+      this.#limit  !== null   ? `LIMIT ${this.#limit}` : "",
+      this.#offset !== null   ? `OFFSET ${this.#offset}` : "",
+    ].filter(Boolean);
+
+    return { sql: parts.join(" "), params: this.#params };
+  }
+
+  async execute(pool) {
+    const { sql, params } = this.build();
+    const { rows } = await pool.query(sql, params);
+    return rows;
+  }
+
+  // Static factory for readability:
+  static from(table) { return new QueryBuilder(table); }
+}
+
+const { sql, params } = QueryBuilder
+  .from("users")
+  .select("id", "name", "email")
+  .join("orders", "users.id = orders.user_id", "LEFT")
+  .where("users.active = ?", true)
+  .where("users.role = ?", "admin")
+  .orderBy("users.created_at", "DESC")
+  .limit(20)
+  .offset(40)
+  .build();
+
+// SELECT id, name, email FROM users
+// LEFT JOIN orders ON users.id = orders.user_id
+// WHERE users.active = $1 AND users.role = $2
+// ORDER BY users.created_at DESC
+// LIMIT 20 OFFSET 40
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: Function constructor called without `new` — global pollution
+
+```js
+function Timer(duration) {
+  this.duration = duration; // 'this' = global in sloppy mode
+  this.start    = Date.now();
+}
+
+// Sloppy mode — 'this' = global:
+const t = Timer(5000);       // t = undefined (no return)
+window.duration;             // 5000 😱 — global pollution
+window.start;                // timestamp 😱
+
+// Strict mode — 'this' = undefined → crash:
+"use strict";
+const t = Timer(5000);       // ❌ TypeError: Cannot set 'duration' of undefined
+
+// Class automatically enforces new:
+class Timer {
+  constructor(duration) { this.duration = duration; }
+}
+Timer(5000);                 // ❌ TypeError: Class constructor requires new ✅
+```
+
+---
+
+### Trap 2: Field initializer uses default, not constructor parameter
+
+```js
+class Request {
+  method = "GET";                           // ① field default
+  label  = `[${this.method.toUpperCase()}]`; // ② uses "GET" always!
+
+  constructor(method) {
+    this.method = method; // ③ overrides field — but label already computed 😱
+  }
+}
+
+const r = new Request("POST");
+r.method; // "POST" ✅
+r.label;  // "[GET]" 😱 — computed before constructor ran
+
+// Fix — compute in constructor:
+class Request {
+  constructor(method = "GET") {
+    this.method = method;
+    this.label  = `[${this.method.toUpperCase()}]`; // ✅ after method set
+  }
+}
+
+new Request("POST").label; // "[POST]" ✅
+```
+
+---
+
+### Trap 3: Calling overridable method from constructor — child state not ready
+
+```js
+class Base {
+  constructor() {
+    this.init(); // calls child's override — child fields NOT set yet 😱
+  }
+
+  init() { console.log("Base init"); }
+}
+
+class Child extends Base {
+  config = { debug: true }; // set AFTER super() in constructor
+
+  init() {
+    // Called from Base constructor — config is undefined 😱
+    console.log("config:", this.config); // undefined
+  }
+}
+
+new Child();
+// "config: undefined" ← child field not initialized yet when init() ran
+
+// Fix — use template method only via explicit call after construction:
+class SafeBase {
+  constructor() { } // no virtual calls
+
+  initialize() {
+    this.setup(); // called AFTER construction
+    return this;
+  }
+
+  setup() { }
+}
+
+class SafeChild extends SafeBase {
+  config = { debug: true };
+  setup() { console.log("config:", this.config); } // ✅ { debug: true }
+}
+
+new SafeChild().initialize(); // safe ✅
+```
+
+---
+
+### Trap 4: `new Array(n)` creates holes not values
+
+```js
+const bad = new Array(5);
+// [empty × 5] — NOT [undefined × 5]
+
+bad.map(x => x * 2);     // [empty × 5] 😱 — map skips holes
+bad.fill(0).map(x => x); // [0,0,0,0,0] ✅ — fill first
+
+// Difference between holes and undefined:
+const holey = new Array(3);
+const undef = [undefined, undefined, undefined];
+
+0 in holey; // false — hole (property doesn't exist)
+0 in undef; // true  — undefined (property exists with value undefined)
+
+// Correct way to create initialized array:
+Array.from({ length: 5 }, (_, i) => i); // [0,1,2,3,4] ✅
+Array.from({ length: 5 }, () => 0);      // [0,0,0,0,0] ✅
+new Array(5).fill(0);                    // [0,0,0,0,0] ✅
+[...Array(5)].map((_, i) => i);          // [0,1,2,3,4] ✅
+```
+
+---
+
+### Trap 5: `instanceof` breaks after constructor return override
+
+```js
+class Registry {
+  static #cache = new Map();
+
+  constructor(key) {
+    if (Registry.#cache.has(key)) {
+      return Registry.#cache.get(key); // returns cached — could be Registry ✅
+    }
+    this.key = key;
+    Registry.#cache.set(key, this);
+  }
+}
+
+const a = new Registry("db");
+const b = new Registry("db");
+a === b;              // true ✅ — same instance
+a instanceof Registry; // true ✅ — same class returned
+
+// PROBLEM — returning a DIFFERENT class:
+class Proxy {
+  constructor(target) {
+    return new Proxy(target, {}); // returns built-in Proxy 😱
+  }
+}
+
+const p = new Proxy(target);
+p instanceof Proxy; // false 😱 — built-in Proxy returned, not MyProxy
+// instanceof checks [[Prototype]] chain — it leads to built-in Proxy
+```
+
+---
+
+### Trap 6: Forgetting `super()` in derived class
+
+```js
+class Animal { constructor(name) { this.name = name; } }
+
+class Dog extends Animal {
+  constructor(name, breed) {
+    // this.breed = breed; ❌ ReferenceError — BEFORE super()
+    super(name);          // ✅ MUST be first
+    this.breed = breed;   // ✅ after super()
+  }
+}
+
+// No constructor in derived — implicit super() passes args:
+class Cat extends Animal {
+  // implicit: constructor(...args) { super(...args); }
+}
+new Cat("Whiskers"); // ✅ name = "Whiskers"
+
+// Gotcha — no constructor but has fields:
+class Kitten extends Cat {
+  lives = 9;           // field — runs AFTER implicit super()
+  // implicit constructor provides super() automatically ✅
+}
+new Kitten("Tiny").lives; // 9 ✅
+new Kitten("Tiny").name;  // "Tiny" ✅
+```
+
+---
+
+### Trap 7: `new.target` is `undefined` outside constructor context
+
+```js
+class Foo {
+  checkTarget() {
+    console.log(new.target); // undefined — NOT in constructor
+  }
+
+  constructor() {
+    console.log(new.target); // Foo — in constructor ✅
+    this.checkTarget();      // undefined — called as method, not constructor
+  }
+}
+
+new Foo();
+// Foo       ← constructor
+// undefined ← checkTarget (not a constructor call)
+
+// Guard must be in constructor only:
+class Abstract {
+  constructor() {
+    if (new.target === Abstract) throw new TypeError("Abstract"); // ✅
+    // new.target always set correctly in constructor chain
+  }
+}
+```
+
+---
+
+## 📊 Constructor vs Factory Function vs Class
+
+```
+┌──────────────────────────────────────────────────────────┐
+│    CONSTRUCTOR COMPARISON                                │
+├──────────────────────┬───────────────┬───────────────────┤
+│ Feature              │ Function Ctor │ Class Constructor │
+├──────────────────────┼───────────────┼───────────────────┤
+│ new required         │ Optional 😱   │ Required ✅       │
+│ Hoisted              │ ✅ Yes        │ ❌ No (TDZ)       │
+│ strict mode          │ Opt-in        │ Always ✅         │
+│ Private fields       │ ❌            │ ✅ (#)            │
+│ extends              │ Manual        │ ✅ Native         │
+│ super()              │ Manual        │ ✅ Native         │
+│ new.target           │ ✅            │ ✅                │
+│ instance fields      │ ❌            │ ✅                │
+│ Static blocks        │ ❌            │ ✅                │
+│ Abstract guard       │ Manual        │ new.target ✅     │
+└──────────────────────┴───────────────┴───────────────────┘
+
+┌──────────────────────────────────────────────────────────┐
+│    CLASS vs FACTORY FUNCTION                             │
+├──────────────────────┬───────────────────────────────────┤
+│ Class Constructor    │ Factory Function                  │
+├──────────────────────┼───────────────────────────────────┤
+│ new required         │ No new needed                     │
+│ instanceof works     │ instanceof fails (plain object)   │
+│ Prototype methods    │ Methods per instance (closures)   │
+│ Memory: shared proto │ Memory: per-instance closures     │
+│ extends/super        │ Composition/mixins                │
+│ Private via #        │ Private via closure               │
+└──────────────────────┴───────────────────────────────────┘
+```
+
+---
+
+## 📊 DSA / Internals Connection
+
+> A constructor is the JS implementation of **object initialization** in the **object construction pattern**. V8 represents each unique constructor-invocation pattern as a **hidden class (Map)** — a shape that describes property layout. The sequence of property assignments in a constructor defines a **transition tree**: each `this.x = val` adds an edge in this tree. All instances of the same class that execute the constructor identically end up at the same leaf node = same hidden class = O(1) property access via shape-indexed lookup.
+>
+> The `new` operator implements **two-phase construction** from class theory: first **allocation** (object creation + prototype assignment), then **initialization** (constructor body). In derived classes, `super()` delegates allocation to the base class — the derived class only handles initialization. This mirrors the **base-class-first** construction order in C++ and Java, ensuring base invariants are established before derived state is added.
+>
+> TurboFan **inlines** small constructors at call sites — eliminating function call overhead. A constructor called 10,000+ times with the same shape of arguments gets compiled directly into the calling function's machine code. This is the same **method inlining** optimization used in all modern JIT compilers.
+
+---

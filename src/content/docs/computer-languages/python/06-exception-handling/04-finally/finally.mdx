@@ -1,0 +1,1157 @@
+---
+title: Python finally Block
+slug: computer-languages/python/exception-handling/finally
+description: Master Python's finally block for guaranteed cleanup. Understand how it interacts with return statements, exceptions, and context managers.
+sidebar:
+  label: "finally"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [python, finally, exception-handling, cleanup, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔒 The `finally` Block
+
+> In Python, `finally` defines a block of code that **always executes**, whether an exception occurred or not. It is the standard place for cleanup actions like closing files, network connections, or releasing locks.
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `try`: "I'll try this."  
+- `except`: "If it fails, do this."  
+- `else`: "If it succeeds, do this."  
+- `finally`: "No matter what happens, **clean up**."
+</Aside>
+
+---
+
+### 🔬 Syntax & Execution Flow
+
+```python
+try:
+    # Risky operation
+    f = open("file.txt")
+    data = f.read()
+except FileNotFoundError:
+    print("File missing")
+else:
+    print("Read successful")
+finally:
+    # ALWAYS runs
+    f.close() 
+    print("Cleanup complete")
+```
+
+**Scenarios:**
+1. **No Error**: `try` → `else` → `finally`.
+2. **Handled Error**: `try` → `except` → `finally`.
+3. **Unhandled Error**: `try` → `finally` → Error propagates up.
+
+---
+
+### 💻 Real-World Code: Resource Cleanup
+
+Before Context Managers (`with`), `finally` was the only safe way to handle resources.
+
+```python
+def get_database_connection():
+    conn = None
+    try:
+        conn = db.connect("localhost")
+        conn.execute("UPDATE users SET active=1")
+        conn.commit()
+    except DatabaseError as e:
+        if conn:
+            conn.rollback()
+        raise # Re-raise the error
+    finally:
+        # Guaranteed to run, even if commit() failed
+        if conn:
+            conn.close()
+            print("Connection closed.")
+```
+
+<Aside type="caution">
+**Modern Python**: Use `with` statements (Context Managers) instead of manual `try/finally` for files and connections. They are cleaner and less error-prone.
+```python
+# ✅ Preferred
+with open("file.txt") as f:
+    data = f.read()
+# File automatically closed here
+```
+</Aside>
+
+---
+
+### ⚠️ The "Return" Trap
+
+If you use `return` in `try` and `finally`, the `finally` block still runs **before** the function actually returns. However, if `finally` has its own `return`, it **overwrites** the previous one.
+
+<CardGrid>
+  <Card title="Case 1: Finally has NO return" icon="approve-check">
+    ```python
+    def demo():
+        try:
+            return 1
+        finally:
+            print("Cleanup")
+            
+    print(demo())
+    # Output:
+    # Cleanup
+    # 1
+    ```
+  </Card>
+  
+  <Card title="Case 2: Finally HAS return" icon="error">
+    ```python
+    def demo():
+        try:
+            return 1
+        finally:
+            return 2 # Overwrites the try return!
+            
+    print(demo())
+    # Output:
+    # 2
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="danger">
+**🚨 Warning**: Never use `return`, `break`, or `continue` inside a `finally` block. It suppresses any active exceptions and makes code flow extremely difficult to debug.
+</Aside>
+
+---
+
+### 🔀 Exception Suppression
+
+If an exception occurs in `try` and a **different** exception occurs in `finally`, the first exception is **lost**.
+
+```python
+try:
+    raise ValueError("Original Error")
+finally:
+    raise RuntimeError("Cleanup Error")
+
+# Result: RuntimeError is raised. 
+# ValueError is gone (unless using exception chaining).
+```
+
+---
+
+### 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Finally vs With" icon="shield">
+    ```python
+    # ❌ Verbose and prone to errors
+    f = open("file")
+    try:
+        process(f)
+    finally:
+        f.close()
+
+    # ✅ Pythonic
+    with open("file") as f:
+        process(f)
+    ```
+  </Card>
+  
+  <Card title="Trap 2: System Exit" icon="warning">
+    ```python
+    import sys
+    try:
+        sys.exit(1)
+    finally:
+        print("This STILL prints!")
+    
+    # finally runs even on sys.exit(), 
+    # but NOT on os._exit() or kill -9.
+    ```
+  </Card>
+
+  <Card title="Trap 3: Swallowing Errors" icon="error">
+    ```python
+    try:
+        risky_call()
+    finally:
+        cleanup() 
+        # If risky_call() raised an error, 
+        # it propagates AFTER cleanup.
+        # But if cleanup() ALSO raises an error,
+        # the original error is LOST.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: When does finally run?
+    A: Always, regardless of exceptions or returns.
+    
+    Q: Does finally run if there is a return in try?
+    A: Yes. It runs before the value is returned.
+    ```
+  </Card>
+  
+  <Card title="Best Practices" icon="rocket">
+    ```text
+    Q: Should I use finally or with?
+    A: Use 'with' (Context Managers) whenever possible.
+    
+    Q: Can I omit except?
+    A: Yes. try/finally is valid if you just want cleanup.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+def tricky():
+    try:
+        return "Try"
+    except:
+        return "Except"
+    finally:
+        return "Finally"
+
+print(tricky())
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+"Finally"
+```
+*Reason: The return in `finally` overwrites the return in `try`.*
+</details>
+
+> 🚀 **Final Wisdom**: `finally` is your safety net. Use it for cleanup, but prefer `with` statements for standard resources. And never, ever return from `finally`. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔒 Python `finally` — Complete Guide
+
+---
+
+## 01 — `finally` Block
+
+### 🧠 Mental Model
+
+```
+finally = "no matter what happens in try/except — I ALWAYS run"
+
+The GUARANTEE:
+  ├── try completes normally       → finally runs
+  ├── try raises, except catches   → finally runs
+  ├── try raises, no handler       → finally runs THEN exception propagates
+  ├── try has return               → finally runs THEN return happens
+  ├── try has break/continue       → finally runs THEN break/continue
+  ├── sys.exit() called            → finally runs
+  └── ONLY exceptions: os._exit() → finally does NOT run
+                       SIGKILL     → finally does NOT run
+                       power cut   → finally does NOT run
+```
+
+```python
+# Basic guarantee:
+def f():
+    try:
+        print("try")
+        return "value"
+    finally:
+        print("finally")    # runs BEFORE return completes
+
+result = f()
+# try
+# finally
+print(result)   # "value"
+```
+
+### Primary Use Cases
+
+```python
+# 1. Resource cleanup — file handles:
+def read_file(path: str) -> str:
+    f = open(path)
+    try:
+        return f.read()
+    finally:
+        f.close()           # ALWAYS closes — even if read() fails
+
+
+# 2. Database transaction:
+def transfer(from_id: int, to_id: int, amount: float) -> None:
+    conn = db.connect()
+    try:
+        conn.begin()
+        conn.execute("UPDATE accounts SET balance = balance - %s WHERE id = %s",
+                     (amount, from_id))
+        conn.execute("UPDATE accounts SET balance = balance + %s WHERE id = %s",
+                     (amount, to_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()        # ALWAYS closes connection
+
+
+# 3. Lock release:
+import threading
+lock = threading.Lock()
+
+def critical_section():
+    lock.acquire()
+    try:
+        do_work()
+    finally:
+        lock.release()      # ALWAYS releases lock
+
+
+# 4. Temporary state restoration:
+def with_debug():
+    original = logging.getLogger().level
+    logging.getLogger().setLevel(logging.DEBUG)
+    try:
+        risky_operation()
+    finally:
+        logging.getLogger().setLevel(original)  # ALWAYS restore
+```
+
+---
+
+## 02 — Control Flow in `try/except/finally`
+
+### Every Possible Path
+
+```
+try → finally → normal:
+
+SCENARIO 1: No exception
+┌─────────────────────────────────────────────────┐
+│  try body runs completely                        │
+│  else block runs (if present)                   │
+│  finally block runs                             │
+│  execution continues after try/except/finally   │
+└─────────────────────────────────────────────────┘
+
+SCENARIO 2: Exception, caught
+┌─────────────────────────────────────────────────┐
+│  try body runs until exception raised            │
+│  matching except block runs                     │
+│  else block SKIPPED                             │
+│  finally block runs                             │
+│  execution continues after try/except/finally   │
+└─────────────────────────────────────────────────┘
+
+SCENARIO 3: Exception, NOT caught
+┌─────────────────────────────────────────────────┐
+│  try body runs until exception raised            │
+│  no matching except found                       │
+│  else block SKIPPED                             │
+│  finally block runs                             │
+│  exception PROPAGATES to caller                 │
+└─────────────────────────────────────────────────┘
+
+SCENARIO 4: return in try
+┌─────────────────────────────────────────────────┐
+│  try body reaches return statement               │
+│  return value SAVED                             │
+│  finally block runs                             │
+│  saved return value RETURNED                    │
+└─────────────────────────────────────────────────┘
+
+SCENARIO 5: return in except
+┌─────────────────────────────────────────────────┐
+│  try body raises exception                       │
+│  except block runs, reaches return               │
+│  return value SAVED                             │
+│  finally block runs                             │
+│  saved return value RETURNED                    │
+└─────────────────────────────────────────────────┘
+```
+
+### Proof of Every Scenario
+
+```python
+def trace(scenario: int, raise_exc=False, catch=True) -> str:
+    log = []
+    try:
+        log.append("try")
+        if raise_exc:
+            raise ValueError("error")
+        log.append("try end")
+        return "try-return"
+    except ValueError:
+        if catch:
+            log.append("except")
+            return "except-return"
+        raise
+    else:
+        log.append("else")
+    finally:
+        log.append("finally")
+        print(f"S{scenario} flow: {' → '.join(log)}")
+```
+
+```python
+trace(1)                          # S1 flow: try → try end → else → finally
+trace(2, raise_exc=True)          # S2 flow: try → except → finally
+trace(3, raise_exc=True, catch=False)  # S3 flow: try → finally  [then propagates]
+```
+
+### `return` in `finally` — The Override
+
+```python
+def f1():
+    try:
+        return 1        # saved: return_value = 1
+    finally:
+        return 2        # 💀 overrides return 1 → returns 2
+
+def f2():
+    try:
+        raise ValueError("error")
+    except ValueError:
+        return "except"  # saved: return_value = "except"
+    finally:
+        return "finally" # 💀 overrides exception + except return → "finally"
+
+def f3():
+    try:
+        raise ValueError("error")
+    finally:
+        return "finally" # 💀 SWALLOWS ValueError — returns "finally"
+
+f1()    # 2      ← not 1!
+f2()    # "finally"
+f3()    # "finally"  ← ValueError silently gone!
+```
+
+```python
+# Finally CAN'T suppress exception WITHOUT return:
+def f4():
+    try:
+        raise ValueError("error")
+    finally:
+        print("cleanup")   # runs, but exception still propagates
+
+f4()    # prints "cleanup" then raises ValueError
+```
+
+### `break`/`continue` Interaction
+
+```python
+# break in try — finally runs per iteration before break takes effect:
+for i in range(5):
+    try:
+        if i == 3:
+            break
+        print(f"try: {i}")
+    finally:
+        print(f"finally: {i}")
+
+# try: 0 → finally: 0 → try: 1 → finally: 1 → try: 2 → finally: 2 → finally: 3
+```
+
+```python
+# continue in try — finally runs before continuing to next iteration:
+for i in range(4):
+    try:
+        if i % 2 == 0:
+            continue
+        print(f"try: {i}")
+    finally:
+        print(f"finally: {i}")
+
+# finally: 0 → finally: 1 → try: 1 → finally: 2 → finally: 3 → try: 3
+```
+
+---
+
+## 03 — Nested `try/except/finally`
+
+### Basic Nesting
+
+```python
+def outer():
+    try:                                    # OUTER try
+        print("outer try")
+        try:                               # INNER try
+            print("inner try")
+            raise ValueError("from inner")
+        except ValueError as e:
+            print(f"inner except: {e}")
+            raise RuntimeError("from inner except") from e
+        finally:
+            print("inner finally")         # ← runs regardless
+
+    except RuntimeError as e:
+        print(f"outer except: {e}")
+    finally:
+        print("outer finally")             # ← runs regardless
+
+outer()
+# outer try
+# inner try
+# inner except: from inner
+# inner finally          ← inner finally BEFORE inner except's raise propagates
+# outer except: from inner except
+# outer finally
+```
+
+### Nested — Exception in `finally`
+
+```python
+def f():
+    try:
+        raise ValueError("original")
+    finally:
+        raise RuntimeError("from finally")  # 💀 replaces original!
+
+try:
+    f()
+except RuntimeError as e:
+    print(f"Got: {e}")           # "from finally"
+    print(f"Context: {e.__context__}")  # ValueError: original
+                                         # original stored as __context__
+```
+
+```python
+# During finally, original exception accessible via sys.exc_info():
+import sys
+
+def safe_cleanup():
+    try:
+        raise ValueError("original error")
+    finally:
+        exc_type, exc_val, _ = sys.exc_info()
+        if exc_type:
+            print(f"Cleaning up after: {exc_type.__name__}: {exc_val}")
+        # do NOT raise here — would replace original
+        perform_cleanup()
+
+safe_cleanup()
+# Cleaning up after: ValueError: original error
+# ValueError: original error  ← still propagates
+```
+
+### Nested — `return` in Outer `finally` Swallows Inner
+
+```python
+def outer():
+    try:
+        def inner():
+            try:
+                raise ValueError("inner error")
+            finally:
+                pass    # inner finally — exception propagates
+        inner()
+    except ValueError:
+        print("outer caught ValueError")
+        return "from outer except"
+    finally:
+        return "from outer finally"   # 💀 swallows outer except's return
+
+result = outer()
+# outer caught ValueError
+print(result)    # "from outer finally"  ← not "from outer except"
+```
+
+### Nested — Complete Flow Map
+
+```
+def process():
+    try:                          [OUTER TRY]
+        setup()                     → runs
+        try:                      [INNER TRY]
+            risky()                   → raises ValueError
+        except ValueError:          [INNER EXCEPT] → matches → runs
+            handle()                  → runs
+            raise RuntimeError()      → raises NEW exception
+        finally:                    [INNER FINALLY] → always runs
+            inner_cleanup()           → runs
+                                      then RuntimeError propagates
+    except RuntimeError:            [OUTER EXCEPT] → matches → runs
+        recover()                     → runs
+    finally:                        [OUTER FINALLY] → always runs
+        outer_cleanup()               → runs
+    # continue after
+```
+
+---
+
+## 04 — Various Combinations
+
+### All Seven Forms
+
+```python
+# FORM 1: try/except
+try:
+    risky()
+except ValueError:
+    handle()
+# ─────────────────────────────────────────────────────
+
+# FORM 2: try/finally (no except)
+try:
+    risky()
+finally:
+    cleanup()          # runs even if exception propagates
+
+# ─────────────────────────────────────────────────────
+
+# FORM 3: try/except/finally
+try:
+    risky()
+except ValueError:
+    handle()
+finally:
+    cleanup()
+
+# ─────────────────────────────────────────────────────
+
+# FORM 4: try/else
+try:
+    risky()
+except ValueError:
+    handle()
+else:
+    on_success()       # only if no exception
+
+# ─────────────────────────────────────────────────────
+
+# FORM 5: try/else/finally
+try:
+    risky()
+except ValueError:
+    handle()
+else:
+    on_success()
+finally:
+    cleanup()
+
+# ─────────────────────────────────────────────────────
+
+# FORM 6: try/multiple except/finally
+try:
+    risky()
+except ValueError as e:
+    handle_value(e)
+except TypeError as e:
+    handle_type(e)
+except Exception as e:
+    handle_other(e)
+finally:
+    cleanup()
+
+# ─────────────────────────────────────────────────────
+
+# FORM 7: try/multiple except/else/finally (complete)
+try:
+    result = risky()
+except ValueError as e:
+    handle_value(e)
+except (TypeError, AttributeError) as e:
+    handle_multi(e)
+except Exception as e:
+    log.error("unexpected", exc_info=True)
+    raise
+else:
+    process(result)
+finally:
+    cleanup()
+```
+
+### Real-World Full Form
+
+```python
+import logging
+import sqlite3
+from contextlib import closing
+
+log = logging.getLogger(__name__)
+
+def execute_transaction(db_path: str, queries: list[tuple]) -> list:
+    conn = None
+    results = []
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("BEGIN TRANSACTION")
+
+        for sql, params in queries:
+            cursor = conn.execute(sql, params)
+            results.append(cursor.fetchall())
+
+        conn.commit()
+
+    except sqlite3.IntegrityError as e:
+        log.warning(f"Integrity violation: {e}")
+        if conn:
+            conn.rollback()
+        raise ValueError(f"Data constraint violated: {e}") from e
+
+    except sqlite3.OperationalError as e:
+        log.error(f"DB operational error: {e}")
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        log.critical(f"Unexpected DB error: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
+        raise
+
+    else:
+        log.info(f"Transaction committed: {len(queries)} queries")
+        return results
+
+    finally:
+        if conn:
+            conn.close()              # ALWAYS close connection
+            log.debug("Connection closed")
+```
+
+### `try/finally` Without `except` — Clean Up Pattern
+
+```python
+# Common pattern — acquire resource, use it, ALWAYS release:
+
+# Manual:
+resource = acquire()
+try:
+    use(resource)
+finally:
+    release(resource)          # always runs
+
+# Python idiom — context manager (preferred):
+with acquire_context() as resource:
+    use(resource)
+# release happens automatically via __exit__
+```
+
+### Combinations Behavior Table
+
+```
+┌────────────────────────┬──────────┬──────────┬─────────┬──────────┐
+│ Form                   │ No Exc   │ Exc Caught│ Exc !Caught│ Return │
+├────────────────────────┼──────────┼──────────┼─────────┼──────────┤
+│ try/except             │ normal   │ except   │ propagate│ normal  │
+│ try/finally            │ finally  │ —        │ finally │ finally  │
+│ try/except/finally     │ finally  │ finally  │ finally │ finally  │
+│ try/else               │ else     │ skip     │ skip    │ normal   │
+│ try/else/finally       │ else+fin │ finally  │ finally │ finally  │
+└────────────────────────┴──────────┴──────────┴─────────┴──────────┘
+```
+
+---
+
+## 05 — `final` vs `finally` vs `finalize`
+
+### 🧠 Java → Python Translation
+
+```
+┌─────────────────────┬──────────────────────────────────────────────┐
+│ Java concept        │ Python equivalent                            │
+├─────────────────────┼──────────────────────────────────────────────┤
+│ final variable      │ typing.Final annotation (not enforced)       │
+│ final method        │ @typing.final decorator (not enforced)       │
+│ final class         │ @typing.final on class (not enforced)        │
+│ finally block       │ finally block (identical purpose)            │
+│ finalize() method   │ __del__ method (unreliable — avoid)          │
+│ AutoCloseable       │ context manager __enter__/__exit__           │
+└─────────────────────┴──────────────────────────────────────────────┘
+```
+
+---
+
+### Python `Final` — Constant Declaration
+
+```python
+from typing import Final
+
+# Module-level constant:
+MAX_CONNECTIONS: Final = 100
+BASE_URL: Final[str]  = "https://api.example.com"
+TIMEOUT:  Final[int]  = 30
+
+# Class-level constant:
+class Config:
+    DEBUG:   Final = False
+    VERSION: Final = "2.4.1"
+
+# These are type-checker enforced — mypy/pyright flag reassignment:
+MAX_CONNECTIONS = 200    # mypy: error: Cannot assign to a Final variable
+Config.DEBUG    = True   # mypy: error: Cannot assign to a Final variable
+
+# Python RUNTIME: no enforcement — assignment succeeds silently
+MAX_CONNECTIONS = 200    # ✅ runtime allows it — Final is annotation only
+```
+
+```python
+# Final with @final for classes and methods:
+from typing import final
+
+@final
+class Immutable:
+    """Cannot be subclassed."""
+    pass
+
+class Bad(Immutable):    # mypy: error — cannot inherit from final class
+    pass                 # runtime: ✅ Python allows it
+
+
+class Base:
+    @final
+    def critical(self):  # cannot be overridden
+        pass
+
+class Child(Base):
+    def critical(self):  # mypy: error — cannot override final method
+        pass             # runtime: ✅ Python allows it
+```
+
+---
+
+### Python `finally` — Cleanup Block
+
+```python
+# Purpose: GUARANTEE cleanup code runs regardless of outcome
+# Identical purpose to Java's finally
+
+# Rule 1: always runs
+# Rule 2: return in finally overrides all others
+# Rule 3: exception in finally replaces active exception
+# Rule 4: do NOT use return/break/continue in finally
+
+# Correct usage pattern:
+resource = None
+try:
+    resource = acquire()
+    operate(resource)
+except SpecificError as e:
+    handle(e)
+finally:
+    if resource is not None:
+        resource.release()     # ALWAYS release
+```
+
+---
+
+### Python `__del__` — The Finalizer (Avoid)
+
+```python
+# Java: finalize() called by GC before object collected
+# Python: __del__  called when refcount → 0 (CPython) or at GC (others)
+
+class Connection:
+    def __init__(self, host):
+        self.host   = host
+        self._socket = connect(host)
+
+    def __del__(self):
+        """Finalizer — called when object is garbage collected."""
+        if hasattr(self, '_socket') and self._socket:
+            self._socket.close()
+            print(f"Closed connection to {self.host}")
+```
+
+```
+__del__ PROBLEMS:
+  ├── NOT called at predictable time (PyPy, Jython)
+  ├── NOT called if circular reference exists
+  ├── NOT called if interpreter shuts down (globals may be None)
+  ├── Exceptions in __del__ are IGNORED (printed to stderr)
+  ├── Calling __del__ explicitly does NOT destroy the object
+  └── Resurrection: if __del__ creates new reference → object lives!
+```
+
+```python
+# __del__ resurrection:
+survivors = []
+
+class Zombie:
+    def __del__(self):
+        survivors.append(self)    # 💀 object resurrects itself!
+        print("I LIVE!")
+
+z = Zombie()
+del z
+# I LIVE!
+print(len(survivors))   # 1 — z lives in survivors list
+```
+
+### `weakref.finalize` — Better Than `__del__`
+
+```python
+import weakref
+
+class Connection:
+    def __init__(self, host):
+        self.host    = host
+        self._socket = connect(host)
+        # Register cleanup — runs when Connection is GC'd:
+        self._finalizer = weakref.finalize(
+            self,
+            Connection._cleanup,
+            self._socket,          # passes socket (not self) — avoids cycle
+            host
+        )
+
+    @staticmethod
+    def _cleanup(socket, host):
+        socket.close()
+        print(f"Cleaned up: {host}")
+
+    def close(self):
+        if self._finalizer.alive:
+            self._finalizer()       # explicit early cleanup
+```
+
+```
+weakref.finalize advantages over __del__:
+  ├── Explicit — registered with specific callback
+  ├── No circular reference issues (holds weakref)
+  ├── Can be called explicitly for early cleanup
+  ├── .alive tells if already finalized
+  ├── .atexit controls whether it runs at interpreter exit
+  └── Thread-safe
+```
+
+### Context Manager — The CORRECT Answer to Cleanup
+
+```python
+# Python's RECOMMENDED pattern for guaranteed cleanup:
+# replaces both finally AND __del__ for resource management
+
+class Connection:
+    def __init__(self, host: str):
+        self.host    = host
+        self._socket = None
+
+    def __enter__(self):
+        self._socket = connect(self.host)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._socket:
+            self._socket.close()        # ALWAYS closes
+        return False                    # don't suppress exceptions
+
+    def query(self, sql: str) -> list:
+        return self._socket.execute(sql)
+
+
+# Usage:
+with Connection("localhost") as conn:
+    results = conn.query("SELECT * FROM users")
+# __exit__ GUARANTEED to run — socket always closed
+```
+
+```python
+# contextlib.closing — wrap any object with close():
+from contextlib import closing
+import urllib.request
+
+with closing(urllib.request.urlopen("https://example.com")) as response:
+    data = response.read()
+# response.close() guaranteed
+
+
+# contextlib.contextmanager — function-based:
+from contextlib import contextmanager
+
+@contextmanager
+def managed_resource(path: str):
+    resource = acquire(path)
+    try:
+        yield resource              # body of with block runs here
+    finally:
+        resource.release()          # ALWAYS
+
+with managed_resource("file.txt") as res:
+    process(res)
+# release() guaranteed
+```
+
+---
+
+### Full Comparison Table
+
+```
+┌──────────────────┬──────────────┬────────────────┬────────────────────┐
+│                  │  final       │  finally       │  finalize / __del__│
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ Purpose          │ Const/sealed │ Guaranteed     │ Pre-GC cleanup     │
+│                  │              │ cleanup        │                    │
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ Python mechanism │ typing.Final │ finally block  │ __del__            │
+│                  │ @final       │                │ weakref.finalize   │
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ Enforced?        │ No (type     │ YES — runtime  │ No — not reliable  │
+│                  │ checker only)│ guaranteed     │                    │
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ When runs        │ N/A          │ Always after   │ When GC'd          │
+│                  │              │ try/except     │ (unpredictable)    │
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ Can be skipped?  │ N/A          │ Only: os._exit │ YES — many cases   │
+│                  │              │ SIGKILL        │                    │
+├──────────────────┼──────────────┼────────────────┼────────────────────┤
+│ Recommended?     │ ✅ for consts│ ✅ for cleanup │ ❌ use context mgr │
+└──────────────────┴──────────────┴────────────────┴────────────────────┘
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# finally for reliable data structure state management:
+import threading
+
+class ThreadSafeStack:
+    def __init__(self):
+        self._data = []
+        self._lock = threading.Lock()
+
+    def push(self, val) -> None:
+        self._lock.acquire()
+        try:
+            self._data.append(val)
+        finally:
+            self._lock.release()   # ALWAYS release lock
+
+    def pop(self):
+        self._lock.acquire()
+        try:
+            if not self._data:
+                raise IndexError("Stack underflow")
+            return self._data.pop()
+        finally:
+            self._lock.release()   # ALWAYS release — even on IndexError
+
+
+# Context manager version — cleaner:
+class SafeStack:
+    def __init__(self):
+        self._data = []
+        self._lock = threading.Lock()
+
+    def push(self, val) -> None:
+        with self._lock:           # __exit__ always releases
+            self._data.append(val)
+
+    def pop(self):
+        with self._lock:
+            if not self._data:
+                raise IndexError("Stack underflow")
+            return self._data.pop()
+```
+
+---
+
+## 💀 Interview Trap 1 — `finally` Masks Original Exception
+
+```python
+# 💀 finally raises — original exception REPLACED:
+def f():
+    try:
+        raise ValueError("original")   # raised first
+    finally:
+        raise RuntimeError("cleanup")  # replaces original!
+
+try:
+    f()
+except RuntimeError as e:
+    print(e)               # "cleanup"
+    print(e.__context__)   # ValueError: original
+                           # original stored as __context__ — often missed!
+```
+
+---
+
+## 💀 Interview Trap 2 — `return` in `finally` Hides Bugs
+
+```python
+# 💀 silently swallows ALL exceptions:
+def process_payment(amount):
+    try:
+        charge_card(amount)     # may raise PaymentError
+        update_balance(amount)  # may raise DatabaseError
+    finally:
+        return True             # 💀 ALWAYS returns True
+                                # even if charge_card() failed!
+                                # caller never knows payment failed
+
+result = process_payment(100)
+print(result)   # True — even if card was declined!
+```
+
+---
+
+## 💀 Interview Trap 3 — `__del__` Not Called on Circular Reference
+
+```python
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.other = None
+
+    def __del__(self):
+        print(f"{self.name} destroyed")
+
+a = Node("A")
+b = Node("B")
+a.other = b          # A → B
+b.other = a          # B → A  ← CYCLE
+
+del a
+del b
+# NEITHER __del__ called immediately!
+# CPython cyclic GC handles them eventually — unpredictable timing
+
+import gc
+gc.collect()
+# A destroyed
+# B destroyed  ← only after explicit collect
+```
+
+---
+
+## 💀 Interview Trap 4 — `os._exit()` Bypasses `finally`
+
+```python
+import os
+
+def critical():
+    try:
+        print("doing work")
+        os._exit(1)             # 💀 immediate process termination
+    finally:
+        print("cleanup")        # NEVER runs!
+        close_db_connections()  # NEVER runs!
+
+# os._exit() skips Python cleanup entirely
+# Use only in child processes after fork()
+# sys.exit() → raises SystemExit → finally RUNS
+# os._exit() → kills process immediately → finally DOES NOT run
+```
+
+---
+

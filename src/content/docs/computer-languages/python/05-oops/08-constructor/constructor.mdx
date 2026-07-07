@@ -1,0 +1,1035 @@
+---
+title: Python Constructors
+slug: computer-languages/python/oop/constructors
+description: Master Python object initialization. Understand the difference between __new__ (creation) and __init__ (initialization), inheritance quirks, and common pitfalls like mutable defaults.
+sidebar:
+  label: "Constructors"
+  badge:
+    text: OOP Internals
+    variant: tip
+tags: [python, constructor, __init__, __new__, oop, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🏗️ Constructors in Python
+
+In Java, a constructor is a special method with the same name as the class. **Python is different.** It splits construction into two distinct phases:
+
+1.  **`__new__`**: Creates the instance (allocates memory).
+2.  **`__init__`**: Initializes the instance (sets attributes).
+
+> **🧠 Mental Model**:  
+> - `__new__` is the **Factory**. It builds the object.  
+> - `__init__` is the **Decorator**. It paints and furnishes the object.  
+> In 99% of cases, you only write `__init__`.
+
+---
+
+### 📋 Key Rules & Differences from Java
+
+| Feature | Java Constructor | Python `__init__` |
+|---------|------------------|-------------------|
+| **Name** | Class Name | `__init__` |
+| **Return Type** | None (implicit) | Must return `None` |
+| **First Arg** | N/A | `self` (the instance) |
+| **Overloading** | ✅ Yes (Multiple signatures) | ❌ No (Last definition wins) |
+| **Chaining** | `this()` / `super()` | `super().__init__()` |
+| **Static?** | No | `__new__` is effectively static |
+| **Private?** | `private Constructor()` | `__init__` (conventionally public) |
+
+<Aside type="tip">
+**🚫 No Overloading**: You cannot define multiple `__init__` methods. The last one defined overwrites the previous ones. Use **default arguments** or **`@classmethod` factories** instead.
+</Aside>
+
+---
+
+## 🔬 The Two-Phase Lifecycle
+
+```python
+class MyClass:
+    def __new__(cls, *args, **kwargs):
+        # Phase 1: Creation
+        print("1. Creating instance...")
+        instance = super().__new__(cls)
+        return instance
+
+    def __init__(self, value):
+        # Phase 2: Initialization
+        print("2. Initializing instance...")
+        self.value = value
+
+obj = MyClass(10)
+# Output:
+# 1. Creating instance...
+# 2. Initializing instance...
+```
+
+### When to use which?
+- **`__init__`**: Standard setup. Setting variables.
+- **`__new__`**: Subclassing immutable types (`str`, `int`, `tuple`) or implementing Singletons/Metaclasses.
+
+---
+
+## 💻 Real-World Code — Handling "Overloading"
+
+Since Python doesn't support constructor overloading, we use **Default Arguments**.
+
+<Code lang="python" title="✅ Pythonic Way: Default Arguments" code={`
+class Server:
+    def __init__(self, host="localhost", port=8080, timeout=30):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+# Usage mimics overloaded constructors
+s1 = Server()             # Defaults
+s2 = Server("0.0.0.0")    # Custom host
+s3 = Server("0.0.0.0", 443) # Custom host + port
+`} />
+
+<Code lang="python" title="✅ Advanced: Classmethod Factories" code={`
+class Date:
+    def __init__(self, year, month, day):
+        self.year = year
+        self.month = month
+        self.day = day
+
+    @classmethod
+    def from_string(cls, date_str):
+        """Alternative constructor"""
+        y, m, d = map(int, date_str.split('-'))
+        return cls(y, m, d)  # Calls __init__
+
+d1 = Date(2023, 10, 5)
+d2 = Date.from_string("2023-10-05")  # Clean alternative!
+`} />
+
+---
+
+## 🔀 Inheritance & `super()`
+
+In Java, `super()` is implicit if you don't write it. **In Python, it is NOT implicit for `__init__`**. If you override `__init__` in a child class and forget `super()`, the parent's initialization never happens.
+
+<Code lang="python" title="❌ The Forgotten Super Trap" code={`
+class Parent:
+    def __init__(self):
+        self.parent_attr = "I exist"
+
+class Child(Parent):
+    def __init__(self):
+        # Forgot super().__init__()
+        self.child_attr = "I exist too"
+
+c = Child()
+print(c.parent_attr) 
+# 💥 AttributeError: 'Child' object has no attribute 'parent_attr'
+`} />
+
+<Code lang="python" title="✅ Correct Inheritance" code={`
+class Child(Parent):
+    def __init__(self):
+        super().__init__()  # ✅ Initialize Parent first
+        self.child_attr = "I exist too"
+
+c = Child()
+print(c.parent_attr)  # "I exist"
+`} />
+
+<Aside type="caution">
+**Java vs Python**:  
+- Java: `super()` is automatically inserted at line 1 if missing.  
+- Python: You **must** explicitly call `super().__init__()`.
+</Aside>
+
+---
+
+## ⚠️ Common Pitfalls
+
+<CardGrid>
+  <Card title="Trap 1: Mutable Default Arguments" icon="error">
+    ```python
+    class Team:
+        # ❌ DANGER: List created ONCE at definition time
+        def __init__(self, members=[]): 
+            self.members = members
+
+    t1 = Team()
+    t1.members.append("Alice")
+    
+    t2 = Team()
+    print(t2.members)  # ['Alice'] 😱 Shared state!
+    
+    # ✅ Fix: Use None
+    def __init__(self, members=None):
+        self.members = members or []
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Returning Value from __init__" icon="warning">
+    ```python
+    class Bad:
+        def __init__(self):
+            return self  # ❌ TypeError: __init__ must return None
+            
+    # __init__ is for initialization only.
+    # If you need to return something, use __new__ or a factory method.
+    ```
+  </Card>
+
+  <Card title="Trap 3: Calling Methods in __init__" icon="shield">
+    ```python
+    class Parent:
+        def __init__(self):
+            self.init_hook()  # ⚠️ Risky
+            
+        def init_hook(self):
+            pass
+
+    class Child(Parent):
+        def __init__(self):
+            super().__init__()
+            self.data = [] # Initialized AFTER parent call
+            
+        def init_hook(self):
+            self.data.append(1) # 💥 AttributeError if data not set yet
+            
+    # Fix: Avoid calling overridable methods in __init__
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔒 Private Constructors? (Singletons)
+
+Python doesn't have `private` keywords. We use naming conventions or `__new__` to control instantiation.
+
+<Code lang="python" title="Singleton Pattern via __new__" code={`
+class Singleton:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+s1 = Singleton()
+s2 = Singleton()
+print(s1 is s2)  # True ✅
+`} />
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — `__init__` is not the Constructor**
+
+```python
+class Test:
+    def __new__(cls):
+        print("New called")
+        return super().__new__(cls)
+        
+    def __init__(self):
+        print("Init called")
+
+t = Test()
+# Output:
+# New called
+# Init called
+```
+If `__new__` doesn't return an instance of `cls`, `__init__` will **not** be called.
+
+---
+
+**🪤 Trap 2 — Variable Scope in `__init__`**
+
+```python
+class Config:
+    def __init__(self):
+        x = 10      # Local variable. Discarded after __init__ ends.
+        self.y = 20 # Instance attribute. Persists.
+
+c = Config()
+print(c.x) # ❌ AttributeError
+print(c.y) # ✅ 20
+```
+
+---
+
+**🪤 Trap 3 — Inheritance with Arguments**
+
+```python
+class A:
+    def __init__(self, x):
+        self.x = x
+
+class B(A):
+    def __init__(self, y):
+        # super().__init__() is missing arguments!
+        super().__init__() # ❌ TypeError: missing 1 required positional argument: 'x'
+        self.y = y
+```
+You must match the parent's signature or provide defaults.
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying Primitive: Object Dictionary (`__dict__`)**
+
+When you run `self.x = 10` in `__init__`, Python adds an entry to the instance's `__dict__`.
+
+```python
+class Node:
+    def __init__(self, val):
+        self.val = val
+
+n = Node(5)
+print(n.__dict__) 
+# {'val': 5}
+```
+This dynamic dictionary is why Python objects are flexible but slightly slower than Java's fixed-memory-layout objects.
+
+---
+
+## 📊 Constructor vs Method
+
+| | `__init__` | Regular Method |
+|--|------------|----------------|
+| **Called By** | Automatically by `ClassName()` | Explicitly `obj.method()` |
+| **Returns** | `None` | Anything |
+| **First Arg** | `self` (Instance) | `self` (Instance) |
+| **Frequency** | Once per object creation | Anytime |
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: Difference between __new__ and __init__?
+    A: __new__ creates the object (returns it). __init__ initializes it (returns None).
+    
+    Q: Can you overload __init__?
+    A: No. Use default args or @classmethod factories.
+    ```
+  </Card>
+  
+  <Card title="Inheritance" icon="shield">
+    ```text
+    Q: Is super().__init__() automatic?
+    A: NO! You must call it explicitly, or parent attrs won't exist.
+    
+    Q: What happens if __new__ returns nothing?
+    A: __init__ is skipped.
+    ```
+  </Card>
+
+  <Card title="Common Bugs" icon="caution">
+    ```text
+    Q: Why is my list shared across instances?
+    A: Mutable default arg in __init__. Use None instead.
+    
+    Q: Can __init__ raise exceptions?
+    A: Yes. If it fails, the object is not created (but __new__ already ran).
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+PYTHON CONSTRUCTOR CHECKLIST
+
+1. Definition:
+   Use __init__(self, args...)
+
+2. Inheritance:
+   ALWAYS call super().__init__() if Parent has one.
+
+3. Defaults:
+   NEVER use mutable defaults (list/dict). Use None.
+
+4. Overloading:
+   Use @classmethod for alternative constructors.
+
+5. Return:
+   Never return a value from __init__.
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Keep `__init__` simple. Assign attributes only.
+2. ✅ Use `@dataclass` for boilerplate-heavy classes.
+3. ✅ Validate inputs in `__init__` (raise `ValueError` if bad).
+4. ✅ Remember: `self` is explicit in Python, implicit in Java.
+
+Mastering `__init__` ensures your objects start in a valid, predictable state. 🐍✨
+</Aside>
+
+---
+
+# 🏗️ Python Constructors
+
+---
+
+## 🧠 Mental Model First
+
+```
+Java/C++:  ONE constructor — same name as class
+           MyClass obj = new MyClass(args);
+
+Python:    TWO-PHASE construction — two methods
+           __new__  → creates   the object  (allocator)
+           __init__ → populates the object  (initializer)
+
+MyClass(args)
+   │
+   ▼
+type.__call__(MyClass, args)
+   │
+   ├──▶ instance = MyClass.__new__(MyClass, args)   ← PHASE 1
+   │
+   └──▶ instance.__init__(args)                     ← PHASE 2
+           (only if isinstance(instance, MyClass))
+```
+
+```
+WHAT EACH DOES:
+┌──────────────────────────────────────────────────────────────┐
+│  __new__                      │  __init__                   │
+│  ─────────────────────────    │  ────────────────────────   │
+│  Allocates memory             │  Sets initial state         │
+│  Returns new object           │  Returns None (always)      │
+│  First arg: cls               │  First arg: self            │
+│  Implicitly @staticmethod     │  Regular instance method    │
+│  Called before __init__       │  Called after __new__       │
+│  Can return ANY object        │  Cannot change what returns │
+│  Required for immutables      │  Sufficient for mutables    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ `__init__` — The Everyday Constructor
+
+```python
+class BankAccount:
+    def __init__(self, owner: str, balance: float = 0.0):
+        # Validate before setting:
+        if not owner.strip():
+            raise ValueError("Owner name cannot be empty")
+        if balance < 0:
+            raise ValueError("Initial balance cannot be negative")
+
+        # Set instance state:
+        self._owner       = owner
+        self._balance     = balance
+        self._transactions = []
+        self._frozen       = False
+
+    def __repr__(self) -> str:
+        return f"BankAccount(owner={self._owner!r}, balance={self._balance})"
+```
+
+```python
+acc = BankAccount("Ali", 1000.0)   # ✅
+BankAccount("", 100)               # 💥 ValueError: Owner name cannot be empty
+BankAccount("Ali", -1)             # 💥 ValueError: Initial balance cannot be negative
+```
+
+### 🔬 `__init__` Must Return `None`
+
+```python
+class Bad:
+    def __init__(self):
+        return 42      # 💥 TypeError at instantiation
+
+class Good:
+    def __init__(self):
+        self.x = 42
+        return None    # ✅ explicit — but unnecessary, default is None
+        # or just:
+        # return       # ← early exit — fine
+```
+
+```python
+# Early return in __init__ — valid:
+class Config:
+    def __init__(self, data: dict):
+        if not data:
+            return          # ← exits __init__ early, object partially init'd
+        self._data = data
+        self._parse()
+```
+
+---
+
+## 2️⃣ `__new__` — The Allocator
+
+```python
+class MyClass:
+    def __new__(cls, *args, **kwargs):
+        print(f"  __new__: cls={cls.__name__}")
+
+        # Allocate a new instance:
+        instance = super().__new__(cls)
+
+        print(f"  __new__: allocated id={id(instance)}")
+        return instance                       # MUST return the instance
+
+    def __init__(self, x: int):
+        print(f"  __init__: x={x}, id={id(self)}")
+        self.x = x
+```
+
+```python
+obj = MyClass(42)
+#   __new__: cls=MyClass
+#   __new__: allocated id=140234...
+#   __init__: x=42, id=140234...   ← same id!
+```
+
+### 🔬 `__new__` Is a Static Method (Implicitly)
+
+```python
+class Demo:
+    def __new__(cls, *args, **kwargs):
+        # cls is the class — NOT self (no instance yet)
+        print(type(cls))    # <class 'type'>
+        return super().__new__(cls)
+
+# __new__ is decorated with @staticmethod internally
+# Python passes cls explicitly — unlike regular methods
+# You can call it explicitly:
+Demo.__new__(Demo)      # ✅ valid — creates uninitialized Demo
+```
+
+---
+
+## 3️⃣ `__new__` for Immutable Types
+
+```python
+# For immutable types (int, str, tuple, frozenset):
+# Value is BAKED IN at allocation time
+# __init__ cannot change the value — it's already sealed
+
+class PositiveInt(int):
+    def __new__(cls, value: int) -> "PositiveInt":
+        if value <= 0:
+            raise ValueError(f"Must be positive, got {value}")
+        return super().__new__(cls, value)   # value baked into int
+
+    def __init__(self, value: int) -> None:
+        super().__init__()     # int.__init__ does nothing — value already set
+
+
+class UpperStr(str):
+    def __new__(cls, value: str) -> "UpperStr":
+        return super().__new__(cls, value.upper())
+
+
+class NonEmptyTuple(tuple):
+    def __new__(cls, iterable):
+        result = super().__new__(cls, iterable)
+        if len(result) == 0:
+            raise ValueError("Tuple cannot be empty")
+        return result
+```
+
+```python
+p = PositiveInt(5)
+print(p)           # 5
+print(p + 3)       # 8   ← arithmetic works
+print(type(p))     # <class 'PositiveInt'>
+PositiveInt(-1)    # 💥 ValueError
+
+s = UpperStr("hello")
+print(s)           # HELLO
+s + " WORLD"       # HELLO WORLD
+
+t = NonEmptyTuple([1, 2, 3])
+print(t)           # (1, 2, 3)
+NonEmptyTuple([])  # 💥 ValueError
+```
+
+---
+
+## 4️⃣ Alternative Constructors — `@classmethod`
+
+```python
+from datetime import datetime
+from pathlib import Path
+import json
+
+class Config:
+    def __init__(self, data: dict):
+        self._data = data
+
+    # ── PRIMARY CONSTRUCTOR ──────────────────────────────────────
+    # Config({"key": "val"})
+
+    # ── ALTERNATIVE CONSTRUCTORS ─────────────────────────────────
+    @classmethod
+    def from_json_file(cls, path: str) -> "Config":
+        with open(path) as f:
+            return cls(json.load(f))
+
+    @classmethod
+    def from_json_string(cls, raw: str) -> "Config":
+        return cls(json.loads(raw))
+
+    @classmethod
+    def from_env(cls, prefix: str = "") -> "Config":
+        import os
+        data = {
+            k[len(prefix):].lower(): v
+            for k, v in os.environ.items()
+            if k.startswith(prefix)
+        }
+        return cls(data)
+
+    @classmethod
+    def empty(cls) -> "Config":
+        return cls({})
+
+    @classmethod
+    def merge(cls, *configs: "Config") -> "Config":
+        merged = {}
+        for config in configs:
+            merged.update(config._data)
+        return cls(merged)
+
+    def get(self, key: str, default=None):
+        return self._data.get(key, default)
+
+    def __repr__(self) -> str:
+        return f"Config({self._data})"
+```
+
+```python
+c1 = Config({"host": "localhost"})
+c2 = Config.from_json_file("config.json")
+c3 = Config.from_env(prefix="APP_")
+c4 = Config.empty()
+c5 = Config.merge(c1, c3)
+```
+
+---
+
+## 5️⃣ `__init__` in Inheritance — Full Flow
+
+```python
+class Vehicle:
+    def __init__(self, make: str, model: str, year: int):
+        print(f"  Vehicle.__init__: {make} {model} {year}")
+        if year < 1886:
+            raise ValueError("Cars not invented yet")
+        self.make  = make
+        self.model = model
+        self.year  = year
+        self._mileage = 0
+
+class Car(Vehicle):
+    def __init__(self, make: str, model: str, year: int,
+                 doors: int = 4):
+        print(f"  Car.__init__ start")
+        super().__init__(make, model, year)    # ← delegate up
+        self.doors = doors
+        print(f"  Car.__init__ end")
+
+class ElectricCar(Car):
+    def __init__(self, make: str, model: str, year: int,
+                 battery_kwh: float, doors: int = 4):
+        print(f"  ElectricCar.__init__ start")
+        super().__init__(make, model, year, doors)  # ← delegate up
+        self.battery_kwh = battery_kwh
+        self.charge_pct  = 100.0
+        print(f"  ElectricCar.__init__ end")
+```
+
+```python
+tesla = ElectricCar("Tesla", "Model 3", 2023, battery_kwh=82.0)
+#   ElectricCar.__init__ start
+#   Car.__init__ start
+#   Vehicle.__init__: Tesla Model 3 2023
+#   Car.__init__ end
+#   ElectricCar.__init__ end
+
+tesla.make         # "Tesla"     ← from Vehicle
+tesla.doors        # 4           ← from Car
+tesla.battery_kwh  # 82.0        ← from ElectricCar
+```
+
+---
+
+## 6️⃣ `__init__` With `*args` and `**kwargs` — Cooperative Pattern
+
+```python
+class LogMixin:
+    def __init__(self, *args, log_level: str = "INFO", **kwargs):
+        super().__init__(*args, **kwargs)    # forward remaining args
+        self.log_level = log_level
+        print(f"  LogMixin: log_level={log_level}")
+
+class CacheMixin:
+    def __init__(self, *args, cache_size: int = 128, **kwargs):
+        super().__init__(*args, **kwargs)    # forward remaining args
+        self.cache_size = cache_size
+        print(f"  CacheMixin: cache_size={cache_size}")
+
+class Service:
+    def __init__(self, name: str, **kwargs):
+        super().__init__(**kwargs)           # object.__init__(**{}) → OK
+        self.name = name
+        print(f"  Service: name={name}")
+
+class FullService(LogMixin, CacheMixin, Service):
+    def __init__(self, name: str, **kwargs):
+        print(f"  FullService start")
+        super().__init__(name=name, **kwargs)
+        print(f"  FullService end")
+```
+
+```python
+svc = FullService(
+    name="auth",
+    log_level="DEBUG",
+    cache_size=256
+)
+#   FullService start
+#   LogMixin: log_level=DEBUG
+#   CacheMixin: cache_size=256
+#   Service: name=auth
+#   FullService end
+
+FullService.__mro__
+# (FullService, LogMixin, CacheMixin, Service, object)
+```
+
+---
+
+## 7️⃣ `__init_subclass__` — Constructor Hook on Subclassing
+
+```python
+class Model:
+    _table_map: dict = {}
+
+    def __init_subclass__(cls, table: str = "", **kwargs):
+        super().__init_subclass__(**kwargs)
+        table_name = table or cls.__name__.lower() + "s"
+        Model._table_map[cls] = table_name
+        print(f"  Registered {cls.__name__} → table '{table_name}'")
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    @classmethod
+    def table(cls) -> str:
+        return Model._table_map.get(cls, "unknown")
+
+
+class User(Model, table="users"):
+    pass
+
+class Product(Model, table="products"):
+    pass
+
+class Order(Model):        # uses default: "orders"
+    pass
+```
+
+```python
+#   Registered User → table 'users'
+#   Registered Product → table 'products'
+#   Registered Order → table 'orders'
+
+User.table()      # "users"
+Product.table()   # "products"
+Order.table()     # "orders"
+
+u = User(name="Ali", age=20)
+u.name    # "Ali"
+```
+
+---
+
+## 8️⃣ `__new__` + `__init__` for Pooling / Caching
+
+```python
+class CachedConnection:
+    _pool: dict = {}
+
+    def __new__(cls, host: str, port: int):
+        key = (host, port)
+        if key not in cls._pool:
+            print(f"  __new__: creating new connection {key}")
+            instance = super().__new__(cls)
+            cls._pool[key] = instance
+        else:
+            print(f"  __new__: reusing cached connection {key}")
+        return cls._pool[key]
+
+    def __init__(self, host: str, port: int):
+        if hasattr(self, '_initialized'):
+            return                    # already initialized — skip
+        print(f"  __init__: initializing {host}:{port}")
+        self.host  = host
+        self.port  = port
+        self._conn = self._connect()
+        self._initialized = True
+
+    def _connect(self):
+        return f"socket({self.host}:{self.port})"
+```
+
+```python
+c1 = CachedConnection("localhost", 5432)
+#   __new__: creating new connection ('localhost', 5432)
+#   __init__: initializing localhost:5432
+
+c2 = CachedConnection("localhost", 5432)
+#   __new__: reusing cached connection ('localhost', 5432)
+#   (no __init__ — _initialized guard skips it)
+
+c1 is c2    # True  ← same object
+```
+
+---
+
+## 🔬 Constructor Dispatch — Complete Internals
+
+```
+MyClass(x, y, key=val)
+
+STEP 1: Bytecode
+  LOAD_GLOBAL  MyClass
+  LOAD_CONST   x
+  LOAD_CONST   y
+  LOAD_CONST   val
+  CALL_FUNCTION_KW  2
+
+STEP 2: CPython calls type.__call__
+  type.__call__(MyClass, x, y, key=val)
+
+STEP 3: type.__call__ calls __new__
+  obj = MyClass.__new__(MyClass, x, y, key=val)
+
+  object.__new__ (default):
+    Allocates sizeof(MyClass instance)
+    Sets ob_type = MyClass
+    Sets ob_refcnt = 1
+    Initializes __dict__ = {}  (unless __slots__)
+    Returns PyObject*
+
+STEP 4: type.__call__ checks type
+  if type(obj) is MyClass or issubclass(type(obj), MyClass):
+      obj.__init__(x, y, key=val)
+
+STEP 5: type.__call__ returns obj
+```
+
+---
+
+## 🔬 `object.__new__` Warning — Extra Args
+
+```python
+# object.__new__ ONLY accepts cls — extra args cause warnings/errors:
+
+class Plain:
+    def __new__(cls, x):
+        return super().__new__(cls, x)   # 💥 TypeError: object.__new__ takes no args
+
+class Correct:
+    def __new__(cls, x):
+        return super().__new__(cls)      # ✅ only cls passed to object.__new__
+
+    def __init__(self, x):
+        self.x = x                       # x handled in __init__
+```
+
+```python
+# Exception: if __init__ is NOT overridden, __new__ absorbs args:
+class NoInit:
+    pass
+
+NoInit()    # ✅ object.__new__ handles, object.__init__ handles
+
+# If EITHER __new__ OR __init__ is overridden:
+# object's OTHER method complains about extra args
+```
+
+---
+
+## 🔬 DSA — `__new__` for Flyweight Pattern
+
+```python
+class Symbol:
+    """
+    Flyweight — reuse symbol objects instead of creating new ones.
+    Used in compilers, interpreters, tokenizers.
+    """
+    _cache: dict[str, "Symbol"] = {}
+
+    def __new__(cls, name: str) -> "Symbol":
+        if name not in cls._cache:
+            instance = super().__new__(cls)
+            cls._cache[name] = instance
+        return cls._cache[name]
+
+    def __init__(self, name: str) -> None:
+        if hasattr(self, 'name'):
+            return          # already initialized — skip
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"Symbol({self.name!r})"
+
+
+a = Symbol("x")
+b = Symbol("x")
+c = Symbol("y")
+
+a is b      # True  ← same object (flyweight)
+a is c      # False ← different symbol
+id(a) == id(b)  # True
+
+# Memory: 1000 uses of Symbol("x") → only ONE object in memory
+len(Symbol._cache)  # 2 (x and y)
+```
+
+---
+
+## 💀 Interview Trap 1 — `__init__` Called Again on Cached/Singleton Instance
+
+```python
+class Singleton:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        self.data = []          # 💀 reset on EVERY call to Singleton()
+
+s1 = Singleton()
+s1.data.append(1)
+s2 = Singleton()         # __new__ returns same s1
+                         # BUT __init__ runs again → data = [] reset!
+s1.data                  # [] ← data wiped!
+
+# Fix:
+def __init__(self):
+    if hasattr(self, '_ready'):
+        return
+    self.data = []
+    self._ready = True
+```
+
+---
+
+## 💀 Interview Trap 2 — `super().__init__()` Missing in Child
+
+```python
+class Base:
+    def __init__(self):
+        self.x = 10
+        self.setup()           # called during construction
+
+    def setup(self):
+        pass
+
+class Child(Base):
+    def __init__(self):
+        # forgot super().__init__()!
+        self.y = 20
+
+    def setup(self):
+        print(self.y)          # 💥 AttributeError — y not set yet when Base.__init__ calls setup!
+
+c = Child()
+# AttributeError: 'Child' object has no attribute 'y'
+# Why? Base.__init__ → setup() → self.y doesn't exist yet
+```
+
+---
+
+## 💀 Interview Trap 3 — `__new__` Returns Wrong Type → `__init__` Skipped
+
+```python
+class MyClass:
+    def __new__(cls, value):
+        if value < 0:
+            return None        # return None instead of MyClass instance
+
+    def __init__(self, value):
+        print(f"__init__ called: {value}")   # NEVER called if __new__ returns None
+        self.value = value
+
+obj = MyClass(-1)
+# __init__ NOT called
+print(obj)       # None
+
+obj = MyClass(5)
+# __init__ called: 5
+```
+
+---
+
+## 💀 Interview Trap 4 — `__init__` Order Matters for `super()`
+
+```python
+class A:
+    def __init__(self, **kwargs):
+        print(f"A: {kwargs}")
+        super().__init__(**kwargs)
+
+class B(A):
+    def __init__(self, b_val=0, **kwargs):
+        super().__init__(**kwargs)    # ← must call BEFORE using b_val in A? No.
+        self.b_val = b_val            # ← or AFTER?
+
+# Correct pattern:
+class B(A):
+    def __init__(self, b_val=0, **kwargs):
+        super().__init__(**kwargs)    # ← call super first (most common)
+        self.b_val = b_val            # ← then set own state
+
+# BUT if super().__init__ calls a method overridden in B
+# that uses self.b_val → AttributeError (not yet set)
+# Then you need to set b_val BEFORE calling super():
+class B(A):
+    def __init__(self, b_val=0, **kwargs):
+        self.b_val = b_val            # ← set first
+        super().__init__(**kwargs)    # ← then delegate
+```
+
+---
+
+## 💀 Interview Trap 5 — Mutable Default in `__init__`
+
+```python
+class Cache:
+    def __init__(self, store={}):     # 💀 ONE dict for ALL instances
+        self.store = store
+
+c1 = Cache()
+c2 = Cache()
+c1.store["key"] = "val"
+print(c2.store)     # {"key": "val"} ← c2's "store" polluted
+
+# Fix:
+class Cache:
+    def __init__(self, store=None):
+        self.store = store if store is not None else {}
+```
+
+---

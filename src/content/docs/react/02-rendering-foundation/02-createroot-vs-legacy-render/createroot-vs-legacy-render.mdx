@@ -1,0 +1,788 @@
+---
+title: createRoot vs legacy render
+slug: react/rendering-foundation/createroot-vs-legacy-render
+tags: ["react", "javascript", "frontend", "web-development", "react-19"]
+---
+
+# ⚡`createRoot` vs Legacy `render`
+
+---
+
+## 🧠 Why This Change Matters
+
+This isn't just a syntax change.
+
+```
+ReactDOM.render(...)     →    Legacy Mode    →  synchronous, blocking
+createRoot(...).render() →    Concurrent Mode →  async, interruptible
+```
+
+Switching from `ReactDOM.render` to `createRoot` is the **single line change** that activates every React 18 feature. Without it, React 18 behaves like React 17.
+
+---
+
+## 📜 Legacy `ReactDOM.render` — The Full Picture
+
+### API
+
+```jsx
+// React 16 / 17 — legacy render
+import ReactDOM from 'react-dom';
+import App from './App';
+
+ReactDOM.render(
+  <App />,
+  document.getElementById('root')
+);
+```
+
+### What It Does Internally
+
+```
+ReactDOM.render(<App />, container)
+         │
+         ↓
+legacyRenderSubtreeIntoContainer()   ← internal function
+         │
+         ↓
+legacyCreateRootFromDOMContainer()
+         │
+         ↓
+Creates FiberRoot with tag: LegacyRoot (0)
+         │
+         ↓
+unbatchedUpdates(() => {
+  updateContainer(<App />, root)     ← kicks off initial render
+})
+         │
+         ↓
+Synchronous render — blocks main thread until complete
+         │
+         ↓
+Returns component instance           ← deprecated, don't use this
+```
+
+### What "LegacyRoot" Means
+
+```
+FiberRoot.tag = 0  (LegacyRoot)
+
+Work loop behavior:
+  - performSyncWorkOnRoot()
+  - Renders the ENTIRE tree synchronously
+  - Cannot pause, cannot interrupt
+  - Holds the main thread until done
+  - Browser cannot paint, respond to input, nothing
+  
+  Large component tree + slow device =
+  User sees frozen UI during every re-render
+```
+
+---
+
+## ✅ `createRoot` — React 18's Root API
+
+### API
+
+```jsx
+// React 18 — createRoot
+import { createRoot } from 'react-dom/client';
+import App from './App';
+
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
+```
+
+### What It Does Internally
+
+```
+createRoot(container)
+         │
+         ↓
+createFiberRoot(container, ConcurrentRoot, ...)
+         │
+         ↓
+Creates FiberRoot with tag: ConcurrentRoot (1)
+         │
+         ↓
+Attaches event delegation to container   ← all synthetic events captured here
+         │
+         ↓
+Returns ReactDOMRoot object:
+  {
+    _internalRoot: FiberRoot,
+    render(children) { ... },
+    unmount() { ... }
+  }
+         │
+root.render(<App />)
+         │
+         ↓
+scheduleUpdateOnFiber()
+         │
+         ↓
+Async, concurrent work loop — CAN pause, resume, interrupt
+```
+
+### What "ConcurrentRoot" Means
+
+```
+FiberRoot.tag = 1  (ConcurrentRoot)
+
+Work loop behavior:
+  - performConcurrentWorkOnRoot()
+  - Renders in time slices (~5ms chunks)
+  - Yields to browser between slices
+  - Browser can paint, respond to input
+  - React resumes when browser is idle
+  - Urgent updates interrupt non-urgent ones
+
+Large component tree + slow device =
+  React chunks the work, browser stays responsive
+```
+
+---
+
+## 📊 Side-by-Side Comparison
+
+```
+┌─────────────────────────────┬──────────────────────────────────┐
+│   ReactDOM.render (legacy)  │   createRoot (React 18)          │
+├─────────────────────────────┼──────────────────────────────────┤
+│ ReactDOM.render(            │ const root =                     │
+│   <App/>, container         │   createRoot(container);         │
+│ )                           │ root.render(<App/>);             │
+├─────────────────────────────┼──────────────────────────────────┤
+│ FiberRoot: LegacyRoot (0)   │ FiberRoot: ConcurrentRoot (1)    │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Synchronous work loop       │ Concurrent work loop             │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Blocks main thread          │ Yields to browser                │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Cannot interrupt renders    │ Can pause, resume, abort renders │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Batching: only in React     │ Batching: everywhere             │
+│ event handlers              │ (auto-batching)                  │
+├─────────────────────────────┼──────────────────────────────────┤
+│ useTransition: no effect    │ useTransition: works             │
+├─────────────────────────────┼──────────────────────────────────┤
+│ useDeferredValue: no effect │ useDeferredValue: works          │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Suspense: layout only       │ Suspense: data fetching too      │
+├─────────────────────────────┼──────────────────────────────────┤
+│ Returns component instance  │ Returns ReactDOMRoot object      │
+│ (deprecated, avoid)         │ with .render() + .unmount()      │
+├─────────────────────────────┼──────────────────────────────────┤
+│ No unmount API              │ root.unmount() supported         │
+└─────────────────────────────┴──────────────────────────────────┘
+```
+
+---
+
+## 🔄 The Biggest Change: Automatic Batching
+
+This is the most immediately impactful React 18 change once you switch to `createRoot`.
+
+### What Batching Is
+
+```
+Batching = React grouping multiple setState calls
+           into a single re-render
+```
+
+### Legacy Behavior — Batching Only Inside React Events
+
+```jsx
+// React 17 — with ReactDOM.render
+
+function App() {
+  const [count, setCount] = useState(0);
+  const [flag, setFlag] = useState(false);
+
+  // ✅ BATCHED — inside React event handler
+  // React knows about this event → batches both setState calls
+  // Result: ONE re-render
+  function handleClick() {
+    setCount(c => c + 1); // no re-render yet
+    setFlag(f => !f);     // no re-render yet
+  }                       // → ONE re-render here
+
+  // ❌ NOT BATCHED — inside setTimeout
+  // React doesn't know about this timeout → can't batch
+  // Result: TWO re-renders
+  function handleAsync() {
+    setTimeout(() => {
+      setCount(c => c + 1); // re-render 1
+      setFlag(f => !f);     // re-render 2
+    }, 0);
+  }
+
+  // ❌ NOT BATCHED — inside Promise
+  async function handleFetch() {
+    const data = await fetch('/api/user');
+    setCount(c => c + 1); // re-render 1
+    setFlag(f => !f);     // re-render 2
+  }
+
+  // ❌ NOT BATCHED — native event listener
+  useEffect(() => {
+    document.addEventListener('click', () => {
+      setCount(c => c + 1); // re-render 1
+      setFlag(f => !f);     // re-render 2
+    });
+  }, []);
+}
+```
+
+### React 18 — Automatic Batching Everywhere
+
+```jsx
+// React 18 — with createRoot
+// ALL of these are now batched automatically
+
+function App() {
+  const [count, setCount] = useState(0);
+  const [flag, setFlag] = useState(false);
+
+  // ✅ BATCHED — React event handler (same as before)
+  function handleClick() {
+    setCount(c => c + 1);
+    setFlag(f => !f);
+  } // → ONE re-render
+
+  // ✅ NOW BATCHED — setTimeout
+  function handleAsync() {
+    setTimeout(() => {
+      setCount(c => c + 1);
+      setFlag(f => !f);
+    }, 0);
+  } // → ONE re-render
+
+  // ✅ NOW BATCHED — Promise / async
+  async function handleFetch() {
+    const data = await fetch('/api/user');
+    setCount(c => c + 1);
+    setFlag(f => !f);
+  } // → ONE re-render
+
+  // ✅ NOW BATCHED — native event listener
+  useEffect(() => {
+    document.addEventListener('click', () => {
+      setCount(c => c + 1);
+      setFlag(f => !f);
+    });
+  }, []); // → ONE re-render
+}
+```
+
+### How Automatic Batching Works Internally
+
+```
+React 17 batching mechanism:
+  - executionContext flag: set to BatchedContext inside React handlers
+  - Outside that context: no batching
+  - ReactDOM.unstable_batchedUpdates() = manually set that context
+
+React 18 batching mechanism:
+  - Every setState call schedules work via the scheduler
+  - Scheduler uses microtask/macrotask queue
+  - Multiple setState calls in same task → merged before flush
+  - Works regardless of where setState was called
+  - Context doesn't matter anymore
+```
+
+---
+
+## 🚫 Opting Out of Batching — `flushSync`
+
+Sometimes you need an immediate DOM update:
+
+```jsx
+import { flushSync } from 'react-dom';
+
+function handleSubmit() {
+  // Force synchronous render BEFORE the next line
+  flushSync(() => {
+    setSubmitting(true);    // DOM updated synchronously
+  });
+
+  // DOM is guaranteed to show "submitting" state here
+  // Use case: reading DOM measurements right after state change
+  const height = formRef.current.offsetHeight;
+
+  flushSync(() => {
+    setFormHeight(height); // DOM updated synchronously
+  });
+}
+```
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                    BATCHING CONTROL                         │
+│                                                            │
+│   Default behavior:                                        │
+│     setState → scheduled → batched → single re-render      │
+│                                                            │
+│   flushSync:                                               │
+│     setState → immediate sync re-render → DOM updated      │
+│     → exits concurrent mode for that update               │
+│     → use sparingly (blocks concurrent features)           │
+│                                                            │
+│   ReactDOM.unstable_batchedUpdates (React 17 workaround):  │
+│     No longer needed in React 18                           │
+│     Still works for backward compatibility                 │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 💧 `hydrateRoot` — SSR Counterpart
+
+For SSR applications, `ReactDOM.hydrate` → `hydrateRoot`:
+
+```jsx
+// ❌ React 17 — legacy hydrate
+ReactDOM.hydrate(<App />, document.getElementById('root'));
+
+// ✅ React 18 — hydrateRoot
+import { hydrateRoot } from 'react-dom/client';
+
+const root = hydrateRoot(
+  document.getElementById('root'),
+  <App />
+);
+```
+
+### What Hydration Does
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SSR FLOW                                  │
+│                                                             │
+│  SERVER:                                                    │
+│    renderToPipeableStream(<App />) → HTML string            │
+│    Sends: <div id="root"><nav>...</nav><main>...</main></div>│
+│                                                             │
+│  BROWSER (before hydration):                                │
+│    HTML visible ✅ (fast first paint)                       │
+│    Not interactive ❌ (no JS event handlers yet)            │
+│                                                             │
+│  BROWSER (hydrateRoot):                                     │
+│    React walks existing DOM (doesn't recreate it)          │
+│    Attaches event listeners to existing nodes              │
+│    Reconciles server HTML with client React tree           │
+│    App becomes interactive ✅                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### `hydrateRoot` vs `createRoot`
+
+```
+createRoot  → builds DOM from scratch
+              used for: CSR (Client-Side Rendering), SPAs
+
+hydrateRoot → attaches to EXISTING server-rendered DOM
+              used for: SSR, Next.js, Remix
+              faster: skips DOM creation, reuses server HTML
+```
+
+### React 18 Selective Hydration
+
+```jsx
+// React 18 hydrateRoot supports concurrent hydration
+// Heavy components hydrate progressively, not all at once
+
+hydrateRoot(
+  document.getElementById('root'),
+  <App />,
+  {
+    onRecoverableError(error) {
+      // Called when React auto-recovers from hydration mismatch
+      reportError(error);
+    }
+  }
+);
+```
+
+```
+React 17 hydration: all-or-nothing, synchronous
+React 18 hydration: selective, concurrent
+  - Suspense boundaries hydrate independently
+  - User interaction prioritizes hydration of clicked area
+  - Rest of page hydrates in background
+```
+
+---
+
+## 🔁 The `root.render()` Return Value Change
+
+```jsx
+// ❌ Legacy — returned component instance (DO NOT USE)
+const instance = ReactDOM.render(<App />, container);
+// instance.someMethod() — accessing internal instance
+// This was always fragile and is now removed
+
+// ✅ React 18 — returns nothing (undefined)
+const root = createRoot(container);
+root.render(<App />); // returns undefined
+
+// The root object itself is what you keep:
+const root = createRoot(container);
+root.render(<App />);
+
+// Later, to re-render with new props:
+root.render(<App theme="dark" />);
+
+// To unmount:
+root.unmount();
+// Triggers cleanup: all useEffect cleanups run, tree torn down
+```
+
+---
+
+## 🏗️ Full Internal Architecture — What createRoot Builds
+
+```
+createRoot(document.getElementById('root'))
+                    │
+                    ↓
+┌───────────────────────────────────────────────────┐
+│                  FiberRoot                         │
+│                                                   │
+│  containerInfo: <div id="root">  ← real DOM node  │
+│  tag: ConcurrentRoot (1)                          │
+│  current: HostRootFiber          ← top of tree    │
+│  finishedWork: null              ← WIP result     │
+│  pendingLanes: 0                 ← work to do     │
+│  eventTimes: [...]               ← scheduling     │
+│  expirationTimes: [...]                           │
+│  callbackNode: null              ← scheduler task │
+│  callbackPriority: NoLane                         │
+└───────────────────────────────────────────────────┘
+                    │
+                    ↓
+         HostRootFiber (top of fiber tree)
+         tag: HostRoot
+         stateNode: FiberRoot (circular ref back)
+         child: null  ← no children yet, render() called next
+```
+
+```
+root.render(<App />)
+                    │
+                    ↓
+updateContainer(<App />, root._internalRoot)
+                    │
+                    ↓
+scheduleUpdateOnFiber(HostRootFiber, lane, eventTime)
+                    │
+                    ↓
+ensureRootIsScheduled(root)
+                    │
+                    ↓
+Scheduler.scheduleCallback(priority, performConcurrentWorkOnRoot)
+                    │
+                    ↓
+Work runs in scheduler's message channel task
+  → time-sliced
+  → yields to browser
+  → produces fiber tree
+  → commits to DOM
+```
+
+---
+
+## 🔀 Multiple Roots — Advanced Pattern
+
+`createRoot` supports **multiple independent React trees** in one page:
+
+```jsx
+// Microfrontend pattern — multiple React trees
+// Different parts of the page owned by different teams/apps
+
+const headerRoot = createRoot(document.getElementById('header'));
+const mainRoot   = createRoot(document.getElementById('main'));
+const footerRoot = createRoot(document.getElementById('footer'));
+
+headerRoot.render(<HeaderApp />);
+mainRoot.render(<MainApp />);
+footerRoot.render(<FooterApp />);
+
+// Each root is completely isolated:
+// - Separate fiber trees
+// - Separate state
+// - Separate event delegation
+// - One root re-rendering doesn't affect others
+```
+
+```
+Real use case: Incrementally migrating from
+non-React app to React
+
+<div id="legacy-nav">   ← jQuery still owns this
+<div id="react-cart">   ← createRoot → React owns this
+<div id="legacy-body">  ← server-rendered HTML still here
+<div id="react-footer"> ← createRoot → React owns this
+
+Migrate one section at a time without full rewrite
+```
+
+---
+
+## 🔗 DSA / Internals Connection
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  CONCEPT                   INTERNAL IMPLEMENTATION           │
+├──────────────────────────────────────────────────────────────┤
+│  createRoot                Creates FiberRoot (graph node)    │
+│                            + HostRootFiber (linked list head)│
+├──────────────────────────────────────────────────────────────┤
+│  Concurrent work loop      Cooperative multitasking          │
+│                            Time-sliced via MessageChannel    │
+│                            5ms budget per slice              │
+├──────────────────────────────────────────────────────────────┤
+│  Automatic batching        Microtask queue merging           │
+│                            Multiple setState → one flush     │
+├──────────────────────────────────────────────────────────────┤
+│  flushSync                 Bypasses queue, synchronous DFS   │
+│                            through fiber tree                │
+├──────────────────────────────────────────────────────────────┤
+│  Multiple roots            Multiple independent graph roots  │
+│                            No shared state between them      │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The scheduler uses `MessageChannel` (not `setTimeout`) for time-slicing:
+
+```js
+// React Scheduler internals (simplified):
+const channel = new MessageChannel();
+const port = channel.port2;
+
+channel.port1.onmessage = performWorkUntilDeadline;
+
+function scheduleCallback(priority, callback) {
+  // Post message = yield to browser, resume in next task
+  port.postMessage(null);
+}
+
+function performWorkUntilDeadline() {
+  const deadline = currentTime + 5; // 5ms time slice
+  let hasMore = true;
+
+  while (hasMore && currentTime < deadline) {
+    hasMore = workLoop();     // process fiber nodes
+  }
+
+  if (hasMore) {
+    port.postMessage(null);   // yield + reschedule
+  }
+}
+```
+
+`MessageChannel` fires after paint but before the next frame — gives browser a chance to handle user input between slices.
+
+---
+
+## 🏭 Production Relevance — MUST KNOW
+
+### Migration Pattern — Legacy to React 18
+
+```jsx
+// Most companies have this migration task in their backlog
+
+// ❌ BEFORE — React 17
+import ReactDOM from 'react-dom';
+ReactDOM.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+
+// ✅ AFTER — React 18
+import { createRoot } from 'react-dom/client';
+const root = createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+```
+
+### What Breaks During Migration
+
+```
+1. Components relying on extra re-renders in non-batched code
+   setA(1); → re-render; setB(2); → re-render  (React 17)
+   setA(1); setB(2); → ONE re-render           (React 18)
+   → If component logic depended on intermediate state
+     between two setStates → now broken
+
+2. StrictMode double-invocation
+   React 18 + StrictMode: effects run twice in development
+   Old code with un-cleaned effects → visible side effects doubled
+
+3. Third-party libraries not ready for React 18
+   Some libraries used ReactDOM.render internally
+   Now get deprecation warnings or break
+
+4. useEffect timing assumptions
+   Concurrent mode can defer effects
+   If code assumes synchronous effect execution → timing bugs
+```
+
+---
+
+## ⚠️ Silent Bugs & Failure Cases
+
+### Bug 1: Using ReactDOM.render in React 18 — Silent Feature Loss
+
+```jsx
+// ❌ This WORKS but silently disables React 18 features
+import ReactDOM from 'react-dom';
+
+// No error. No warning visible to user.
+// Automatic batching: disabled
+// useTransition: no effect
+// Suspense for data: degraded
+// Concurrent features: none
+
+ReactDOM.render(<App />, document.getElementById('root'));
+
+// You see: "Warning: ReactDOM.render is no longer supported in React 18.
+//           Use createRoot instead."
+// But app runs — you might miss this warning
+// Especially if warnings are suppressed in production
+```
+
+### Bug 2: Batching Behavior Change Breaking Components
+
+```jsx
+// Component that accidentally relied on unbatched re-renders
+
+function OrderForm() {
+  const [step, setStep] = useState(1);
+  const [data, setData] = useState(null);
+
+  async function handleSubmit() {
+    const result = await submitOrder();
+
+    // React 17: TWO re-renders
+    //   Re-render 1: step=2, data=null → shows loading in step 2
+    //   Re-render 2: step=2, data=result → shows data
+    // Some component logic depended on the intermediate state
+
+    // React 18: ONE re-render
+    //   step=2, data=result → intermediate state never renders
+    // If any useEffect or child depended on (step=2, data=null)
+    // → that effect/behavior silently disappears
+
+    setStep(2);
+    setData(result);
+  }
+}
+```
+
+### Bug 3: root.unmount() Not Called — Memory Leak
+
+```jsx
+// In tests or micro-frontends:
+
+// ❌ Creating roots without cleanup
+function mountFeature(container) {
+  const root = createRoot(container);
+  root.render(<Feature />);
+  // root reference lost
+  // root.unmount() never called
+  // → fiber tree stays in memory
+  // → event listeners stay attached
+  // → effects keep running
+  // → memory leak
+}
+
+// ✅ Always keep root reference for cleanup
+function mountFeature(container) {
+  const root = createRoot(container);
+  root.render(<Feature />);
+  return () => root.unmount(); // return cleanup function
+}
+```
+
+### Bug 4: Hydration Mismatch with hydrateRoot
+
+```jsx
+// ❌ Server renders different HTML than client expects
+
+// Server:
+const html = renderToString(<App now={Date.now()} />);
+// Renders: <div>1703123456789</div>
+
+// Client:
+hydrateRoot(container, <App now={Date.now()} />);
+// now is different timestamp → different output
+// Hydration mismatch warning
+// React re-renders entire tree to fix → slow, flash of content
+
+// ✅ Pass same data server → client
+// Use same initial data: serialize on server, deserialize on client
+```
+
+---
+
+## 🎤 Interview Section
+
+### Common Questions
+
+**Q: What is `createRoot` and why was it introduced?**
+> *"`createRoot` is React 18's root mounting API that replaces `ReactDOM.render`. It opts the entire application into concurrent mode — enabling time-sliced rendering that yields to the browser, automatic batching of all state updates, and concurrent features like `useTransition` and `useDeferredValue`. The legacy `ReactDOM.render` created a synchronous blocking root where renders hold the main thread. `createRoot` fundamentally changes the render model."*
+
+---
+
+**Q: What is automatic batching and what changed in React 18?**
+> *"Batching is React grouping multiple `setState` calls into one re-render. In React 17, batching only worked inside React synthetic event handlers — `setTimeout`, Promises, and native event listeners all triggered unbatched (one re-render per `setState`). In React 18 with `createRoot`, batching is automatic everywhere — all `setState` calls in any context are merged into a single re-render. `flushSync` exists as an escape hatch when you need synchronous DOM updates."*
+
+---
+
+**Q: What's the difference between `createRoot` and `hydrateRoot`?**
+> *"`createRoot` builds the DOM tree from scratch — used for client-side rendering. `hydrateRoot` attaches React to existing server-rendered HTML — it walks the existing DOM and attaches event listeners instead of creating new nodes. This is faster for SSR because the initial HTML is already visible. React 18's `hydrateRoot` also adds selective hydration — Suspense boundaries can hydrate independently, and user interactions prioritize hydration of the interacted area."*
+
+---
+
+### Senior-Level Questions
+
+**Q: How does the concurrent work loop differ from the legacy synchronous loop?**
+> *"The legacy synchronous loop (`performSyncWorkOnRoot`) processes the entire fiber tree in one go — it holds the main thread until the entire render and commit are done. The concurrent loop (`performConcurrentWorkOnRoot`) works in 5ms time slices via `MessageChannel`. After each slice, it yields to the browser for painting and input handling, then resumes via the scheduler. This means long renders don't freeze the UI. The tradeoff is complexity: renders can be interrupted and restarted, so component functions may run multiple times before committing."*
+
+---
+
+**Q: React 18 with `createRoot` may render component functions multiple times before committing. What implications does this have?**
+> *"Component functions must be pure — no side effects during render. If a component makes an API call directly in the function body (not in `useEffect`), concurrent mode may trigger it multiple times before committing. This is why effects exist — they run once after commit, never during the interruptible render phase. React's `StrictMode` simulates this by double-invoking component functions in development to surface impurity bugs early."*
+
+---
+
+### ⚠️ Interview Traps
+
+**Trap 1:** *"Does switching to `createRoot` automatically make your app faster?"*
+
+Wrong: *"Yes, concurrent mode makes everything faster."*  
+Correct:
+> *"Not automatically. `createRoot` enables concurrent capabilities, but you have to opt into them explicitly — `useTransition` for marking non-urgent updates, `useDeferredValue` for deferring expensive renders. A plain migration from `ReactDOM.render` to `createRoot` gives you automatic batching (which can improve performance) but won't magically make renders faster. You need to profile and apply concurrent features where they help."*
+
+---
+
+**Trap 2:** *"Can you use `useTransition` with `ReactDOM.render`?"*
+
+Wrong: *"Yes, it's a React 18 hook."*  
+Correct:
+> *"`useTransition` exists in React 18 but has no effect if you're using the legacy `ReactDOM.render` root. `startTransition` marks an update as non-urgent so the concurrent scheduler can deprioritize it — but the legacy root uses a synchronous work loop with no scheduler priorities. You get the API without the behavior. This is a silent gotcha in apps that upgrade React 18 without migrating the root."*
+
+---
+
+**Trap 3:** *"What does `root.unmount()` do?"*
+
+Many candidates only know `createRoot`. Correct answer:
+> *"It tears down the React tree mounted at that root: runs all `useEffect` cleanup functions, unmounts all components in order from deepest child to root, removes event delegation listeners React attached to the container, and releases the FiberRoot from memory. Essential for micro-frontend patterns and tests to prevent memory leaks — every `createRoot` should have a corresponding `unmount` in its cleanup path."*
+
+---

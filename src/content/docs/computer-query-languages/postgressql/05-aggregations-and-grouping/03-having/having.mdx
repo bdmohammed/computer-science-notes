@@ -1,0 +1,679 @@
+---
+title: PostgreSQL HAVING Clause
+slug: computer-query-languages/postgresql/aggregations-and-grouping/having
+description: Master the HAVING clause in PostgreSQL — filtering groups, performance optimization vs WHERE, dynamic thresholds, and advanced patterns like conditional aggregates.
+sidebar:
+  label: "HAVING"
+  badge:
+    text: Aggregation
+    variant: tip
+tags: [postgresql, having, group-by, aggregation, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 HAVING — Complete Guide
+
+> **`HAVING` is `WHERE` for groups — it filters the output of `GROUP BY` using aggregate results, runs after grouping is complete, and the single most important rule is: if a condition doesn't use an aggregate, it belongs in `WHERE`, not `HAVING`.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `HAVING` as a **post-processing filter**.  
+1. `WHERE` filters raw rows (cheap).  
+2. `GROUP BY` builds the HashMap (expensive).  
+3. `HAVING` filters the HashMap entries (expensive).  
+Always push non-aggregate logic to step 1 to minimize work in step 2.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where It Lives
+
+The order of operations is strict. Understanding this explains why you can't use aliases or aggregates in `WHERE`.
+
+```
+FROM
+WHERE     ← filters individual rows BEFORE grouping ✅ cheap
+GROUP BY  ← forms groups
+HAVING    ← filters entire groups AFTER grouping ✅ here
+SELECT
+ORDER BY
+LIMIT
+```
+
+<Code lang="sql" title="Visualizing the pipeline" code={`
+SELECT   department, AVG(salary) AS avg_sal  -- 5. compute/project
+FROM     employees                           -- 1. load table
+WHERE    is_active = true                    -- 2. filter rows (cheap, indexed)
+GROUP BY department                          -- 3. form groups
+HAVING   AVG(salary) > 80000                -- 4. filter groups (expensive)
+ORDER BY avg_sal DESC;                       -- 6. sort result
+`} />
+
+---
+
+## 1️⃣ What HAVING Actually Does
+
+<CardGrid>
+  <Card title="Before HAVING" icon="information">
+    ```text
+    Groups formed by GROUP BY:
+    ┌──────────────┬──────────┐
+    │ department   │ avg_sal  │
+    ├──────────────┼──────────┤
+    │ Engineering  │ 120000   │
+    │ Sales        │  75000   │
+    │ Marketing    │  90000   │
+    │ Support      │  60000   │
+    └──────────────┴──────────┘
+    ```
+  </Card>
+  
+  <Card title="After HAVING AVG(salary) > 80000" icon="rocket">
+    ```text
+    Result:
+    ┌──────────────┬──────────┐
+    │ department   │ avg_sal  │
+    ├──────────────┼──────────┤
+    │ Engineering  │ 120000   │ ✅ Kept
+    │ Marketing    │  90000   │ ✅ Kept
+    └──────────────┴──────────┘
+    
+    Sales (75K) and Support (60K) are DROPPED ❌
+    ```
+  </Card>
+</CardGrid>
+
+```
+HAVING evaluates ONE condition per GROUP (not per row):
+
+For each group:
+  Compute aggregate → evaluate HAVING condition
+  TRUE  → group included in output ✅
+  FALSE → group dropped ❌
+  NULL  → group dropped (three-value logic applies) ❌
+```
+
+<Aside type="note">
+**🎯 DSA Connection**: `HAVING` = filter pass on HashMap entries after all rows are processed. You build the HashMap (`GROUP BY`), fill all buckets (aggregate), then scan entries and discard those that fail the condition. Two-phase: build then filter.
+</Aside>
+
+---
+
+## 2️⃣ Basic Syntax
+
+<Code lang="sql" title="Filtering groups with aggregates" code={`-- Filter groups by count
+SELECT   status, COUNT(*) AS total
+FROM     orders
+GROUP BY status
+HAVING   COUNT(*) > 100;              -- only statuses with > 100 orders
+
+-- Filter groups by sum
+SELECT   user_id, SUM(amount) AS lifetime_value
+FROM     orders
+GROUP BY user_id
+HAVING   SUM(amount) > 50000;         -- high-value customers only
+
+-- Filter groups by average
+SELECT   department, AVG(salary) AS avg_sal
+FROM     employees
+GROUP BY department
+HAVING   AVG(salary) BETWEEN 70000 AND 150000;
+
+-- Filter groups by min/max
+SELECT   product_id, MIN(price) AS min_price
+FROM     order_items
+GROUP BY product_id
+HAVING   MIN(price) > 0               -- exclude free items
+  AND    MAX(price) < 100000;         -- exclude luxury outliers`} />
+
+---
+
+## 3️⃣ HAVING vs WHERE — The Most Important Distinction
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>WHERE</code></th>
+      <th><code>HAVING</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Runs when?</td><td>Before GROUP BY</td><td>After GROUP BY</td></tr>
+    <tr><td>Filters what?</td><td>Individual Rows</td><td>Entire Groups</td></tr>
+    <tr><td>Can use aggregates?</td><td>❌ ERROR</td><td>✅ Required</td></tr>
+    <tr><td>Can use raw cols?</td><td>✅ Yes</td><td>✅ But wrong place</td></tr>
+    <tr><td>Uses indexes?</td><td>✅ Yes</td><td>❌ No</td></tr>
+    <tr><td>Performance</td><td>Cheap (fewer rows to group)</td><td>Expensive (group all first, then drop)</td></tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="❌ Wrong vs ✅ Right" code={`-- ❌ WRONG: aggregate in WHERE
+SELECT department, AVG(salary)
+FROM   employees
+WHERE  AVG(salary) > 80000         -- ERROR: aggregates not allowed in WHERE
+GROUP BY department;
+
+-- ✅ CORRECT: aggregate in HAVING
+SELECT department, AVG(salary)
+FROM   employees
+GROUP BY department
+HAVING AVG(salary) > 80000;
+
+-- ❌ WRONG: non-aggregate in HAVING (works but wasteful)
+SELECT department, COUNT(*)
+FROM   employees
+GROUP BY department
+HAVING department = 'Engineering';  -- groups ALL depts first, then drops 💀
+
+-- ✅ CORRECT: non-aggregate in WHERE (cheaper)
+SELECT department, COUNT(*)
+FROM   employees
+WHERE  department = 'Engineering'   -- filters BEFORE grouping ✅
+GROUP BY department;`} />
+
+```text
+Cost comparison:
+
+HAVING department = 'Engineering' (wrong):
+  Load 10,000 employees
+  Group into 8 departments
+  Compute aggregates for all 8
+  Drop 7 groups → return 1
+  Wasted: 9,000 employees processed unnecessarily
+
+WHERE department = 'Engineering' (correct):
+  Load 10,000 employees
+  Filter to 1,200 Engineering employees
+  Group into 1 department
+  Compute 1 aggregate
+  10x less work ✅
+```
+
+<Aside type="caution">
+**Interview Q**: *"Can you use non-aggregate conditions in HAVING?"*  
+**A**: Technically yes — Postgres allows it. But it's always wrong from a performance standpoint. Non-aggregate conditions belong in `WHERE` which filters before grouping. `HAVING` should only contain aggregate conditions.
+</Aside>
+
+---
+
+## 4️⃣ HAVING with Multiple Conditions
+
+<Code lang="sql" title="Complex group filtering" code={`-- AND in HAVING — all conditions must pass
+SELECT
+  department,
+  COUNT(*)       AS headcount,
+  AVG(salary)    AS avg_salary,
+  SUM(salary)    AS total_payroll
+FROM   employees
+WHERE  is_active = true              -- row filter first ✅
+GROUP BY department
+HAVING COUNT(*)    >= 5              -- at least 5 people AND
+   AND AVG(salary) > 70000          -- decent salary AND
+   AND SUM(salary) < 5000000;       -- total payroll under budget
+
+-- OR in HAVING — either condition passes
+SELECT
+  user_id,
+  COUNT(*)    AS order_count,
+  SUM(amount) AS total_spent
+FROM   orders
+GROUP BY user_id
+HAVING COUNT(*) > 50              -- either very frequent buyer
+    OR SUM(amount) > 100000;     -- or very high spender
+
+-- NOT in HAVING
+SELECT category, COUNT(*) AS product_count
+FROM   products
+GROUP BY category
+HAVING NOT COUNT(*) = 1;          -- categories with more than 1 product
+-- same as: HAVING COUNT(*) != 1`} />
+
+---
+
+## 5️⃣ HAVING without GROUP BY — The Special Case
+
+<Code lang="sql" title="Using HAVING as a guard clause" code={`-- HAVING without GROUP BY treats entire table as one group
+-- Rarely used but valid
+
+-- Check if any delivered orders exist above threshold
+SELECT SUM(amount) AS total
+FROM   orders
+HAVING SUM(amount) > 1000000;    
+-- Returns row only if total > 1M
+-- Returns nothing (0 rows) if condition false
+
+-- Practical use: guard query (return nothing if data too small)
+SELECT AVG(amount), COUNT(*) FROM orders
+HAVING COUNT(*) >= 100;          
+-- Only run report if >= 100 orders
+-- Prevents misleading stats on thin data`} />
+
+<Aside type="tip">
+**Real-Life SDE**: Use `HAVING` without `GROUP BY` as a guard clause in reporting pipelines. If the minimum data threshold isn't met, return no rows instead of misleading statistics (like an average of 1 item).
+</Aside>
+
+---
+
+## 6️⃣ HAVING with FILTER — Conditional Aggregate Filtering
+
+<Code lang="sql" title="Advanced conditional filtering" code={`-- Combine FILTER (conditional aggregate) with HAVING
+SELECT
+  user_id,
+  COUNT(*)                                        AS total_orders,
+  COUNT(*) FILTER (WHERE status = 'delivered')    AS delivered,
+  COUNT(*) FILTER (WHERE status = 'cancelled')    AS cancelled,
+  SUM(amount) FILTER (WHERE status = 'delivered') AS delivered_revenue
+FROM   orders
+GROUP BY user_id
+HAVING COUNT(*) FILTER (WHERE status = 'delivered') >= 3   -- ≥3 delivered
+   AND COUNT(*) FILTER (WHERE status = 'cancelled')
+       < COUNT(*) * 0.2;                                   -- <20% cancelled
+-- Find reliable customers: delivered ≥ 3 AND cancellation rate < 20%`} />
+
+---
+
+## 7️⃣ HAVING with Subquery — Dynamic Thresholds
+
+<Code lang="sql" title="Comparing groups against global averages" code={`-- Find users who spent more than the average user's total spend
+SELECT
+  user_id,
+  SUM(amount) AS total_spent
+FROM   orders
+WHERE  status = 'delivered'
+GROUP BY user_id
+HAVING SUM(amount) > (
+  SELECT AVG(user_total)
+  FROM (
+    SELECT SUM(amount) AS user_total
+    FROM   orders
+    WHERE  status = 'delivered'
+    GROUP BY user_id
+  ) totals
+);
+-- Dynamic threshold — adjusts as data changes ✅
+
+-- Find departments whose avg salary exceeds company average
+SELECT department, AVG(salary) AS dept_avg
+FROM   employees
+WHERE  is_active = true
+GROUP BY department
+HAVING AVG(salary) > (SELECT AVG(salary) FROM employees WHERE is_active = true)
+ORDER BY dept_avg DESC;`} />
+
+<Aside type="note">
+**Real-Life SDE**: Dynamic thresholds in `HAVING` are powerful for "above average" type analyses. The subquery runs once, its result used as threshold for all group comparisons. No hardcoded values — adapts to current data.
+</Aside>
+
+---
+
+## 8️⃣ Internals — How HAVING Executes
+
+```
+Full pipeline with HAVING:
+
+Step 1: FROM + WHERE
+  Load rows → apply WHERE filter
+  Result: filtered row stream
+
+Step 2: GROUP BY
+  Strategy A: HashAggregate
+    hash(group_key) → accumulate {count, sum, min, max}
+    All groups built in memory (or spill to disk)
+
+  Strategy B: GroupAggregate (sorted input)
+    Stream sorted rows → detect group boundaries
+    Emit one group at a time
+
+Step 3: HAVING
+  For each completed group:
+    Evaluate HAVING expression using group's accumulators
+    TRUE  → pass group to SELECT
+    FALSE → discard group (free memory)
+    NULL  → discard group
+
+Step 4: SELECT + ORDER BY + LIMIT
+
+EXPLAIN output:
+  HashAggregate          ← GROUP BY + HAVING evaluated here
+    Group Key: department
+    Filter: (avg(salary) > 80000)   ← this is HAVING ✅
+    -> Seq Scan on employees
+Filter: (is_active = true) ← this is WHERE ✅
+```
+
+<Code lang="sql" title="Seeing HAVING in EXPLAIN" code={`
+-- See HAVING in EXPLAIN
+EXPLAIN SELECT department, AVG(salary) AS avg_sal
+FROM   employees
+WHERE  is_active = true
+GROUP BY department
+HAVING AVG(salary) > 80000;
+
+-- Output:
+-- HashAggregate
+--   Group Key: department
+--   Filter: (avg(salary) > 80000.0)   ← HAVING appears as Filter here
+--   -> Seq Scan on employees
+--        Filter: (is_active = true)   ← WHERE appears as Filter here
+
+Key insight from EXPLAIN:
+  WHERE  → Filter on Seq Scan node  (before aggregation)
+  HAVING → Filter on Aggregate node (after aggregation)
+  Same keyword "Filter" in output — different nodes!
+  `} />
+
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Find Duplicate Records" icon="search">
+    ```sql
+    -- The most classic HAVING pattern in every codebase
+    SELECT
+      email,
+      COUNT(*)               AS occurrences,
+      MIN(id)                AS oldest_id,
+      MAX(created_at)        AS latest_signup
+    FROM   users
+    WHERE  deleted_at IS NULL
+    GROUP BY email
+    HAVING COUNT(*) > 1              -- more than one row = duplicate ✅
+    ORDER BY occurrences DESC;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Customer Segmentation" icon="users">
+    ```sql
+    -- High-value active customers (last 90 days)
+    SELECT
+    user_id,
+    COUNT(*)             AS orders_last_90d,
+    SUM(amount)          AS spend_last_90d,
+    AVG(amount)          AS avg_order_value,
+    MAX(created_at)      AS last_order_date
+    FROM   orders
+    WHERE  created_at >= NOW() - INTERVAL '90 days'
+    AND  status = 'delivered'
+    GROUP BY user_id
+    HAVING COUNT(*)    >= 3           -- at least 3 orders
+    AND SUM(amount) >= 10000       -- spent ≥ ₹10K
+    ORDER BY spend_last_90d DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Anomaly Detection" icon="chart">
+    ```sql
+    -- Products with suspiciously high return rate
+-- Products with suspiciously high return rate
+    SELECT
+    product_id,
+    COUNT(*)                                          AS total_orders,
+    COUNT(*) FILTER (WHERE status = 'returned')       AS returned,
+    ROUND(
+        COUNT(*) FILTER (WHERE status = 'returned')
+        * 100.0 / NULLIF(COUNT(*), 0), 1
+    )                                                 AS return_rate_pct
+    FROM   order_items
+    WHERE  created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY product_id
+    HAVING COUNT(*) >= 10                                -- enough volume
+    AND COUNT(*) FILTER (WHERE status = 'returned')
+        * 100.0 / NULLIF(COUNT(*), 0) > 20           -- > 20% return rate
+    ORDER BY return_rate_pct DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Active Users Threshold" icon="shield">
+    ```sql
+    -- Users with enough activity to be considered "engaged"
+    -- (minimum signal threshold for ML model input)
+    SELECT
+    user_id,
+    COUNT(DISTINCT session_id)              AS sessions,
+    COUNT(*)                                AS events,
+    COUNT(DISTINCT event_type)              AS unique_actions,
+    MAX(created_at)                         AS last_seen
+    FROM   events
+    WHERE  created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY user_id
+    HAVING COUNT(DISTINCT session_id) >= 3   -- at least 3 sessions
+    AND COUNT(*)                   >= 10  -- at least 10 events
+    AND MAX(created_at) >= NOW() - INTERVAL '7 days'  -- active this week
+    ORDER BY events DESC;
+    ```
+  </Card>
+
+  
+  <Card title="Pattern 5 — Inventory Supplier Analysis" icon="shield">
+    ```sql
+    -- Suppliers with quality or delivery issues
+    SELECT
+    supplier_id,
+    COUNT(*)                                           AS total_deliveries,
+    AVG(delivery_days)                                 AS avg_delivery_days,
+    COUNT(*) FILTER (WHERE quality_score < 3)          AS poor_quality_count,
+    ROUND(
+        COUNT(*) FILTER (WHERE delivery_days > promised_days)
+        * 100.0 / NULLIF(COUNT(*), 0), 1
+    )                                                  AS late_delivery_pct
+    FROM   supplier_deliveries
+    WHERE  created_at >= NOW() - INTERVAL '6 months'
+    GROUP BY supplier_id
+    HAVING AVG(delivery_days) > 7                        -- slow delivery
+        OR COUNT(*) FILTER (WHERE quality_score < 3)
+        > COUNT(*) * 0.1                              -- > 10% poor quality
+    ORDER BY late_delivery_pct DESC, avg_delivery_days DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 6 — Cohort Retention Filter" icon="shield">
+    ```sql
+    -- Find cohorts with below-threshold retention
+    -- (flag cohorts that need investigation)
+    WITH cohort_stats AS (
+    SELECT
+        DATE_TRUNC('month', u.created_at)::DATE  AS cohort_month,
+        COUNT(DISTINCT u.id)                      AS cohort_size,
+        COUNT(DISTINCT o.user_id)                 AS retained_users
+    FROM       users  u
+    LEFT JOIN  orders o
+        ON  o.user_id   = u.id
+        AND o.created_at BETWEEN u.created_at + INTERVAL '30 days'
+                            AND u.created_at + INTERVAL '60 days'
+    WHERE u.created_at < NOW() - INTERVAL '2 months'
+    GROUP BY DATE_TRUNC('month', u.created_at)
+    )
+    SELECT
+    cohort_month,
+    cohort_size,
+    retained_users,
+    ROUND(retained_users * 100.0 / NULLIF(cohort_size, 0), 1) AS retention_pct
+    FROM   cohort_stats
+    HAVING ROUND(retained_users * 100.0
+        / NULLIF(cohort_size, 0), 1) < 20    -- below 20% retention ← flag!
+    AND cohort_size > 50                      -- meaningful cohort size
+    ORDER BY cohort_month;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE emp (
+  id     INT,
+  dept   TEXT,
+  salary INT,
+  active BOOLEAN
+);
+INSERT INTO emp VALUES
+  (1,'Eng',  120000, true),
+  (2,'Eng',  110000, true),
+  (3,'Eng',   90000, false),
+  (4,'Sales', 80000, true),
+  (5,'Sales', 75000, true),
+  (6,'Sales', 60000, true),
+  (7,'HR',    70000, true),
+  (8,'HR',    65000, true);
+
+-- 1. Basic HAVING
+SELECT dept, AVG(salary) AS avg_sal
+FROM   emp
+GROUP BY dept
+HAVING AVG(salary) > 80000;
+-- Eng: 106667 ✅  (Sales=71667 dropped, HR=67500 dropped)
+
+-- 2. WHERE + HAVING together
+SELECT dept, COUNT(*) AS headcount, AVG(salary) AS avg_sal
+FROM   emp
+WHERE  active = true              -- filters inactive Eng employee first
+GROUP BY dept
+HAVING COUNT(*) >= 2              -- departments with at least 2 active
+   AND AVG(salary) > 70000;
+-- Eng: 2 active, avg=115000 ✅
+-- Sales: 3 active, avg=71667 ✅
+-- HR: 2 active, avg=67500 ← dropped (avg < 70000) ❌
+
+-- 3. HAVING without GROUP BY
+SELECT AVG(salary) AS company_avg
+FROM   emp
+WHERE  active = true
+HAVING AVG(salary) > 50000;       -- true → returns row
+-- Result: 89166.67
+
+SELECT AVG(salary) FROM emp WHERE active = true
+HAVING AVG(salary) > 200000;      -- false → returns nothing
+-- Result: (0 rows)
+
+-- 4. Non-aggregate in HAVING (works but wrong place)
+SELECT dept, COUNT(*) FROM emp
+GROUP BY dept
+HAVING dept = 'Eng';              -- works ✅ but wasteful
+-- Better:
+SELECT dept, COUNT(*) FROM emp
+WHERE dept = 'Eng'                -- filters BEFORE grouping ✅
+GROUP BY dept;
+
+-- 5. EXPLAIN: see WHERE vs HAVING in plan
+EXPLAIN SELECT dept, AVG(salary)
+FROM emp WHERE active = true
+GROUP BY dept HAVING AVG(salary) > 80000;
+-- HashAggregate
+--   Filter: (avg(salary) > 80000)   ← HAVING here
+--   -> Seq Scan on emp
+--        Filter: (active = true)     ← WHERE here
+
+-- 6. Duplicate detection
+INSERT INTO emp VALUES (9,'Eng',120000,true);  -- same salary as id=1
+SELECT salary, COUNT(*) AS occurrences
+FROM   emp
+GROUP BY salary
+HAVING COUNT(*) > 1;
+-- 120000: 2 occurrences ✅
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What does HAVING filter?
+    A: Entire groups — after GROUP BY, using aggregate results.
+
+    Q: HAVING vs WHERE key difference?
+    A: WHERE = before grouping (rows). HAVING = after grouping (groups).
+
+    Q: Can WHERE use aggregates?
+    A: No — ERROR. Aggregates only in HAVING or SELECT.
+
+    Q: Can HAVING use non-aggregates?
+    A: Yes, but wrong — move to WHERE for performance.
+    ```
+  </Card>
+  
+  <Card title="Performance & Internals" icon="rocket">
+    ```text
+    Q: Where does HAVING appear in EXPLAIN?
+    A: As Filter on the Aggregate node (not on Seq Scan).
+
+    Q: Best practice: WHERE vs HAVING?
+    A: Push all non-aggregate conditions to WHERE. 
+       HAVING = aggregates only.
+
+    Q: Performance rule?
+    A: WHERE reduces rows before grouping (cheap). 
+       HAVING reduces groups after (expensive).
+    ```
+  </Card>
+
+  <Card title="Patterns" icon="shield">
+    ```text
+    Q: Classic HAVING use case?
+    A: HAVING COUNT(*) > 1 — find duplicates.
+
+    Q: HAVING without GROUP BY?
+    A: Treats entire table as one group — useful as guard clause.
+
+    Q: NULL in HAVING condition?
+    A: Group excluded — three-value logic (NULL ≠ TRUE).
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+HAVING — Complete Picture
+
+Execution flow:
+
+  rows → [WHERE] → fewer rows → [GROUP BY] → groups → [HAVING] → output
+
+  WHERE:  row level   → can use index → eliminate early → cheap ✅
+  HAVING: group level → post-aggregate → can't use index → expensive ⚠️
+
+Decision tree for filter placement:
+
+  Condition uses aggregate (COUNT, SUM, AVG...)?
+  ├── YES → HAVING  (only option)
+  └── NO  → WHERE   (always better performance)
+
+HAVING condition evaluation per group:
+
+  group result: {dept='Eng', avg_salary=120000, count=5}
+       │
+       ▼
+  HAVING avg_salary > 80000
+       │
+       ├── TRUE  → output this group ✅
+       ├── FALSE → drop this group ❌
+       └── NULL  → drop this group ❌ (three-value logic)
+
+Common patterns:
+  HAVING COUNT(*) > 1           → duplicates
+  HAVING COUNT(*) >= N          → minimum activity threshold
+  HAVING SUM(col) > X           → high-value segments
+  HAVING AVG(col) > (subquery)  → above-average groups
+  HAVING MAX(col) < NOW() - N   → stale/inactive groups
+  HAVING condition1 AND/OR cond2→ compound group filters
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always check if a `HAVING` condition can be moved to `WHERE`
+2. ✅ Use `HAVING COUNT(*) > 1` to find duplicates quickly
+3. ✅ Use `EXPLAIN` to verify `Filter` nodes are on the correct plan steps
+4. ✅ Use `FILTER` clause inside `HAVING` for complex conditional thresholds
+5. ✅ Use subqueries in `HAVING` for dynamic "above average" comparisons
+
+Mastering `HAVING` turns raw grouped data into actionable, filtered insights. 🐘✨
+</Aside>

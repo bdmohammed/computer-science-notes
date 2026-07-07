@@ -1,0 +1,897 @@
+---
+title: Python Exceptions & Error Handling
+slug: computer-languages/python/exception-handling/fundamentals
+description: Master Python's exception hierarchy, the EAFP coding style, traceback mechanics, and how Python differs from Java's checked/unchecked model.
+sidebar:
+  label: "Exceptions"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [python, exceptions, try-except, eafp, traceback, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 💥 What Is An Exception in Python?
+
+> An **exception** is an event that occurs during program execution that disrupts the normal flow of instructions. In Python, **everything is an object**, including errors. When something goes wrong, Python raises an **Exception Object**.
+
+Unlike Java, Python does not distinguish between "Checked" and "Unchecked" exceptions. **All exceptions are unchecked.**
+
+```text
+ZeroDivisionError
+FileNotFoundError
+KeyError ...etc
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- **Java**: "Ask for permission" (Check if file exists → Open it).  
+- **Python**: "Ask for forgiveness" (Try to open it → Handle error if it fails).  
+This is known as **EAFP** (Easier to Ask Forgiveness than Permission).
+</Aside>
+
+---
+
+## 🔬 Exception vs Error vs Bug
+
+| | Definition | Example | Recoverable? |
+|--|-----------|---------|-------------|
+| **Bug** | Logic error | `for i in range(len+1)` | Fix code |
+| **Exception** | Runtime event | File missing, Key missing | ✅ Yes (`try/except`) |
+| **SystemExit** | System-level exit | `sys.exit()` | ❌ Usually terminates |
+
+> **Note**: In Python, `Error` (like `MemoryError`) is technically a subclass of `BaseException`, just like `Exception`. But conventionally, we catch `Exception` and let `SystemExit`/`KeyboardInterrupt` pass through.
+
+---
+
+## 📚 The Call Stack & Tracebacks
+
+When an exception occurs, Python prints a **Traceback**. This is a snapshot of the call stack at the moment of failure.
+
+### 💻 Real-World Code — The Traceback
+
+```python
+def fetch_user(user_id):
+    # Simulating a DB lookup that fails
+    users = {1: "Alice"}
+    return users[user_id]  # KeyError if ID not found
+
+def process_request(id):
+    name = fetch_user(id)
+    print(f"Hello, {name}")
+
+process_request(2)
+```
+
+**Output (The Traceback):**
+```text
+Traceback (most recent call last):
+  File "main.py", line 8, in <module>
+    process_request(2)
+  File "main.py", line 5, in process_request
+    name = fetch_user(id)
+  File "main.py", line 3, in fetch_user
+    return users[user_id]
+KeyError: 2
+```
+
+### 🔬 Reading the Traceback
+1.  **Bottom Line**: The **Type** (`KeyError`) and **Message** (`2`).
+2.  **Top to Bottom**: The sequence of calls.
+3.  **"Most Recent Call Last"**: The error happened in `fetch_user`, which was called by `process_request`, which was called by `<module>`.
+
+<Aside type="caution">
+**Java vs Python**:  
+- Java: Prints thread name first.  
+- Python: Prints "Traceback (most recent call last)".  
+- Both unwind the stack frame-by-frame until a handler is found or the program crashes.
+</Aside>
+
+---
+
+## 🛡️ Handling Exceptions: `try` / `except`
+
+Python uses `try` and `except` blocks (not `catch`).
+
+```python
+try:
+    # Risky code
+    result = 10 / 0
+except ZeroDivisionError:
+    # Handle specific error
+    print("Cannot divide by zero!")
+except Exception as e:
+    # Catch-all for other errors
+    print(f"Something else went wrong: {e}")
+else:
+    # Runs ONLY if no exception occurred
+    print("Calculation successful")
+finally:
+    # ALWAYS runs (cleanup)
+    print("Execution complete")
+```
+
+### 🔬 The `else` Clause
+Unique to Python! It separates code that *might* fail from code that *depends* on success. It prevents accidentally catching exceptions from the wrong lines.
+
+---
+
+## 🗺️ The Exception Hierarchy
+
+Python exceptions form a tree rooted at `BaseException`.
+
+```text
+BaseException
+ ├── SystemExit       (sys.exit())
+ ├── KeyboardInterrupt (Ctrl+C)
+ └── Exception        (⚠️ Catch this one!)
+      ├── ArithmeticError
+      │    └── ZeroDivisionError
+      ├── LookupError
+      │    ├── IndexError
+      │    └── KeyError
+      ├── ValueError
+      ├── TypeError
+      └── FileNotFoundError
+```
+
+> **Rule of Thumb**: Never catch `BaseException` unless you have a very good reason (it catches Ctrl+C!). Always catch specific exceptions or `Exception`.
+
+---
+
+## 💣 Interview Traps & Pitfalls
+
+<CardGrid>
+  <Card title="Trap 1: The Bare Except" icon="error">
+    ```python
+    try:
+        do_something()
+    except:  # ❌ BAD PRACTICE
+        pass
+    
+    # Why? It catches SystemExit and KeyboardInterrupt!
+    # Your program becomes unkillable with Ctrl+C.
+    
+    # ✅ Fix:
+    except Exception:
+        pass
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Swallowing Errors" icon="warning">
+    ```python
+    try:
+        save_to_db(data)
+    except:
+        pass  # ❌ Silent failure. Data lost. Debugging impossible.
+        
+    # ✅ Fix: Log it!
+    except Exception as e:
+        logger.error(f"DB Save failed: {e}")
+    ```
+  </Card>
+
+  <Card title="Trap 3: Raising Generic Exceptions" icon="shield">
+    ```python
+    # ❌ Bad
+    raise Exception("Something broke")
+    
+    # ✅ Good: Use specific built-ins or custom classes
+    raise ValueError("Invalid input format")
+    raise FileNotFoundError("Config missing")
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 Internals: How It Works
+
+1.  **Raise**: Python creates an exception object.
+2.  **Unwind**: It looks at the current stack frame.
+3.  **Match**: Does this frame have a matching `except` block?
+    -   **Yes**: Execute handler. Resume normal flow.
+    -   **No**: Pop the frame (destroy local vars). Move to caller.
+4.  **Crash**: If stack is empty, print Traceback and exit.
+
+<Aside type="note">
+**Performance**: In Python, `try/except` is **cheap** if no error occurs. However, *raising* an exception is **expensive** because it builds the traceback object. Don't use exceptions for normal control flow (e.g., don't use `IndexError` to check if a list ends).
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: Checked vs Unchecked in Python?
+    A: Python has NO checked exceptions. All are runtime.
+    
+    Q: What is EAFP?
+    A: Easier to Ask Forgiveness than Permission. 
+       Try it, handle error if it fails. Preferred over LBYL.
+    ```
+  </Card>
+  
+  <Card title="Syntax" icon="shield">
+    ```text
+    Q: Does Python have 'finally'?
+    A: Yes. Used for cleanup (closing files/connections).
+    
+    Q: What is the 'else' block in try/except?
+    A: Runs only if NO exception occurred. Keeps try-block clean.
+    ```
+  </Card>
+
+  <Card title="Custom Exceptions" icon="rocket">
+    ```text
+    Q: How to create a custom exception?
+    A: Class MyAppError(Exception): pass
+    
+    Q: Should you inherit from BaseException?
+    A: No. Inherit from Exception.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+def div(a, b):
+    try:
+        return a / b
+    except ZeroDivisionError:
+        return "Error"
+    finally:
+        print("Done")
+
+print(div(10, 2))
+print("---")
+print(div(10, 0))
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Done
+5.0
+---
+Done
+Error
+```
+*Note: `finally` runs BEFORE the return value is passed back.*
+</details>
+
+> 🚀 **Final Wisdom**: In Python, exceptions are not just for errors—they are a core part of the control flow. Embrace `try/except`, keep your `try` blocks small, and never silence errors without logging them. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🚨 Python Exception Handling — Fundamentals
+
+---
+
+## 01 — What Is An Exception
+
+### 🧠 Mental Model
+
+```
+Normal flow:     instruction → instruction → instruction → done
+Exception flow:  instruction → instruction → 💥 EXCEPTION
+                                                  │
+                          unwind stack ◀──────────┘
+                               │
+                    find handler? → YES → handle → continue
+                               │
+                               NO → print traceback → crash
+```
+
+```
+An EXCEPTION is a Python OBJECT that represents
+an error or unusual condition that disrupts normal flow.
+
+It is NOT:
+  ├── a crash (can be caught and recovered)
+  ├── a return value (travels up the call stack automatically)
+  └── just a message (it's a full class instance with attributes)
+
+It IS:
+  ├── an instance of BaseException or its subclass
+  ├── automatically propagated up the call stack
+  └── catchable at any level of the stack
+```
+
+### Exception Hierarchy
+
+```
+BaseException
+│
+├── SystemExit              ← sys.exit() — not a bug
+├── KeyboardInterrupt       ← Ctrl+C — not a bug
+├── GeneratorExit           ← generator.close() called
+│
+└── Exception               ← ALL normal program exceptions
+    │
+    ├── StopIteration       ← iterator exhausted
+    ├── StopAsyncIteration  ← async iterator exhausted
+    ├── ArithmeticError
+    │   ├── ZeroDivisionError
+    │   ├── OverflowError
+    │   └── FloatingPointError
+    │
+    ├── AttributeError      ← obj.attr doesn't exist
+    ├── EOFError             ← input() hits EOF
+    │
+    ├── ImportError
+    │   └── ModuleNotFoundError
+    │
+    ├── LookupError
+    │   ├── IndexError      ← list[99] out of range
+    │   └── KeyError        ← dict["missing"]
+    │
+    ├── MemoryError
+    ├── NameError
+    │   └── UnboundLocalError
+    │
+    ├── OSError
+    │   ├── FileNotFoundError
+    │   ├── PermissionError
+    │   ├── TimeoutError
+    │   └── ConnectionError
+    │       ├── ConnectionRefusedError
+    │       └── ConnectionResetError
+    │
+    ├── RuntimeError
+    │   └── RecursionError
+    │
+    ├── TypeError           ← wrong type passed
+    ├── ValueError          ← right type, wrong value
+    │   └── UnicodeError
+    │       ├── UnicodeDecodeError
+    │       └── UnicodeEncodeError
+    │
+    └── Warning
+        ├── DeprecationWarning
+        ├── UserWarning
+        └── RuntimeWarning
+```
+
+### Exception as Object
+
+```python
+try:
+    x = int("not_a_number")
+except ValueError as e:
+    print(type(e))           # <class 'ValueError'>
+    print(e.args)            # ("invalid literal for int() ...",)
+    print(str(e))            # "invalid literal for int() with base 10: 'not_a_number'"
+    print(repr(e))           # ValueError("invalid literal ...")
+    print(e.__traceback__)   # <traceback object>
+    print(e.__cause__)       # None (no explicit cause)
+    print(e.__context__)     # None (no implicit context)
+```
+
+```python
+# Exception attributes:
+class MyError(Exception):
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.code = code        # custom attribute
+
+try:
+    raise MyError("something failed", code=404)
+except MyError as e:
+    print(e.args[0])    # "something failed"
+    print(e.code)       # 404
+```
+
+---
+
+## 02 — Runtime Stack Mechanism
+
+### 🧠 The Call Stack
+
+```
+When Python executes a program, it maintains a CALL STACK.
+Each function call pushes a FRAME onto the stack.
+Each return pops the frame off.
+
+CALL STACK at any point:
+
+  ┌─────────────────────────┐  ← TOP (most recent frame)
+  │  current_function       │  f_locals, f_lineno, f_code
+  ├─────────────────────────┤
+  │  caller_function        │
+  ├─────────────────────────┤
+  │  caller_of_caller       │
+  ├─────────────────────────┤
+  │  main / module level    │  ← BOTTOM
+  └─────────────────────────┘
+```
+
+```python
+# Visualize call stack:
+import traceback
+
+def c():
+    traceback.print_stack()     # prints current call stack
+
+def b():
+    c()
+
+def a():
+    b()
+
+a()
+```
+
+```
+OUTPUT:
+  File "script.py", line 10, in <module>
+    a()
+  File "script.py", line 8, in a
+    b()
+  File "script.py", line 5, in b
+    c()
+  File "script.py", line 2, in c
+    traceback.print_stack()
+```
+
+---
+
+### Exception Propagation — Stack Unwinding
+
+```python
+def c():
+    raise ValueError("from c")      # ← exception born here
+
+def b():
+    c()                              # no handler — propagates
+
+def a():
+    b()                              # no handler — propagates
+
+try:
+    a()                              # caught here
+except ValueError as e:
+    print(f"Caught: {e}")
+```
+
+```
+STACK UNWINDING:
+
+  CALL STACK             EXCEPTION PROPAGATION
+  ┌───────────┐
+  │     c     │  → raises ValueError → no handler in c → UNWIND
+  ├───────────┤
+  │     b     │  → no handler in b → UNWIND
+  ├───────────┤
+  │     a     │  → no handler in a → UNWIND
+  ├───────────┤
+  │  try/except│ → HANDLER FOUND → execute except block
+  └───────────┘
+
+Each frame is POPPED as exception propagates up.
+If no handler found anywhere → sys.excepthook → crash.
+```
+
+---
+
+### 🔬 Frame Object Internals
+
+```
+Each frame on the call stack is a PyFrameObject:
+
+PyFrameObject:
+  f_code        → PyCodeObject (bytecode, variable names)
+  f_locals      → dict of local variables
+  f_globals     → dict of module globals
+  f_back        → previous frame (linked list)
+  f_lineno      → current line number
+  f_lasti       → last bytecode instruction index
+```
+
+```python
+import sys
+
+def inspect_frames():
+    frame = sys._getframe()          # current frame
+    while frame:
+        print(f"  {frame.f_code.co_filename}:{frame.f_lineno}"
+              f" in {frame.f_code.co_name}")
+        frame = frame.f_back         # walk up the stack
+
+def b(): inspect_frames()
+def a(): b()
+
+a()
+# script.py:2  in inspect_frames
+# script.py:8  in b
+# script.py:9  in a
+# script.py:11 in <module>
+```
+
+---
+
+### Traceback Object
+
+```python
+import traceback, sys
+
+def c(): raise RuntimeError("oops")
+def b(): c()
+def a(): b()
+
+try:
+    a()
+except RuntimeError:
+    exc_type, exc_val, exc_tb = sys.exc_info()
+    print(f"Type:    {exc_type}")      # <class 'RuntimeError'>
+    print(f"Value:   {exc_val}")       # oops
+    print(f"TB:      {exc_tb}")        # <traceback object>
+
+    # Walk the traceback manually:
+    tb = exc_tb
+    while tb:
+        frame = tb.tb_frame
+        print(f"  line {tb.tb_lineno} in {frame.f_code.co_name}")
+        tb = tb.tb_next
+
+    # Or format it:
+    traceback.print_exc()
+    lines = traceback.format_exc()    # as string
+```
+
+```
+Traceback object (tb):
+  tb_frame     → frame where exception occurred
+  tb_lineno    → line number in that frame
+  tb_next      → next traceback frame (closer to raise site)
+
+tb chain: handler → ... → raise site  (OPPOSITE of f_back)
+```
+
+---
+
+### Exception Chaining — `__cause__` and `__context__`
+
+```python
+# IMPLICIT chaining — exception during exception handling:
+try:
+    int("bad")
+except ValueError:
+    raise RuntimeError("conversion failed")
+    # During handling of ValueError, RuntimeError was raised
+```
+
+```
+Output:
+  During handling of the above exception, another exception occurred:
+  Traceback (most recent call last):
+    ...
+  RuntimeError: conversion failed
+```
+
+```python
+# EXPLICIT chaining — raise X from Y:
+try:
+    int("bad")
+except ValueError as e:
+    raise RuntimeError("conversion failed") from e
+```
+
+```
+Output:
+  ValueError: invalid literal...
+
+  The above exception was the direct cause of the following exception:
+  RuntimeError: conversion failed
+```
+
+```python
+# SUPPRESS context — raise X from None:
+try:
+    int("bad")
+except ValueError:
+    raise RuntimeError("conversion failed") from None
+    # Original ValueError hidden — clean error to caller
+```
+
+```
+Attributes:
+  e.__cause__     → exception from "raise X from Y" (explicit)
+  e.__context__   → exception active when this was raised (implicit)
+  e.__suppress_context__ → True when "raise X from None"
+```
+
+---
+
+## 03 — Default Exception Handling
+
+### What Python Does With Unhandled Exceptions
+
+```python
+# No try/except anywhere:
+def foo():
+    raise ValueError("uncaught!")
+
+foo()
+```
+
+```
+CPython default behavior:
+  1. Exception propagates to top of call stack
+  2. sys.excepthook(type, value, traceback) called
+  3. Default sys.excepthook:
+     ├── Formats traceback
+     ├── Writes to sys.stderr
+     └── Python interpreter exits with code 1
+```
+
+```
+OUTPUT TO STDERR:
+  Traceback (most recent call last):
+    File "script.py", line 5, in <module>
+      foo()
+    File "script.py", line 2, in foo
+      raise ValueError("uncaught!")
+  ValueError: uncaught!
+```
+
+### 🔬 `sys.excepthook` — The Default Handler
+
+```python
+import sys
+
+# DEFAULT excepthook:
+# sys.excepthook = traceback.print_exception  (roughly)
+
+# OVERRIDE to customize:
+def custom_excepthook(exc_type, exc_val, exc_tb):
+    import logging
+    logging.critical(
+        "Unhandled exception",
+        exc_info=(exc_type, exc_val, exc_tb)
+    )
+    # optionally: notify Sentry, write to file, etc.
+    sys.__excepthook__(exc_type, exc_val, exc_tb)  # still print it
+
+sys.excepthook = custom_excepthook
+```
+
+```python
+# THREADING — separate hook for threads:
+import threading
+
+def thread_excepthook(args):
+    print(f"Thread {args.thread.name} crashed: {args.exc_value}")
+    # default would silently swallow thread exceptions!
+
+threading.excepthook = thread_excepthook
+```
+
+---
+
+### `sys.exc_info()` — Access Active Exception
+
+```python
+import sys
+
+def log_current_exception():
+    exc_type, exc_val, exc_tb = sys.exc_info()
+    # All None if no active exception
+    if exc_type:
+        print(f"Active exception: {exc_type.__name__}: {exc_val}")
+
+try:
+    1 / 0
+except ZeroDivisionError:
+    log_current_exception()      # ZeroDivisionError: division by zero
+
+log_current_exception()          # None, None, None — outside except block
+```
+
+---
+
+### Default Behavior Per Exception Type
+
+```python
+# SystemExit — special: not caught by bare except Exception:
+import sys
+sys.exit(0)          # raises SystemExit(0) — exit code 0
+sys.exit(1)          # raises SystemExit(1) — exit code 1
+sys.exit("error msg")# raises SystemExit("error msg") — prints to stderr, code 1
+
+try:
+    sys.exit(1)
+except SystemExit as e:
+    print(f"Exit code: {e.code}")   # ✅ can catch it
+    # re-raise to actually exit, or swallow to continue
+
+except Exception:
+    pass    # 💀 does NOT catch SystemExit — it's BaseException, not Exception
+
+
+# KeyboardInterrupt — Ctrl+C:
+try:
+    while True: pass
+except KeyboardInterrupt:
+    print("Interrupted cleanly")    # ✅ caught
+    # do cleanup before exit
+```
+
+---
+
+### 🔬 Bytecode — How Exceptions Work
+
+```python
+import dis
+
+def f():
+    try:
+        x = int("bad")
+    except ValueError:
+        x = 0
+
+dis.dis(f)
+```
+
+```
+  RESUME          0
+
+  PUSH_EXC_INFO             ← sets up exception handler entry
+  LOAD_GLOBAL     int
+  LOAD_CONST      'bad'
+  CALL            1
+  STORE_FAST      x
+
+  POP_EXCEPT                ← no exception — skip handler
+  JUMP_FORWARD    → end
+
+except_block:
+  LOAD_GLOBAL     ValueError
+  CHECK_EXC_MATCH           ← does exception match ValueError?
+  POP_JUMP_IF_FALSE → re_raise
+  POP_TOP
+  LOAD_CONST      0
+  STORE_FAST      x
+  POP_EXCEPT
+
+end:
+  RETURN_CONST    None
+```
+
+```
+Exception table in PyCodeObject:
+  Maps bytecode ranges → handler offsets
+  No overhead when no exception occurs (zero-cost try)
+  Overhead ONLY when exception actually raised
+```
+
+---
+
+### Exception Object Lifecycle
+
+```python
+try:
+    raise ValueError("test")
+except ValueError as e:
+    print(id(e))     # object exists
+    saved = e        # save reference
+
+# After except block:
+# Python DELETES 'e' from local scope (breaks reference cycles)
+# e → AttributeError outside except block
+
+print(e)          # 💥 NameError: name 'e' is not defined
+print(saved)      # ✅ "test" — saved reference still works
+```
+
+```
+Why Python deletes 'e' after except block:
+  Exception objects hold TRACEBACKS
+  Tracebacks hold FRAME references
+  Frames hold LOCAL VARIABLES
+  Local variables include 'e' itself
+  → REFERENCE CYCLE → memory leak
+
+  Python explicitly unbinds 'e' to break the cycle
+  sys.exc_info() returns (None, None, None) after except block
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Exception-safe data structure operations:
+class Stack:
+    def __init__(self):
+        self._data = []
+
+    def pop(self):
+        if not self._data:
+            raise IndexError("Stack underflow")   # custom message
+        return self._data.pop()
+
+    def peek(self):
+        if not self._data:
+            raise IndexError("Stack is empty")
+        return self._data[-1]
+
+# Caller handles appropriately:
+def safe_evaluate(stack):
+    try:
+        a = stack.pop()
+        b = stack.pop()
+        return a + b
+    except IndexError as e:
+        return f"Error: {e}"    # stack unwound safely
+```
+
+---
+
+## 💀 Interview Trap 1 — Catching `BaseException` vs `Exception`
+
+```python
+# WRONG — catches SystemExit and KeyboardInterrupt:
+try:
+    while True:
+        process()
+except BaseException:     # 💀 catches Ctrl+C, sys.exit() — process never stops
+    pass
+
+# RIGHT — catches only program errors:
+try:
+    process()
+except Exception:         # ✅ leaves SystemExit and KeyboardInterrupt alone
+    pass
+```
+
+---
+
+## 💀 Interview Trap 2 — Traceback Reference Holds Frame Alive
+
+```python
+import sys
+
+def make_exception():
+    try:
+        raise ValueError("test")
+    except:
+        return sys.exc_info()[2]    # returns traceback object
+
+tb = make_exception()
+
+# tb → traceback → frame → locals → all local variables
+# Frame is KEPT ALIVE by traceback reference
+# Massive memory leak if tb stored for long time
+
+# Fix — clear when done:
+del tb          # releases frame
+# or:
+tb = None
+```
+
+---
+
+## 💀 Interview Trap 3 — `e` Deleted After `except` Block
+
+```python
+try:
+    raise RuntimeError("oops")
+except RuntimeError as e:
+    message = str(e)     # ← save before block exits
+
+# e deleted here automatically
+print(message)   # ✅ "oops"
+print(e)         # 💥 NameError — e was deleted
+```
+
+---

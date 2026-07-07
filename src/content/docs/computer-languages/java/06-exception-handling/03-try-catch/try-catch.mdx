@@ -1,0 +1,1309 @@
+---
+title: Java try-catch Blocks
+slug: computer-languages/java/exception-handling/try-catch
+description: Deep dive into Java try-catch syntax, stack unwinding, RAII, catch-by-reference, and the differences from Java's exception model.
+sidebar:
+  label: "Control Flow"
+  badge:
+    text: Core Concept
+    variant: tip
+tags: [java, try-catch, exception, raii, stack-unwinding, interview, java7, java8]
+---
+
+## 🎯 try-catch — Syntax & Basic Usage
+
+---
+
+### 🧠 What It Is
+
+`try-catch` is Java's mechanism to **intercept exceptions** before they reach the default handler. The `try` block marks code that might throw. The `catch` block defines what to do when it does. Execution inside `try` stops at the throw point — not at the end of the block.
+
+---
+
+### 🔬 Syntax — Every Valid Form
+
+```java
+// Form 1 — basic
+try {
+    // risky code
+} catch (ExceptionType e) {
+    // handler
+}
+
+// Form 2 — multiple catch
+try {
+    // risky code
+} catch (ExceptionType1 e) {
+    // handler 1
+} catch (ExceptionType2 e) {
+    // handler 2
+}
+
+// Form 3 — with finally
+try {
+    // risky code
+} catch (ExceptionType e) {
+    // handler
+} finally {
+    // always runs
+}
+
+// Form 4 — try-finally (no catch)
+try {
+    // risky code
+} finally {
+    // always runs — exception still propagates
+}
+
+// Form 5 — multi-catch (Java 7+)
+try {
+    // risky code
+} catch (IOException | SQLException e) {
+    // handles both
+}
+```
+
+---
+
+### 🔬 Execution Flow — Exact Mechanics
+
+```
+try block starts
+       │
+       ▼
+  statement 1 ──── no exception ──► statement 2 ──► ... ──► try block ends
+       │                                                            │
+  exception thrown                                                  │
+       │                                            no exception path▼
+       ▼                                                     skip catch blocks
+  try block STOPS immediately                                       │
+  remaining statements SKIPPED                                      ▼
+       │                                                    code after try-catch
+       ▼
+  JVM checks catch blocks top → bottom
+  first matching type → execute that catch
+       │
+       ▼
+  catch block runs
+       │
+       ▼
+  code after try-catch continues ← execution resumes HERE
+
+1. If any statement which raises an exception and it is not part of any try block then it is always abnormal termination of the program.
+2. There may be a chance of raising an exception inside catch and finally blocks also in addition to try block.
+```
+
+```Java
+Without try catch:
+class Test {
+    public static void main(String[] args){
+        System.out.println("statement1");
+        System.out.println(10/0);
+        System.out.println("statement3");
+    }
+}
+output:
+statement1
+RE:AE:/by zero at Test.main()
+Abnormal termination.
+
+with try catch:
+class Test{
+    public static void main(String[] args){
+        System.out.println("statement1");
+        try {
+            System.out.println(10/0);
+        } catch(ArithmeticException e) {
+            System.out.println(10/2);
+        }
+        System.out.println("statement3");
+    }
+}
+Output:
+statement1
+5
+statement3
+Normal termination.
+```
+
+---
+
+### 🔬 What `e` Is — The Exception Variable
+
+```java
+try {
+    riskyOp();
+} catch (IOException e) {
+    // e is a local variable — scope is this catch block only
+    // e holds reference to the exception object on heap
+    // type: IOException (or any subclass that was thrown)
+
+    e.getMessage()           // detail message
+    e.getCause()             // wrapped cause
+    e.getClass()             // exact runtime type
+    e.getClass().getName()   // "java.io.FileNotFoundException"
+    e.printStackTrace()      // This method prints exception information in the following format.
+                             // Name of the exception: description of exception
+                             // Stack trace
+    e.toString()             // This method prints exception information in the following format.
+                             // Name of the exception: description of exception
+    
+}
+// e not accessible here — out of scope
+```
+
+```
+catch (IOException e) {
+                   │
+                   └── local variable
+                       type: IOException
+                       scope: catch block only
+                       value: reference to exception object on heap
+                       effectively final in multi-catch (Java 7+)
+```
+
+---
+
+### 💻 Real-World Code — Payment Service
+
+```java
+public class PaymentService {
+
+    private final PaymentGateway gateway;
+    private final AuditLogger audit;
+
+    public PaymentResult charge(String customerId, double amount) {
+        try {
+            validateAmount(amount);                          // throws IllegalArgumentException
+            Customer customer = loadCustomer(customerId);   // throws CustomerNotFoundException
+            PaymentResult result = gateway.charge(          // throws PaymentException, IOException
+                customer.getPaymentToken(), amount
+            );
+            audit.log("CHARGED", customerId, amount);
+            return result;
+
+        } catch (IllegalArgumentException e) {
+            // Bad input — caller's fault, don't retry
+            log.warn("Invalid charge amount {} for {}: {}", amount, customerId, e.getMessage());
+            return PaymentResult.failed("INVALID_AMOUNT");
+
+        } catch (CustomerNotFoundException e) {
+            // Business logic failure — known case
+            log.warn("Customer not found: {}", customerId);
+            return PaymentResult.failed("CUSTOMER_NOT_FOUND");
+
+        } catch (PaymentException e) {
+            // Gateway declined — card issue
+            log.warn("Payment declined for {}: {}", customerId, e.getMessage());
+            return PaymentResult.failed("DECLINED");
+
+        } catch (IOException e) {
+            // Network issue — may be transient, caller should retry
+            log.error("Gateway unreachable for customer {}", customerId, e);
+            throw new ServiceUnavailableException("Payment gateway down", e);
+        }
+    }
+
+    private void validateAmount(double amount) {
+        if (amount <= 0) throw new IllegalArgumentException("Amount must be > 0: " + amount);
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Catching everything with `catch(Exception e)` and returning `failed("ERROR")` — caller can't distinguish a bad request (don't retry) from a network failure (retry). Silent information loss drives wrong retry behavior.
+
+---
+
+### 🔬 Catch Block — What You Can Do
+
+| Action | When to Use |
+|--------|------------|
+| Log and return fallback | Known, recoverable business case |
+| Wrap and rethrow | Add context, change exception type for caller |
+| Rethrow same exception | Add nothing — just let it propagate (`throw e`) |
+| Retry | Transient failures (network, lock timeout) |
+| Return default value | Truly optional operation |
+| Do nothing | ❌ Almost never — silent swallowing |
+
+```java
+// ✅ Wrap and rethrow — most common in layered architecture
+catch (SQLException e) {
+    throw new RepositoryException("Failed to load user: " + userId, e);
+    // adds context, changes type to domain exception, preserves cause chain
+}
+
+// ✅ Rethrow same exception — just propagate
+catch (IOException e) {
+    metrics.increment("io.errors");
+    throw e;   // propagates — caller handles it
+}
+
+// ❌ Swallowing — destroys all information
+catch (Exception e) {
+    // nothing
+}
+```
+
+---
+
+### 🔬 Checked vs Unchecked — Compiler Enforcement
+
+```java
+// Checked — MUST handle or declare
+void readFile(String path) {                    // option A: declare
+    Files.readAllBytes(Path.of(path));          // IOException — checked
+}
+// COMPILE ERROR: unreported exception IOException
+
+void readFile(String path) throws IOException { // option A: declare
+    Files.readAllBytes(Path.of(path));          // ✅
+}
+
+void readFile(String path) {                    // option B: handle
+    try {
+        Files.readAllBytes(Path.of(path));
+    } catch (IOException e) {                   // ✅
+        throw new RuntimeException(e);
+    }
+}
+
+// Unchecked — no compiler enforcement
+void parsePort(String val) {
+    int port = Integer.parseInt(val);           // NumberFormatException — unchecked
+    // no try-catch required — compiler happy
+    // but runtime crash if val is null/"abc"/""
+}
+```
+
+---
+
+### 🔬 Scope Rules
+
+```java
+try {
+    int x = 10;
+    String s = riskyOp();      // may throw
+    process(s);                // s accessible here
+} catch (Exception e) {
+    // x — NOT accessible (different scope)
+    // s — NOT accessible (may not have been assigned if exception thrown before)
+    // e — accessible, type Exception
+    log.error(e.getMessage());
+}
+// x, s, e — all out of scope here
+```
+
+```java
+// Variables declared before try ARE accessible in catch
+String result = null;           // declared outside
+try {
+    result = riskyOp();
+} catch (Exception e) {
+    result = "default";         // ✅ accessible — declared outside try
+}
+System.out.println(result);     // ✅ accessible
+```
+
+---
+
+## 🎯 Multiple catch Blocks
+
+---
+
+### 🧠 What It Is
+
+When a `try` block can throw **different exception types**, multiple `catch` blocks handle each type separately. JVM checks them **top to bottom**, executes the **first match**, skips the rest. Order is not a style choice — it is a correctness requirement enforced by the compiler and the type hierarchy.
+
+---
+
+### 🔬 Syntax
+
+```java
+try {
+    riskyOp();
+} catch (ExceptionType1 e) {    // checked first
+    // handler 1
+} catch (ExceptionType2 e) {    // checked second
+    // handler 2
+} catch (ExceptionType3 e) {    // checked third
+    // handler 3
+}
+```
+
+---
+
+### 🔬 Matching — Exact Mechanics
+
+```
+Exception thrown
+       │
+       ▼
+catch block 1 — is thrown instanceof ExceptionType1?
+       │ no
+       ▼
+catch block 2 — is thrown instanceof ExceptionType2?
+       │ yes ← MATCH
+       ▼
+execute catch block 2
+       │
+       ▼
+skip catch block 3 entirely
+       │
+       ▼
+continue after try-catch
+```
+
+```
+Key rule: instanceof check — not exact type match
+  FileNotFoundException thrown
+  catch (IOException e)          ← matches — FileNotFoundException IS-A IOException
+  catch (FileNotFoundException e) ← never reached if IOException is above it
+```
+
+---
+
+### 🔬 Order Rule — Subclass Before Superclass
+
+```java
+// ✅ CORRECT — specific before general
+try {
+    readFile();
+} catch (FileNotFoundException e) {    // subclass first
+    log.warn("File missing: {}", e.getMessage());
+} catch (IOException e) {              // superclass second
+    log.error("IO failure", e);
+}
+
+// ❌ COMPILE ERROR — superclass before subclass
+try {
+    readFile();
+} catch (IOException e) {              // catches FileNotFoundException too
+    log.error("IO failure", e);
+} catch (FileNotFoundException e) {    // COMPILE ERROR: already caught above
+    log.warn("File missing");
+}
+// Error: "exception FileNotFoundException has already been caught"
+```
+
+```
+Hierarchy check:
+  IOException
+      └── FileNotFoundException  ← subclass
+
+  If IOException is first:
+    FileNotFoundException instanceof IOException → true → caught by IOException
+    FileNotFoundException catch block → unreachable → compile error
+
+  If FileNotFoundException is first:
+    FileNotFoundException instanceof IOException → true but NEVER REACHED
+    IOException block catches everything else
+```
+
+---
+
+### 🔬 Sibling Exceptions — Order Doesn't Matter (for correctness)
+
+```java
+// SQLException and IOException are siblings — no inheritance between them
+// Order between siblings doesn't cause compile error
+// BUT: still best practice to order by specificity
+
+try {
+    dbOp();
+} catch (SQLException e) {       // ✅ either order works for siblings
+    handleDb(e);
+} catch (IOException e) {        // ✅
+    handleIo(e);
+}
+```
+
+```
+Object
+  └── Throwable
+        └── Exception
+              ├── IOException      ← siblings — neither is parent of the other
+              └── SQLException
+```
+
+---
+
+### 💻 Real-World Code — API Data Sync Service
+
+```java
+public class DataSyncService {
+
+    public SyncResult sync(String endpoint, String query) {
+
+        try {
+            HttpResponse response = httpClient.get(endpoint);       // IOException, HttpException
+            String rawData       = response.body();
+            JsonNode data        = parser.parse(rawData);           // JsonParseException
+            List<Record> records = mapper.map(data);                // MappingException
+            int saved            = repository.saveAll(records);     // SQLException
+            return SyncResult.success(saved);
+
+        } catch (HttpTimeoutException e) {
+            // Subclass of IOException — most specific, caught first
+            log.warn("Endpoint timeout {}: retrying later", endpoint);
+            return SyncResult.retry("TIMEOUT");
+
+        } catch (HttpException e) {
+            // Sibling of IOException, parent of HttpTimeoutException? No —
+            // specific HTTP errors caught before generic IO
+            log.error("HTTP error {} from {}", e.getStatusCode(), endpoint, e);
+            return SyncResult.failed("HTTP_" + e.getStatusCode());
+
+        } catch (IOException e) {
+            // General network/IO — catches remaining IO subtypes
+            log.error("Network failure reaching {}", endpoint, e);
+            throw new ServiceUnavailableException("Upstream unreachable", e);
+
+        } catch (JsonParseException e) {
+            // Bad response body — upstream sent garbage
+            log.error("Unparseable response from {}: {}", endpoint, rawData, e);
+            return SyncResult.failed("BAD_RESPONSE");
+
+        } catch (MappingException e) {
+            // Schema mismatch — data model changed upstream
+            log.error("Schema mismatch from {}", endpoint, e);
+            alerting.page("SCHEMA_DRIFT", endpoint);
+            return SyncResult.failed("SCHEMA_MISMATCH");
+
+        } catch (SQLException e) {
+            // DB write failure — may be transient
+            log.error("DB write failed during sync from {}", endpoint, e);
+            throw new RepositoryException("Sync persistence failed", e);
+        }
+    }
+}
+```
+
+🔴 **What breaks if wrong:** Single `catch(Exception e)` → all failures logged the same way → timeout vs schema drift vs DB failure all look identical in logs → impossible to triage → wrong team paged → SLA breach.
+
+---
+
+### 🔬 What Each catch Block Gets
+
+```java
+try {
+    throw new FileNotFoundException("config.yml not found");
+} catch (FileNotFoundException e) {
+    // e.getClass().getName()  → "java.io.FileNotFoundException"
+    // e.getMessage()          → "config.yml not found"
+    // e instanceof IOException → true
+    // e instanceof Exception  → true
+}
+```
+
+```
+catch variable type = declared catch type (FileNotFoundException)
+actual runtime type = exact thrown type    (FileNotFoundException)
+instanceof          = true for all ancestors
+```
+
+---
+
+### 🔬 Multiple catch — Each Has Its Own Scope
+
+```java
+try {
+    riskyOp();
+} catch (IOException e) {
+    String msg = e.getMessage();   // msg scoped to this catch only
+    log.error(msg);
+} catch (SQLException e) {
+    // msg — NOT accessible here — different catch block scope
+    // e here is a DIFFERENT variable — same name, different block
+    log.error(e.getSQLState());    // SQL-specific method
+}
+// both e variables out of scope here
+```
+
+---
+
+### 🔬 Catching Same Type Twice
+
+```java
+// ❌ COMPILE ERROR — duplicate catch type
+try {
+    riskyOp();
+} catch (IOException e) {
+    log.error("first");
+} catch (IOException e) {       // COMPILE ERROR: already caught
+    log.error("second");
+}
+```
+
+---
+
+### 🔬 `Exception` as Last Resort Catch
+
+```java
+try {
+    complexOp();
+} catch (IOException e) {
+    handleIo(e);
+} catch (SQLException e) {
+    handleSql(e);
+} catch (Exception e) {
+    // catches everything else — RuntimeExceptions, other checked
+    // MUST be last — superclass of everything above
+    log.error("Unexpected failure", e);
+    throw new InternalException("Unhandled exception type: "
+        + e.getClass().getName(), e);
+}
+```
+
+```
+catch(Exception) as safety net:
+  ✅ valid pattern — catches unforeseen exceptions
+  ✅ must be after all specific catches
+  ❌ never swallow — always rethrow or escalate
+  ❌ does NOT catch Error subtypes
+```
+
+---
+
+## 🔀 Control Flow in try-catch
+
+---
+
+### 🧠 What It Is
+
+Exactly **which statements execute, which skip, and where execution resumes** when an exception is or isn't thrown inside a `try` block. The flow is not intuitive — it depends on throw location, catch match, and what happens inside the catch itself.
+
+---
+
+### 🔬 Case 1 — No Exception Thrown
+
+```
+try {
+    stmt1   ✅ executes
+    stmt2   ✅ executes
+    stmt3   ✅ executes
+} catch (XException e) {
+    stmt4   ❌ skipped entirely
+}
+stmt5       ✅ executes
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");    // ✅
+        System.out.println("B");    // ✅
+        System.out.println("C");    // ✅
+    } catch (ArithmeticException e) {
+        System.out.println("D");    // ❌ skipped
+    }
+    System.out.println("E");        // ✅
+}
+// Output: A B C E
+```
+
+---
+
+### 🔬 Case 2 — Exception Thrown, Catch Matches
+
+```
+try {
+    stmt1   ✅ executes
+    stmt2   💥 throws — STOP
+    stmt3   ❌ skipped
+} catch (XException e) {
+    stmt4   ✅ executes  ← handler matched
+}
+stmt5       ✅ executes  ← resumes here after catch
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");    // ✅
+        int x = 10 / 0;            // 💥 ArithmeticException
+        System.out.println("B");    // ❌ skipped
+    } catch (ArithmeticException e) {
+        System.out.println("C");    // ✅
+    }
+    System.out.println("D");        // ✅
+}
+// Output: A C D
+```
+
+---
+
+### 🔬 Case 3 — Exception Thrown, Catch Does NOT Match
+
+```
+try {
+    stmt1   ✅ executes
+    stmt2   💥 throws NullPointerException — STOP
+    stmt3   ❌ skipped
+} catch (ArithmeticException e) {
+    stmt4   ❌ skipped — type mismatch
+}
+stmt5       ❌ skipped — exception still active, propagating up
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");    // ✅
+        String s = null;
+        s.length();                 // 💥 NullPointerException
+        System.out.println("B");    // ❌
+    } catch (ArithmeticException e) {
+        System.out.println("C");    // ❌ — NPE ≠ ArithmeticException
+    }
+    System.out.println("D");        // ❌ — NPE propagates to caller
+}
+// Output: A
+// Then: NullPointerException propagates up call stack
+```
+
+---
+
+### 🔬 Case 4 — Exception Thrown Inside Catch Block
+
+```
+try {
+    stmt1   💥 throws IOException
+} catch (IOException e) {
+    stmt2   ✅ starts executing
+    stmt3   💥 throws RuntimeException  ← NEW exception from catch
+    stmt4   ❌ skipped
+}
+stmt5       ❌ skipped — RuntimeException propagates
+            original IOException is LOST
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+        throw new IOException("disk full");         // 💥
+    } catch (IOException e) {
+        System.out.println("B");                    // ✅
+        throw new RuntimeException("catch failed"); // 💥 NEW — IOException gone
+        System.out.println("C");                    // ❌
+    }
+    System.out.println("D");                        // ❌
+}
+// Output: A B
+// RuntimeException propagates — "disk full" message GONE
+```
+
+🔴 **Prod consequence:** Real error (disk full, DB down) swallowed by secondary failure in catch (logger misconfigured, cleanup NPE). Ops team debugs the wrong exception.
+
+---
+
+### 🔬 Case 5 — Exception After try-catch Block
+
+```
+try {
+    stmt1   ✅
+} catch (XException e) {
+    stmt2   ✅
+}
+stmt3       💥 throws — NOTHING catches this
+            propagates to caller directly
+```
+
+```java
+void demo() {
+    try {
+        System.out.println("A");
+    } catch (ArithmeticException e) {
+        System.out.println("B");
+    }
+    String s = null;
+    s.length();                     // 💥 NPE — outside try-catch — not protected
+    System.out.println("C");        // ❌
+}
+// Output: A
+// NPE propagates — try-catch only covers what's INSIDE the try block
+```
+
+---
+
+### 🔬 Complete Flow Map — All Cases
+
+```
+                    try block
+                        │
+              ┌─────────┴─────────┐
+         no exception          exception thrown
+              │                     │
+         catch block(s)        catch block(s)
+         all skipped           checked top → bottom
+              │                     │
+              │              ┌──────┴──────┐
+              │         type matches   no type matches
+              │              │               │
+              │         catch executes   exception
+              │              │           propagates
+              │         ┌────┴────┐      to caller
+              │    no exception  exception    │
+              │    in catch      in catch     │
+              │         │            │        │
+              └────►────┘     new exception   │
+                        │     propagates      │
+                   code after                 │
+                   try-catch ◄────────────────┘
+                   (only if no               (never reached
+                   active exception)          if exception
+                                              propagating)
+```
+
+---
+
+### 💻 Real-World Code — Order Fulfillment Flow
+
+```java
+public class OrderFulfillment {
+
+    public OrderStatus fulfill(String orderId) {
+        System.out.println("1. Starting fulfillment");          // always
+
+        try {
+            System.out.println("2. Loading order");
+            Order order = loadOrder(orderId);                   // may throw OrderNotFoundException
+
+            System.out.println("3. Checking inventory");
+            checkInventory(order);                              // may throw OutOfStockException
+
+            System.out.println("4. Charging payment");
+            charge(order);                                      // may throw PaymentException
+
+            System.out.println("5. Dispatching");
+            dispatch(order);                                    // may throw DispatchException
+
+            System.out.println("6. Success");
+            return OrderStatus.FULFILLED;
+
+        } catch (OrderNotFoundException e) {
+            // stmt 3, 4, 5, 6 all skipped — jumped here
+            System.out.println("X. Order not found: " + e.getMessage());
+            return OrderStatus.NOT_FOUND;
+
+        } catch (OutOfStockException e) {
+            // stmt 4, 5, 6 skipped — jumped here
+            System.out.println("X. Out of stock: " + e.getMessage());
+            return OrderStatus.PENDING;
+
+        } catch (PaymentException e) {
+            // stmt 5, 6 skipped — jumped here
+            System.out.println("X. Payment failed: " + e.getMessage());
+            return OrderStatus.PAYMENT_FAILED;
+
+        } catch (DispatchException e) {
+            // stmt 6 skipped — jumped here
+            System.out.println("X. Dispatch failed: " + e.getMessage());
+            return OrderStatus.DISPATCH_FAILED;
+        }
+
+        // Reached only if try completed without exception
+        // (unreachable here because every path returns above — shown for clarity)
+    }
+}
+
+// Scenario: inventory check fails
+// Output:
+// 1. Starting fulfillment
+// 2. Loading order
+// 3. Checking inventory
+// X. Out of stock: item SKU-99
+// returns: OrderStatus.PENDING
+```
+
+---
+
+### 🔬 `return` Inside try — Control Flow
+
+```java
+int compute(int x) {
+    try {
+        if (x == 0) return -1;          // ← returns here if x == 0
+        return 100 / x;                  // ← returns here normally
+    } catch (ArithmeticException e) {
+        return 0;                        // ← returns here if x causes division issue
+    }
+    // unreachable — every path returns
+}
+
+// compute(0)  → returns -1  (catch skipped, try returned early)
+// compute(5)  → returns 20  (catch skipped)
+// compute(-1) via some edge → catch → returns 0
+```
+
+```
+return inside try:
+  ✅ catch block skipped (no exception thrown before return)
+  ⚠️  finally still runs (covered in finally section)
+```
+
+---
+
+### 🔬 Nested try-catch — Control Flow
+
+```java
+void demo() {
+    try {                                       // outer try
+        System.out.println("A");
+
+        try {                                   // inner try
+            System.out.println("B");
+            throw new IOException("inner");     // 💥
+            System.out.println("C");            // ❌
+        } catch (NullPointerException e) {
+            System.out.println("D");            // ❌ — IOException ≠ NPE
+        }
+        // inner IOException NOT caught → propagates to outer try
+        System.out.println("E");                // ❌ — exception active
+
+    } catch (IOException e) {
+        System.out.println("F");                // ✅ — outer catches it
+    }
+
+    System.out.println("G");                    // ✅
+}
+// Output: A B F G
+```
+
+```
+Flow:
+  inner try throws IOException
+       │
+  inner catch(NPE) — no match — skipped
+       │
+  IOException exits inner try-catch
+       │
+  outer try — exception active — skip stmt E
+       │
+  outer catch(IOException) — MATCH
+       │
+  F prints
+       │
+  G prints (after outer try-catch)
+```
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — Unreachable catch for checked exception doesn't always compile-error**
+
+```java
+void method() throws IOException {
+    try {
+        throw new FileNotFoundException("x");   // always throws FNF
+    } catch (FileNotFoundException e) {
+        // handles it
+    } catch (IOException e) {
+        // ❌ COMPILE ERROR — FileNotFoundException is the only checked exception
+        // declared, and it's already caught above
+        // compiler proves IOException (non-FNF) is unreachable
+    }
+}
+```
+
+But:
+
+```java
+void method() {
+    try {
+        throw new FileNotFoundException("x");
+    } catch (FileNotFoundException e) { }
+    catch (RuntimeException e) { }          // ✅ compiles — unchecked, always allowed
+}
+```
+
+Compiler only rejects unreachable `catch` for **checked exceptions** it can prove are never thrown. Unchecked exception catches are never rejected even if provably unreachable.
+
+---
+
+**🪤 Trap 2 — Parent catch masks child's specific handling silently**
+
+```java
+// Looks fine — compiles — silently wrong
+try {
+    gateway.charge();           // throws PaymentDeclinedException (subclass of PaymentException)
+} catch (PaymentException e) {
+    // catches PaymentDeclinedException here — specific handling lost
+    retry();                    // WRONG: declined cards should NOT be retried
+} catch (PaymentDeclinedException e) {
+    // COMPILE ERROR — already caught above
+    return PaymentResult.DECLINED;
+}
+```
+
+Retry on a declined card = card charged multiple times in prod. No compile warning beyond "already caught." Fix: always flip the order — specific before general.
+
+---
+
+**🪤 Trap 3 — Multiple catch with method that declares broad `throws`**
+
+```java
+interface Repository {
+    void save(Record r) throws Exception;   // declares broad throws
+}
+
+void process(Repository repo, Record r) {
+    try {
+        repo.save(r);
+    } catch (SQLException e) {              // ❌ COMPILE ERROR
+        // SQLException is checked
+        // repo.save() declares throws Exception — NOT throws SQLException
+        // compiler: save() might not throw SQLException — unreachable catch
+    } catch (Exception e) {                 // ✅
+        // only this works — matches declared throws type
+    }
+}
+```
+
+`catch` types must be **reachable** given the declared `throws` of the called method. If method declares `throws IOException`, you can't catch `SQLException` — compiler knows it's impossible.
+
+---
+
+**🪤 Trap 4 — Exception type matched at runtime, not compile time**
+
+```java
+void riskyOp() throws IOException {
+    throw new FileNotFoundException("x");   // throws subtype at runtime
+}
+
+try {
+    riskyOp();
+} catch (FileNotFoundException e) {
+    System.out.println("FNF caught");       // ✅ caught here
+} catch (IOException e) {
+    System.out.println("IO caught");        // ❌ never reached for this call
+}
+```
+
+Method declares `throws IOException` — compiler sees `IOException`. At runtime, actual thrown type is `FileNotFoundException`. JVM's `instanceof` check finds `FileNotFoundException` catch first — `IOException` block never executes. Runtime type wins, not declared type.
+
+---
+
+**🪤 Trap 5 — Catch block exception shadows outer variable**
+
+```java
+Exception e = new Exception("outer");       // outer variable
+
+try {
+    throw new IOException("inner");
+} catch (IOException e) {                   // ❌ COMPILE ERROR
+    // 'e' conflicts with outer variable 'e' — cannot redeclare
+    // unlike regular blocks, catch variable must not shadow local in enclosing scope
+}
+```
+
+Catch variable cannot shadow a local variable in the **same method scope**. Regular block variables can shadow outer ones — catch blocks cannot. Rare but a real compile error that confuses devs.
+
+**🪤 Trap 6 — Code after throw in try is unreachable but doesn't always compile-error**
+
+```java
+try {
+    throw new RuntimeException("x");
+    System.out.println("after throw");   // COMPILE ERROR — unreachable statement
+} catch (RuntimeException e) { }
+
+// BUT:
+try {
+    if (condition) throw new RuntimeException();
+    System.out.println("after");         // ✅ compiles — compiler can't prove unreachable
+} catch (RuntimeException e) { }
+```
+
+Compiler only flags **provably** unreachable code. Conditional throws don't trigger it.
+
+---
+
+**🪤 Trap 7 — Exception in catch, finally, or initializer — where does control go?**
+
+```java
+void process() {
+    try {
+        throw new IOException("original");
+    } catch (IOException e) {
+        System.out.println("caught: " + e.getMessage());  // "original"
+        int x = 1 / 0;                  // ArithmeticException in catch block
+        // IOException is now LOST
+        // ArithmeticException propagates to caller of process()
+    }
+}
+// Caller sees: ArithmeticException
+// "original" IOException: gone, no chain, not wrapped
+```
+
+---
+
+**🪤 Trap 8 — Catch variable `e` is NOT the thrown object if reassigned**
+
+```java
+try {
+    throw new IOException("real error");
+} catch (IOException e) {
+    e = new IOException("fake error");   // reassigns local variable
+    log.error(e.getMessage());           // logs "fake error"
+    throw e;                             // throws "fake error" — real error GONE
+}
+// Stack trace points to reassignment line, not original throw site
+// Root cause permanently lost
+```
+
+---
+
+**🪤 Trap 9 — `System.exit()` inside try skips catch entirely**
+
+```java
+try {
+    System.out.println("A");
+    System.exit(0);                      // JVM terminates HERE
+    System.out.println("B");             // ❌
+} catch (Exception e) {
+    System.out.println("C");             // ❌ — JVM is gone
+}
+System.out.println("D");                 // ❌
+// Output: A
+// Shutdown hooks run, then process exits — no exception, no catch
+```
+
+`System.exit()` is not an exception. It terminates the JVM directly. No catch block runs. No propagation. Shutdown hooks registered via `Runtime.addShutdownHook()` run, but `finally` blocks in the current thread do **not** run.
+
+---
+
+**🪤 Trap 10 — Execution resumes after try-catch only if exception was handled**
+
+```java
+void caller() {
+    callee();
+    System.out.println("after callee");   // does this run?
+}
+
+void callee() {
+    try {
+        throw new RuntimeException("x");
+    } catch (IOException e) {             // mismatch — not caught
+        System.out.println("caught");
+    }
+    System.out.println("after try-catch in callee");  // ❌ skipped
+}
+// RuntimeException exits callee() entirely
+// "after callee" in caller() also SKIPPED
+// RuntimeException propagates up
+```
+
+Code after a try-catch runs **only if** the try-catch fully handled the exception (no active exception leaving the block). If exception propagates through, nothing after runs.
+
+**🪤 Trap 11 — Exception thrown in catch block**
+
+```java
+try {
+    riskyOp();                          // throws IOException
+} catch (IOException e) {
+    log.error("failed", e);             // what if logger throws RuntimeException?
+    cleanup();                          // what if cleanup() throws?
+    // exception from catch block propagates UP — original IOException is LOST
+    // no wrapping, no chaining — just gone
+}
+```
+
+Exception thrown inside a `catch` block **replaces** the original exception. Original is lost unless you explicitly chain it. Prod scenario: logging framework misconfigured → logger throws → real `IOException` gone → impossible to diagnose.
+
+---
+
+**🪤 Trap 12 — `return` inside try doesn't skip catch**
+
+```java
+int getValue() {
+    try {
+        return compute();       // compute() throws RuntimeException
+    } catch (RuntimeException e) {
+        return -1;              // ← this executes, -1 returned
+    }
+}
+// If compute() throws: catch runs, returns -1
+// If compute() succeeds: try's return value returned, catch skipped
+```
+
+And with `finally` (covered later): `return` in `try` doesn't even leave the method until `finally` completes.
+
+---
+
+**🪤 Trap 13 — Catching exception you didn't throw — unreachable catch**
+
+```java
+void method() {
+    try {
+        int x = 1 + 1;                  // cannot throw anything
+    } catch (IOException e) {           // COMPILE ERROR
+        // unreachable — IOException is checked
+        // compiler knows this code path can never throw IOException
+    }
+}
+
+void method2() {
+    try {
+        int x = 1 + 1;
+    } catch (RuntimeException e) {      // ✅ compiles — unchecked, compiler allows
+        // unreachable at runtime but not a compile error
+    }
+}
+```
+
+Compiler detects unreachable `catch` blocks **only for checked exceptions**. Unreachable `catch(RuntimeException)` compiles fine — no warning.
+
+---
+
+**🪤 Trap 14 — Modifying exception variable in catch**
+
+```java
+try {
+    throw new IOException("original");
+} catch (IOException e) {
+    e = new IOException("replaced");    // ✅ compiles — e is a regular local var
+    throw e;                            // throws "replaced" — original message gone
+}
+
+// Multi-catch: e is effectively final — CANNOT reassign
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {
+    e = new IOException("new");         // COMPILE ERROR: effectively final
+}
+```
+
+In single catch, `e` is a mutable local variable — you can reassign it (bad practice). In multi-catch, `e` is **effectively final** — compiler blocks reassignment.
+
+---
+
+**🪤 Trap 15 — Silent type narrowing in catch**
+
+```java
+public void process() {
+    try {
+        gateway.charge();    // declared: throws Exception
+    } catch (IOException e) {
+        // gateway.charge() actually throws RuntimeException at runtime
+        // RuntimeException is NOT IOException
+        // NOT caught here — bypasses this block
+        // propagates to caller uncaught
+    }
+}
+```
+
+`catch(IOException)` only catches `IOException` and its subtypes. If the actual thrown type is a sibling (`RuntimeException`), it bypasses the handler. Declaring `throws Exception` doesn't mean only `Exception` is thrown — any subtype can emerge.
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Linear search on exception table with instanceof chain**
+
+```
+Multiple catch blocks compile to multiple rows in exception table:
+
+try {
+    op();                    // offset 0–8
+} catch (FileNotFoundException e) {  // offset 10
+} catch (IOException e) {           // offset 20
+} catch (Exception e) {             // offset 30
+}
+
+Exception table:
+┌───────┬─────┬────────┬───────────────────────┐
+│ Start │ End │ Target │ Type                  │
+├───────┼─────┼────────┼───────────────────────┤
+│   0   │  8  │   10   │ FileNotFoundException  │
+│   0   │  8  │   20   │ IOException           │
+│   0   │  8  │   30   │ Exception             │
+└───────┴─────┴────────┴───────────────────────┘
+
+JVM checks rows TOP TO BOTTOM — first instanceof match wins.
+FileNotFoundException thrown:
+  Row 1: FileNotFoundException instanceof FileNotFoundException → ✅ → goto 10
+  Rows 2, 3: never checked
+```
+
+This is exactly why order matters — exception table rows are checked sequentially. Compiler rejects cases where a prior row would always match (superclass before subclass for checked exceptions).
+
+**Underlying primitive: State machine — exception active/inactive flag per thread**
+
+Each JVM thread carries an **exception state**:
+
+```
+Thread state:
+  pendingException = null       ← normal execution
+  pendingException = <object>   ← exception active
+
+State transitions:
+  throw stmt          → pendingException = exception object
+  catch matches       → pendingException = null (exception handled)
+  catch no match      → pendingException unchanged (still propagating)
+  exception in catch  → pendingException = NEW exception (old lost)
+  method returns      → if pendingException != null → caller's exception table checked
+
+Code after try-catch:
+  only executes if pendingException == null at that point
+```
+
+This is why code after try-catch is skipped when exception propagates — the thread's pending exception flag is still set, JVM skips normal execution and continues unwinding.
+
+**Underlying primitive: Exception table — bytecode range-to-handler mapping**
+
+```java
+void method() {
+    try {
+        a();    // bytecode offset 0
+        b();    // bytecode offset 4
+    } catch (IOException e) {
+        c();    // bytecode offset 10
+    }
+}
+```
+
+```
+Compiled exception table:
+┌───────┬─────┬────────┬─────────────┐
+│ Start │ End │ Target │ Type        │
+├───────┼─────┼────────┼─────────────┤
+│   0   │  8  │   10   │ IOException │
+└───────┴─────┴────────┴─────────────┘
+
+JVM: if exception thrown between offset 0 and 8
+     AND exception instanceof IOException
+     THEN jump to offset 10 (catch block)
+
+No branching on happy path — zero overhead when no exception thrown.
+Exception handling cost is paid ONLY when exception actually occurs.
+```
+
+---
+
+### 📊 Multiple catch — Decision Guide
+
+| Situation | Pattern |
+|-----------|---------|
+| Different types, different recovery | Separate catch per type |
+| Same recovery for multiple types | Multi-catch `IOException \| SQLException` |
+| Subclass needs special handling | Subclass catch BEFORE superclass |
+| Unknown exceptions as safety net | `catch(Exception e)` LAST |
+| Everything including Errors | `catch(Throwable t)` — framework only |
+| Retry only on specific types | Separate catches, retry in one only |
+
+---
+
+
+### 📊 try-catch vs Return Code (Why Java Chose Exceptions)
+
+| | Return Codes | Exceptions |
+|--|-------------|-----------|
+| **Ignoring errors** | Easy — just don't check | Checked: compiler forces handling |
+| **Error context** | Caller must know all codes | Stack trace + message + cause chain |
+| **Propagation** | Manual — every caller checks | Automatic — unwinds to first handler |
+| **Business logic pollution** | Every method has if-error checks | Happy path clean — error path separate |
+| **Performance** | No overhead | Zero overhead until exception thrown |
+| **Nested calls** | Code becomes pyramid | try-catch wraps entire operation |
+
+---

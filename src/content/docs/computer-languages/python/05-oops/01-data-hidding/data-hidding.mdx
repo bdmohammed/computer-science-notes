@@ -1,0 +1,1123 @@
+---
+title: Python Data Hiding & Encapsulation
+slug: computer-languages/python/oop/data-hiding
+description: Master public, protected (_), and private (__) conventions, properties, and the Pythonic approach to data hiding. Understand why Python prefers "consenting adults" over strict access control.
+sidebar:
+  label: "Encapsulation"
+  badge:
+    text: OOP Fundamentals
+    variant: tip
+tags: [python, encapsulation, properties, data-hiding, oop, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔐 Data Hiding in Python
+
+> **Python does not have strict access modifiers** like `private` or `protected`.  
+> Instead, it relies on **naming conventions** and **properties** to manage access.  
+> Philosophy: *"We're all consenting adults here."*
+
+```text
+Java Concept      → Python Equivalent
+│
+├── private       → __double_leading_underscore (Name Mangling)
+├── protected     → _single_leading_underscore (Convention)
+├── public        → no underscore (Default)
+├── Getter/Setter → @property decorator
+└── Immutable     → No setter defined / frozen dataclass
+```
+
+<Aside type="success">
+🎯 **Key Insight**: In Python, encapsulation is about **communication**, not enforcement. A single underscore `_var` says "Please don't touch this," while double underscores `__var` say "I really mean it (but you still can if you try)."
+</Aside>
+
+---
+
+## 🗂️ Naming Conventions (The "Access Modifiers")
+
+### 1. Public (Default)
+Any attribute without leading underscores is public.
+
+```python
+class User:
+    def __init__(self, name):
+        self.name = name  # ✅ Public
+
+user = User("Alice")
+print(user.name)  # ✅ Accessible everywhere
+```
+
+### 2. Protected (`_single_underscore`)
+A convention indicating **"Internal Use Only"**. It’s not enforced by the interpreter, but linters and IDEs will warn you.
+
+```python
+class Database:
+    def __init__(self):
+        self._connection_string = "secret_db_url"  # ⚠️ Protected
+
+    def _connect(self):  # ⚠️ Protected method
+        print("Connecting...")
+
+db = Database()
+db._connect()  # ✅ Works, but don't do it!
+```
+
+<Aside type="note">
+**Interview Tip**: In Python, `_protected` is a **gentleman's agreement**. It says "This is an implementation detail; don't rely on it in external code." It does NOT prevent access.
+</Aside>
+
+### 3. Private (`__double_underscore`)
+Triggers **Name Mangling**. The interpreter renames the attribute to `_ClassName__attr` to avoid accidental overrides in subclasses.
+
+```python
+class BankAccount:
+    def __init__(self):
+        self.__balance = 1000  # 🔒 "Private"
+
+    def get_balance(self):
+        return self.__balance
+
+acc = BankAccount()
+# print(acc.__balance)  # ❌ AttributeError: 'BankAccount' object has no attribute '__balance'
+
+# ✅ How to access (Name Mangling):
+print(acc._BankAccount__balance)  # 1000 (Don't do this in production!)
+```
+
+<Aside type="caution">
+**Why Name Mangling?**  
+It’s not for security. It’s to prevent **namespace collisions** in inheritance. If a parent class uses `__method`, a child class can define its own `__method` without overwriting the parent’s.
+</Aside>
+
+---
+
+## 🔑 Getters & Setters — The Pythonic Way (`@property`)
+
+In Java, you write `getBalance()` and `setBalance()`. In Python, you use the `@property` decorator to make methods look like attributes.
+
+<Code lang="python" title="Using @property for Encapsulation" code={`
+class Product:
+    def __init__(self, name, price):
+        self.name = name
+        self.price = price  # Triggers the setter below
+
+    @property
+    def price(self):
+        """Getter: Called when accessing obj.price"""
+        return self._price  # Store actual value in _price
+
+    @price.setter
+    def price(self, value):
+        """Setter: Called when assigning obj.price = value"""
+        if value < 0:
+            raise ValueError("Price cannot be negative")
+        self._price = value
+
+# Usage:
+p = Product("Laptop", 1000)
+print(p.price)  # ✅ Calls getter → 1000
+p.price = 1200  # ✅ Calls setter → Validates and sets
+# p.price = -50 # ❌ Raises ValueError
+`} />
+
+<Aside type="tip">
+**Why use `@property`?**
+1. **Validation**: You can add logic when setting values.
+2. **Backwards Compatibility**: You can start with a public attribute and later add a getter/setter without breaking client code.
+3. **Readability**: `obj.price` looks cleaner than `obj.getPrice()`.
+</Aside>
+
+---
+
+## 🛡️ Advanced Encapsulation Patterns
+
+### 1. Read-Only Attributes
+Define a getter but **no setter**.
+
+```python
+class Circle:
+    def __init__(self, radius):
+        self._radius = radius
+
+    @property
+    def radius(self):
+        return self._radius
+
+    @property
+    def area(self):
+        return 3.14 * self._radius ** 2
+
+c = Circle(5)
+print(c.area)  # ✅ 78.5
+# c.radius = 10 # ❌ AttributeError: can't set attribute
+```
+
+### 2. Immutable Data Classes
+Use `dataclasses` with `frozen=True` for simple immutable objects.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Point:
+    x: int
+    y: int
+
+p = Point(1, 2)
+# p.x = 10  # ❌ FrozenInstanceError
+```
+
+### 3. Defensive Copying
+If you return a mutable object (like a list), return a copy to prevent external modification.
+
+```python
+class Team:
+    def __init__(self):
+        self._members = []
+
+    def add_member(self, name):
+        self._members.append(name)
+
+    @property
+    def members(self):
+        return list(self._members)  # ✅ Returns a copy
+
+team = Team()
+team.add_member("Alice")
+m = team.members
+m.append("Hacker")  # ❌ Doesn't affect team._members
+print(team.members)  # ['Alice']
+```
+
+---
+
+## 🆚 Java vs Python Encapsulation
+
+<table>
+  <thead>
+    <tr>
+      <th>Concept</th>
+      <th>Java</th>
+      <th>Python</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Private</strong></td>
+      <td><code>private int x</code> (Enforced)</td>
+      <td><code>self.__x</code> (Mangled, not enforced)</td>
+    </tr>
+    <tr>
+      <td><strong>Protected</strong></td>
+      <td><code>protected int x</code> (Enforced)</td>
+      <td><code>self._x</code> (Convention only)</td>
+    </tr>
+    <tr>
+      <td><strong>Getter/Setter</strong></td>
+      <td><code>getX()</code>, <code>setX()</code></td>
+      <td><code>@property</code> decorator</td>
+    </tr>
+    <tr>
+      <td><strong>Immutable</strong></td>
+      <td><code>final</code> fields + no setters</td>
+      <td><code>frozen=True</code> dataclass or no setter</td>
+    </tr>
+    <tr>
+      <td><strong>Philosophy</strong></td>
+      <td>Strict access control</td>
+      <td>"Consenting adults" (Convention)</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you make a variable private in Python?" icon="information">
+    Use double underscores: `self.__var`. This triggers **name mangling** (`_Class__var`), making it harder to access accidentally. However, it’s not truly private like in Java.
+  </Card>
+  
+  <Card title="Q: What is the difference between `_var` and `__var`?" icon="approve-check">
+    - `_var`: **Convention**. "Internal use only." Linters may warn.
+    - `__var`: **Name Mangling**. "Avoid name collisions in subclasses." Renamed to `_Class__var`.
+  </Card>
+
+  <Card title="Q: How do you validate data in Python classes?" icon="shield">
+    Use the `@property` decorator. Define a getter and a setter with validation logic inside the setter.
+  </Card>
+
+  <Card title="Q: Can you access a 'private' variable in Python?" icon="backspace">
+    **Yes**. You can access it via `_ClassName__var`. Python prioritizes flexibility over strict enforcement.
+  </Card>
+
+  <Card title="Q: Why use `@property` instead of public attributes?" icon="rocket">
+    To add validation, logging, or computed logic later without changing the public API. It allows you to start simple and add complexity as needed.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Encapsulated Graph Node
+
+<Code lang="python" title="Encapsulated Graph Node" code={`
+class GraphNode:
+    def __init__(self, value):
+        self._value = value
+        self._neighbors = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @property
+    def neighbors(self):
+        # Return a copy to prevent external modification of the list
+        return list(self._neighbors)
+
+    def add_neighbor(self, node):
+        if node not in self._neighbors:
+            self._neighbors.append(node)
+
+# Usage:
+node1 = GraphNode(1)
+node2 = GraphNode(2)
+node1.add_neighbor(node2)
+
+# node1._neighbors.append(node3) # ⚠️ Don't do this!
+print(node1.neighbors) # [GraphNode(2)]
+`} />
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Goal | Python Technique |
+|------|------------------|
+| **Public** | `self.var` |
+| **Protected** | `self._var` |
+| **Private** | `self.__var` |
+| **Getter** | `@property` |
+| **Setter** | `@var.setter` |
+| **Immutable** | `@dataclass(frozen=True)` |
+| **Read-Only** | `@property` with no setter |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `_` for internal variables.
+2. ✅ Use `__` for name mangling (avoiding subclass collisions).
+3. ✅ Use `@property` for validation and controlled access.
+4. ✅ Return copies of mutable objects (lists/dicts) from getters.
+5. ✅ Remember: Python doesn't enforce privacy—trust your teammates!
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output/Error" code={`
+class Test:
+    def __init__(self):
+        self.public = 1
+        self._protected = 2
+        self.__private = 3
+
+t = Test()
+
+# Q1: Accessing protected
+print(t._protected)  # ?
+
+# Q2: Accessing private directly
+# print(t.__private)  # ?
+
+# Q3: Accessing private via mangling
+print(t._Test__private)  # ?
+
+# Q4: Property Validation
+class Box:
+    def __init__(self, size):
+        self.size = size
+    
+    @property
+    def size(self):
+        return self._size
+    
+    @size.setter
+    def size(self, value):
+        if value < 0: raise ValueError("Negative!")
+        self._size = value
+
+b = Box(10)
+# b.size = -5  # ?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 2 (Accessible by convention)
+Q2: AttributeError (Name mangled)
+Q3: 3 (Accessible via mangled name)
+Q4: ValueError (Setter validation triggered)
+```
+</details>
+
+> 🚀 **Final Wisdom**: Python encapsulation is about **intent**. Use `_` to signal "internal," `__` to signal "stay out," and `@property` to control access. Trust that other developers will respect these signals. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔐 Python Data Hiding
+
+---
+
+## 🧠 Mental Model First
+
+```
+Java/C++:  private keyword → compiler BLOCKS access. Hard wall.
+Python:    NO hard walls. Everything accessible if you try.
+
+Python's philosophy:
+  "We're all consenting adults here."
+  Trust the developer. Signal intent. Don't enforce.
+
+Data hiding in Python = LAYERS OF SIGNAL + WEAK MECHANISMS:
+
+┌─────────────────────────────────────────────────────────────────┐
+│  LAYER 1: Naming Convention     _single    "please don't"       │
+│  LAYER 2: Name Mangling         __double   "harder to access"   │
+│  LAYER 3: Properties            @property  "controlled access"  │
+│  LAYER 4: __slots__             no __dict__ "restrict attrs"    │
+│  LAYER 5: Descriptors           custom __set__/__get__          │
+│  LAYER 6: __getattr__           intercept missing attr          │
+│  LAYER 7: __getattribute__      intercept ALL attr access       │
+└─────────────────────────────────────────────────────────────────┘
+None of these are unbreakable. All are bypassable.
+The goal is CLARITY OF INTENT, not security.
+```
+
+---
+
+## 1️⃣ Public — No Prefix
+
+```python
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius       # public — use freely
+
+    def area(self):                # public method
+        return 3.14 * self.radius ** 2
+```
+
+```python
+c = Circle(5)
+c.radius        # ✅ direct read
+c.radius = 10   # ✅ direct write — no protection
+c.area()        # ✅ direct call
+```
+
+---
+
+## 2️⃣ `_single_underscore` — Convention: Internal / Protected
+
+```python
+class BankAccount:
+    def __init__(self, balance):
+        self._balance = balance        # "protected" — internal use
+        self._transaction_log = []     # internal state
+
+    def _validate_amount(self, amount):   # internal helper
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+
+    def deposit(self, amount):
+        self._validate_amount(amount)
+        self._balance += amount
+        self._transaction_log.append(("deposit", amount))
+```
+
+```python
+acc = BankAccount(1000)
+acc._balance            # ✅ Python ALLOWS — no enforcement
+acc._balance = 9999     # ✅ Python ALLOWS — just a convention
+```
+
+```
+What _single actually signals:
+  ├── "This is an implementation detail"
+  ├── "May change without notice"
+  ├── "Subclasses may use it"
+  ├── "External code should NOT rely on it"
+  └── from module import * → _names are EXCLUDED
+```
+
+```python
+# _names excluded from import *:
+# mymodule.py
+_internal = "hidden"
+public    = "visible"
+__all__   = ["public"]    # explicit, but even without this...
+
+from mymodule import *
+print(public)    # ✅ "visible"
+print(_internal) # NameError — excluded from *
+```
+
+---
+
+## 3️⃣ `__double_underscore` — Name Mangling
+
+```python
+class BankAccount:
+    def __init__(self, owner, balance):
+        self.owner    = owner          # public
+        self._log     = []             # protected
+        self.__balance = balance       # mangled → _BankAccount__balance
+
+    def deposit(self, amount):
+        self.__balance += amount       # internally: self._BankAccount__balance
+
+    def get_balance(self):
+        return self.__balance          # internally: self._BankAccount__balance
+```
+
+```python
+acc = BankAccount("Ali", 1000)
+
+acc.__balance                   # 💥 AttributeError — name 'dunder__balance'
+acc._BankAccount__balance       # ✅ 1000 — mangled name still accessible
+acc.__dict__                    # {'owner': 'Ali', '_log': [], '_BankAccount__balance': 1000}
+```
+
+### 🔬 Name Mangling Internals
+
+```
+AT COMPILE TIME (symtable pass), CPython rewrites:
+  Any identifier with 2+ leading underscores and 0-1 trailing underscores
+  Inside a class body
+  → prepends _ClassName
+
+__attr        → _ClassName__attr
+__method()    → _ClassName__method()
+self.__x      → self._ClassName__x
+
+NOT mangled:
+  __dunder__   (has trailing underscores — magic methods)
+  __x          outside a class body
+```
+
+```python
+import dis, ast
+
+source = """
+class Foo:
+    def __init__(self):
+        self.__x = 42
+"""
+tree = ast.parse(source)
+# AST shows: Attribute(attr='_Foo__x', ...)  ← already renamed in AST
+```
+
+### Why Name Mangling Exists — NOT for Security
+
+```python
+class Base:
+    def __init__(self):
+        self.__id = "base"      # _Base__id
+
+    def get_id(self):
+        return self.__id        # always reads _Base__id
+
+class Child(Base):
+    def __init__(self):
+        super().__init__()
+        self.__id = "child"     # _Child__id — DIFFERENT attribute!
+
+    def get_child_id(self):
+        return self.__id        # reads _Child__id
+
+c = Child()
+c.get_id()        # "base"   ← Base's __id untouched
+c.get_child_id()  # "child"  ← Child's __id separate
+
+c.__dict__        # {'_Base__id': 'base', '_Child__id': 'child'}
+```
+
+```
+Purpose: Prevent accidental OVERRIDE in subclasses.
+         Not security. Not true privacy.
+         You can ALWAYS access via _ClassName__attr.
+```
+
+---
+
+## 4️⃣ `@property` — Controlled Access
+
+```python
+class Temperature:
+    def __init__(self, celsius: float):
+        self.__celsius = celsius        # hidden backing store
+
+    @property
+    def celsius(self) -> float:
+        return self.__celsius
+
+    @celsius.setter
+    def celsius(self, value: float):
+        if value < -273.15:
+            raise ValueError(f"Below absolute zero: {value}")
+        self.__celsius = value
+
+    @property
+    def fahrenheit(self) -> float:       # computed, read-only
+        return self.__celsius * 9/5 + 32
+
+    @property
+    def kelvin(self) -> float:           # computed, read-only
+        return self.__celsius + 273.15
+```
+
+```python
+t = Temperature(100)
+
+t.celsius              # 100.0   — getter called
+t.celsius = 200        # setter called — validates
+t.celsius = -300       # 💥 ValueError: Below absolute zero
+
+t.fahrenheit           # 212.0   — computed on read
+t.fahrenheit = 100     # 💥 AttributeError: can't set attribute — no setter defined
+
+# Direct backing store? Harder:
+t._Temperature__celsius = -300   # bypasses validation — still possible
+```
+
+### 🔬 Property Descriptor Priority
+
+```
+Property is a DATA DESCRIPTOR (defines __set__).
+Data descriptors take priority over instance.__dict__.
+
+Lookup order for t.celsius:
+  1. type(t).__mro__ → data descriptors   ← property found here → WINS
+  2. t.__dict__
+  3. non-data descriptors
+
+Even if you force:
+  t.__dict__['celsius'] = 999
+  t.celsius still returns 100.0 ← property wins over __dict__
+```
+
+---
+
+## 5️⃣ `__slots__` — Restrict Attribute Creation
+
+```python
+class Point:
+    __slots__ = ('x', 'y')     # ONLY x and y allowed
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+```
+
+```python
+p = Point(1, 2)
+p.x = 10        # ✅
+p.y = 20        # ✅
+p.z = 30        # 💥 AttributeError: 'Point' object has no attribute 'z'
+p.color = "red" # 💥 AttributeError — no __dict__, no dynamic attrs
+p.__dict__      # 💥 AttributeError — __dict__ doesn't exist
+```
+
+### 🔬 `__slots__` Memory Internals
+
+```
+Without __slots__:
+  Each instance has __dict__ (Python dict object)
+  Any attribute can be added at runtime
+  Memory: ~232 bytes per instance (dict overhead)
+
+With __slots__:
+  No __dict__ — replaced by fixed C array of slot descriptors
+  Only declared attributes exist
+  Memory: ~56 bytes per instance
+
+PyObject structure with slots:
+  ┌──────────────────────────────────────┐
+  │  ob_refcnt                           │
+  │  ob_type                             │
+  │  slot_0 → PyObject* (x value)        │
+  │  slot_1 → PyObject* (y value)        │
+  └──────────────────────────────────────┘
+  (no dict pointer — saves ~180 bytes)
+```
+
+```python
+import sys
+
+class WithDict:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+class WithSlots:
+    __slots__ = ('x', 'y')
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+d = WithDict(1, 2)
+s = WithSlots(1, 2)
+
+sys.getsizeof(d) + sys.getsizeof(d.__dict__)  # ~248 bytes
+sys.getsizeof(s)                               # ~56 bytes — 4x smaller
+
+# At scale — 1 million instances:
+# WithDict:   ~248MB
+# WithSlots:  ~56MB  → 192MB saved
+```
+
+---
+
+## 6️⃣ `__getattr__` — Intercept Missing Attribute Access
+
+```python
+class DynamicConfig:
+    def __init__(self, data: dict):
+        self.__data = data
+
+    def __getattr__(self, name: str):
+        # Called ONLY when normal lookup fails
+        if name in self.__data:
+            return self.__data[name]
+        raise AttributeError(f"Config has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):
+        if name.startswith('_'):        # allow private attrs
+            super().__setattr__(name, value)
+        else:
+            # intercept all public attribute writes
+            object.__getattribute__(self, '_DynamicConfig__data')[name] = value
+```
+
+```python
+cfg = DynamicConfig({"host": "localhost", "port": 5432})
+
+cfg.host        # "localhost"  ← __getattr__ called
+cfg.port        # 5432
+cfg.unknown     # AttributeError
+```
+
+```
+__getattr__ called ONLY when:
+  1. Normal attribute lookup fails
+  2. Not in instance __dict__
+  3. Not in type(obj).__mro__
+
+Good for: proxy objects, lazy loading, dynamic attributes
+```
+
+---
+
+## 7️⃣ `__getattribute__` — Intercept ALL Access
+
+```python
+class Audited:
+    def __init__(self, data):
+        object.__setattr__(self, '_data', data)   # must use object.__setattr__
+        object.__setattr__(self, '_access_log', [])
+
+    def __getattribute__(self, name: str):
+        # Called on EVERY attribute access — including internal ones
+        if not name.startswith('_'):              # log only public accesses
+            log = object.__getattribute__(self, '_access_log')
+            log.append(f"READ: {name}")
+        return object.__getattribute__(self, name)  # must delegate to object
+
+    def __setattr__(self, name: str, value):
+        if not name.startswith('_'):
+            log = object.__getattribute__(self, '_access_log')
+            log.append(f"WRITE: {name}={value}")
+        object.__setattr__(self, name, value)
+```
+
+```python
+a = Audited({"x": 1})
+a.x = 10
+a.x
+a._access_log
+# ['WRITE: x=10', 'READ: x']
+```
+
+```
+__getattribute__ vs __getattr__:
+┌─────────────────────────────────────────────────────────────┐
+│  __getattribute__   called on EVERY attr access             │
+│                     must call object.__getattribute__       │
+│                     to avoid infinite recursion             │
+│                                                             │
+│  __getattr__        called ONLY when normal lookup FAILS    │
+│                     safer, no recursion risk                │
+│                     good for fallback/proxy                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 8️⃣ `__setattr__` / `__delattr__` — Intercept Writes and Deletes
+
+```python
+class Immutable:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            object.__setattr__(self, k, v)   # bypass our own __setattr__
+
+    def __setattr__(self, name, value):
+        raise AttributeError(f"Cannot modify immutable object: {name}")
+
+    def __delattr__(self, name):
+        raise AttributeError(f"Cannot delete from immutable object: {name}")
+```
+
+```python
+p = Immutable(x=1, y=2)
+p.x         # 1
+p.x = 10    # 💥 AttributeError: Cannot modify immutable object: x
+del p.x     # 💥 AttributeError: Cannot delete from immutable object: x
+```
+
+---
+
+## 9️⃣ Custom Descriptor — Maximum Control
+
+```python
+class TypedAttribute:
+    """Descriptor that enforces type on assignment."""
+
+    def __init__(self, name: str, expected_type: type):
+        self._name          = f"_{name}_value"
+        self._expected_type = expected_type
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self                           # class access
+        return getattr(obj, self._name, None)
+
+    def __set__(self, obj, value):
+        if not isinstance(value, self._expected_type):
+            raise TypeError(
+                f"Expected {self._expected_type.__name__}, "
+                f"got {type(value).__name__}"
+            )
+        setattr(obj, self._name, value)
+
+    def __delete__(self, obj):
+        raise AttributeError("Cannot delete typed attribute")
+
+
+class User:
+    name  = TypedAttribute("name",  str)
+    age   = TypedAttribute("age",   int)
+    score = TypedAttribute("score", float)
+
+    def __init__(self, name: str, age: int, score: float):
+        self.name  = name    # calls TypedAttribute.__set__
+        self.age   = age
+        self.score = score
+```
+
+```python
+u = User("Ali", 20, 98.5)
+u.name         # "Ali"   — TypedAttribute.__get__ called
+u.age = "old"  # 💥 TypeError: Expected int, got str
+u.age = 21     # ✅
+del u.age      # 💥 AttributeError: Cannot delete typed attribute
+```
+
+### 🔬 Descriptor Protocol Lookup Order
+
+```
+instance.attr lookup:
+
+type(instance).__mro__
+  → search for DATA DESCRIPTOR (has __set__ or __delete__)
+  → if found → call __get__                       [STEP 1 — WINS]
+
+instance.__dict__
+  → direct key lookup                             [STEP 2]
+
+type(instance).__mro__
+  → search for NON-DATA DESCRIPTOR (only __get__)
+  → if found → call __get__                       [STEP 3]
+
+→ AttributeError                                  [STEP 4]
+
+DATA DESCRIPTOR (property, TypedAttribute above):
+  Defines __set__ → always intercepts, WINS over __dict__
+
+NON-DATA DESCRIPTOR (regular methods, cached_property):
+  Only __get__ → instance __dict__ can shadow it
+```
+
+---
+
+## 🔬 Full Hiding Mechanism Comparison
+
+```
+┌────────────────────┬─────────────┬──────────────┬────────────────────┐
+│ Mechanism          │ Enforcement │ Bypassable?  │ Use Case           │
+├────────────────────┼─────────────┼──────────────┼────────────────────┤
+│ _single            │ Convention  │ Yes — direct │ internal helpers   │
+│ __double (mangling)│ Compile     │ _Class__attr │ subclass isolation │
+│ @property          │ Descriptor  │ __dict__ set │ validation/compute │
+│ __slots__          │ C struct    │ Very hard    │ memory + restrict  │
+│ __getattr__        │ Runtime     │ Yes          │ fallback/proxy     │
+│ __getattribute__   │ Runtime     │ object.*attr │ full audit/control │
+│ __setattr__        │ Runtime     │ object.*attr │ immutability       │
+│ Custom Descriptor  │ Runtime     │ Very hard    │ typed attrs        │
+└────────────────────┴─────────────┴──────────────┴────────────────────┘
+```
+
+---
+
+## 🚀 Real-World Production Patterns
+
+### Pattern 1 — Validated Model
+
+```python
+from dataclasses import dataclass
+
+class PositiveFloat:
+    """Descriptor: enforces positive float."""
+    def __set_name__(self, owner, name):
+        self._name = f"_{name}"
+
+    def __get__(self, obj, type=None):
+        if obj is None: return self
+        return getattr(obj, self._name, 0.0)
+
+    def __set__(self, obj, value):
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Expected number, got {type(value)}")
+        if value <= 0:
+            raise ValueError(f"Must be positive, got {value}")
+        setattr(obj, self._name, float(value))
+
+
+class Product:
+    price    = PositiveFloat()
+    quantity = PositiveFloat()
+
+    def __init__(self, name, price, quantity):
+        self.name     = name
+        self.price    = price
+        self.quantity = quantity
+
+    @property
+    def total(self) -> float:
+        return self.price * self.quantity
+
+p = Product("Widget", 9.99, 100)
+p.price    = -5    # 💥 ValueError
+p.price    = "hi"  # 💥 TypeError
+p.total            # 999.0
+```
+
+### Pattern 2 — Proxy Object
+
+```python
+class SecureProxy:
+    """Hides sensitive fields from direct access."""
+    _HIDDEN = frozenset({"password", "api_key", "ssn", "token"})
+
+    def __init__(self, target):
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name):
+        if name in self._HIDDEN:
+            raise AttributeError(f"Access to '{name}' is restricted")
+        return getattr(object.__getattribute__(self, "_target"), name)
+
+    def __setattr__(self, name, value):
+        if name in self._HIDDEN:
+            raise AttributeError(f"Cannot set restricted field '{name}'")
+        setattr(object.__getattribute__(self, "_target"), name, value)
+
+    def __repr__(self):
+        return f"SecureProxy({object.__getattribute__(self, '_target')})"
+
+user = User(name="Ali", password="secret123", api_key="sk_live_abc")
+proxy = SecureProxy(user)
+
+proxy.name         # "Ali"      ← allowed
+proxy.password     # 💥 AttributeError: Access to 'password' is restricted
+proxy.api_key      # 💥 AttributeError
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# __slots__ for high-volume node objects — real DSA optimization:
+class ListNode:
+    __slots__ = ('val', 'next')   # 4x memory reduction
+
+    def __init__(self, val=0, next=None):
+        self.val  = val
+        self.next = next
+
+class TreeNode:
+    __slots__ = ('val', 'left', 'right')
+
+    def __init__(self, val=0, left=None, right=None):
+        self.val   = val
+        self.left  = left
+        self.right = right
+
+# In LeetCode-style problems with millions of nodes:
+# Without __slots__: each node ~232 bytes → 232MB for 1M nodes
+# With __slots__:    each node ~56 bytes  → 56MB  for 1M nodes
+```
+
+---
+
+## 💀 Interview Trap 1 — `__getattribute__` Infinite Recursion
+
+```python
+class Bad:
+    def __getattribute__(self, name):
+        return self.name    # 💀 calls __getattribute__ again → RecursionError
+
+class Good:
+    def __getattribute__(self, name):
+        return object.__getattribute__(self, name)   # ✅ delegates to object
+```
+
+```python
+# EVERY attribute access inside __getattribute__ must go through object:
+class Careful:
+    def __init__(self):
+        self.x = 1
+
+    def __getattribute__(self, name):
+        # self.x         → 💀 recursive
+        # self.__dict__  → 💀 recursive
+        object.__getattribute__(self, 'x')       # ✅
+        object.__getattribute__(self, '__dict__') # ✅
+```
+
+---
+
+## 💀 Interview Trap 2 — `__slots__` + Inheritance Leaks `__dict__`
+
+```python
+class Base:
+    __slots__ = ('x',)
+
+class Child(Base):
+    pass                   # NO __slots__ defined!
+
+c = Child()
+c.__dict__         # ✅ Child has __dict__ back — leak!
+c.y = 99           # ✅ dynamic attr works — memory benefit lost
+
+# Fix: EVERY class in hierarchy must define __slots__:
+class Child(Base):
+    __slots__ = ('y',)     # inherits 'x' from Base, adds 'y'
+
+c = Child()
+c.x = 1    # ✅
+c.y = 2    # ✅
+c.z = 3    # 💥 AttributeError
+```
+
+---
+
+## 💀 Interview Trap 3 — Name Mangling in `getattr()`
+
+```python
+class Foo:
+    def __init__(self):
+        self.__secret = 42
+
+f = Foo()
+
+getattr(f, '__secret')           # 💥 AttributeError — not mangled in string
+getattr(f, '_Foo__secret')       # ✅ 42 — must use mangled name
+
+# Dynamic access via string requires knowing the mangled name:
+hasattr(f, '__secret')           # False
+hasattr(f, '_Foo__secret')       # True
+
+# This breaks reflection-based serializers that use getattr on attribute names
+```
+
+---
+
+## 💀 Interview Trap 4 — Property Bypass via `__dict__`
+
+```python
+class Circle:
+    def __init__(self, r):
+        self._r = r
+
+    @property
+    def radius(self):
+        return self._r
+
+    @radius.setter
+    def radius(self, v):
+        if v < 0: raise ValueError
+        self._r = v
+
+c = Circle(5)
+c.radius = -1                     # 💥 ValueError — setter validates
+
+# BUT backing store is accessible:
+c._r = -1                         # ✅ bypasses property completely
+c.radius                          # -1 — corrupted state
+```
+
+```
+True data hiding is IMPOSSIBLE in Python.
+_r → convention says don't touch
+__r → mangling makes it slightly harder
+But nothing prevents object.__setattr__(c, '_Circle__r', -1)
+```
+
+---
+
+## 💀 Interview Trap 5 — `__setattr__` Called in `__init__`
+
+```python
+class Immutable:
+    _FROZEN = False
+
+    def __init__(self, x, y):
+        self.x = x                    # 💀 calls __setattr__ → blocked!
+        self.y = y
+        self._FROZEN = True
+
+    def __setattr__(self, name, value):
+        if self._FROZEN:              # 💀 AttributeError — _FROZEN not set yet
+            raise AttributeError("Immutable")
+        object.__setattr__(self, name, value)
+```
+
+```python
+# Fix — use object.__setattr__ in __init__:
+class Immutable:
+    def __init__(self, x, y):
+        object.__setattr__(self, 'x', x)   # bypasses our __setattr__
+        object.__setattr__(self, 'y', y)
+        object.__setattr__(self, '_frozen', True)
+
+    def __setattr__(self, name, value):
+        if getattr(self, '_frozen', False):
+            raise AttributeError("Immutable — cannot set")
+        object.__setattr__(self, name, value)
+```
+
+---

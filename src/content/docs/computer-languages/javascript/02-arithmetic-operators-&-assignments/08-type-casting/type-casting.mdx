@@ -1,0 +1,1816 @@
+---
+title: JavaScript Type Casting & Coercion
+slug: computer-languages/javascript/operators/type-casting
+description: Implicit coercion, explicit conversion, truthy/falsy rules, BigInt, and safe type-checking patterns.
+sidebar:
+  label: "Type Casting"
+  badge:
+    text: Operators
+    variant: tip
+tags: [javascript, type-casting, coercion, conversion, typeof, instanceof, interview, astro6]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🔀 Type Casting in JavaScript
+
+> **Type casting** converts a value from one type to another. JavaScript has **two mechanisms**:
+> - **Implicit coercion** — automatic conversion by the engine (context-dependent)
+> - **Explicit conversion** — manual conversion using functions or operators
+
+```mermaid
+graph TD
+    Start[Type Conversion in JS]
+    
+    Start --> Implicit["Implicit Coercion<br/>(automatic, context-driven)"]
+    Start --> Explicit["Explicit Conversion<br/>(manual, intentional)"]
+    
+    Implicit --> CoerceNum[ToNumber: +, -, *, /, ==]
+    Implicit --> CoerceStr[ToString: + with string, template literals]
+    Implicit --> CoerceBool[ToBoolean: if, &&, ||, !]
+    
+    Explicit --> ConvFunc[Conversion functions:<br/>Number(), String(), Boolean()]
+    Explicit --> ConvOp[Unary operators:<br/>+, -, !!]
+    Explicit --> ConvParse[Parse methods:<br/>parseInt(), parseFloat()]
+    
+    style Implicit fill:#22c55e,color:#fff
+    style Explicit fill:#6366f1,color:#fff
+```
+
+<Aside type="tip" title="🎯 MUST KNOW">
+**JS Superpowers vs Java**:  
+✅ **No `(Type) value` syntax** — use `Number(x)`, `String(x)`, `Boolean(x)` instead  
+✅ **Implicit coercion everywhere** — `+`, `==`, `if`, `!` all trigger conversion  
+✅ **Truthy/falsy model** — any value can coerce to boolean, not just `true`/`false`  
+✅ **No primitive widening/narrowing** — all numbers are 64-bit floats (or BigInt)  
+✅ **`typeof` + `instanceof`** for runtime type introspection, not compile-time casts  
+</Aside>
+
+---
+
+## 🔼 Implicit Coercion — Automatic Conversion
+
+### Key Characteristics
+
+| Feature | Detail |
+|---------|--------|
+| **Who performs it?** | 🤖 JavaScript engine (automatic) |
+| **Triggered by** | Operators (`+`, `==`, `!`), control flow (`if`, `while`), template literals |
+| **Direction** | Context-dependent — no fixed hierarchy |
+| **Information loss?** | ⚠️ **Possible** — silent coercion can cause bugs |
+| **Syntax** | No explicit syntax — happens automatically |
+
+### 🧭 Coercion Contexts Table
+
+| Context | Coercion Target | Example | Result |
+|---------|----------------|---------|--------|
+| Arithmetic `+` | String OR Number | `"5" + 3` | `"53"` (string concat) |
+| Arithmetic `-` `*` `/` | Number | `"5" - 3` | `2` (numeric) |
+| Equality `==` | Both operands coerced | `5 == "5"` | `true` |
+| Logical `!` `&&` `||` | Boolean | `!"hello"` | `false` |
+| Control flow `if` | Boolean | `if ("")` | false branch |
+| Template literal | String | `` `Value: ${null}` `` | `"Value: null"` |
+| Unary `+` `-` | Number | `+"42"` | `42` |
+
+<Code lang="js" title="Implicit coercion examples" code={`// String + Number → String concatenation
+console.log("Score: " + 100);  // "Score: 100"
+console.log(100 + " points");  // "100 points"
+
+// String - Number → Numeric subtraction (coerces string to number)
+console.log("100" - 20);  // 80 ✅
+console.log("abc" - 10);  // NaN ❌ ("abc" can't be numeric)
+
+// Equality with coercion (loose equality)
+console.log(0 == false);      // true (0 → false, or false → 0)
+console.log("" == false);     // true ("" → 0, false → 0)
+console.log(null == undefined); // true (special case)
+
+// Logical operators coerce to boolean
+console.log(!"hello");        // false (non-empty string is truthy)
+console.log(!0);              // true (0 is falsy)
+console.log([] && "yes");     // "yes" ([] is truthy, returns right operand)
+
+// Control flow coercion
+if ("") {
+    console.log("won't run");  // empty string is falsy
+}
+if ([0]) {
+    console.log("runs!");  // array is truthy, even if empty or contains falsy values
+}`} />
+
+<Aside type="caution">
+**Coercion Trap**: `[] == false` is `true` 😱  
+```js
+[] == false  // true! Here's why:
+// Step 1: false → 0 (ToNumber)
+// Step 2: [] → "" (ToString via [].toString())
+// Step 3: "" → 0 (ToNumber)
+// Step 4: 0 == 0 → true
+```
+✅ **Fix**: Use strict equality `===` to avoid coercion surprises!
+</Aside>
+
+---
+
+## 🔽 Explicit Conversion — Manual & Intentional
+
+### Conversion Functions (Preferred)
+
+| Function | Converts To | Example | Result |
+|----------|-------------|---------|--------|
+| `Number(value)` | Number | `Number("42")` | `42` |
+| `String(value)` | String | `String(42)` | `"42"` |
+| `Boolean(value)` | Boolean | `Boolean("")` | `false` |
+| `BigInt(value)` | BigInt | `BigInt("123")` | `123n` |
+| `Symbol(value)` | Symbol | `Symbol("id")` | `Symbol(id)` |
+
+<Code lang="js" title="Explicit conversion with functions" code={`// String → Number
+console.log(Number("42"));      // 42 ✅
+console.log(Number("42.5"));    // 42.5 ✅
+console.log(Number("abc"));     // NaN ❌ (invalid numeric string)
+console.log(Number(null));      // 0 ✅
+console.log(Number(undefined)); // NaN ❌
+console.log(Number(true));      // 1 ✅
+console.log(Number(false));     // 0 ✅
+console.log(Number([]));        // 0 ✅ ([] → "" → 0)
+console.log(Number({}));        // NaN ❌ (object can't be numeric)
+
+// Number → String
+console.log(String(42));        // "42"
+console.log(String(3.14));      // "3.14"
+console.log(String(null));      // "null"
+console.log(String(undefined)); // "undefined"
+console.log(String(true));      // "true"
+console.log(String([1,2]));     // "1,2" (array joins with comma)
+console.log(String({x:1}));     // "[object Object]"
+
+// Any → Boolean (truthy/falsy rules)
+console.log(Boolean(0));        // false (only 7 falsy values!)
+console.log(Boolean(""));       // false
+console.log(Boolean(null));     // false
+console.log(Boolean(undefined));// false
+console.log(Boolean(NaN));      // false
+console.log(Boolean(false));    // false
+console.log(Boolean(0n));       // false
+
+console.log(Boolean(1));        // true (everything else is truthy)
+console.log(Boolean("0"));      // true (non-empty string)
+console.log(Boolean([]));       // true (empty array is truthy!)
+console.log(Boolean({}));       // true (empty object is truthy!)
+console.log(Boolean(function(){})); // true (functions are truthy)
+
+// BigInt conversion
+console.log(BigInt("9007199254740991"));  // 9007199254740991n ✅
+console.log(BigInt(123));                 // 123n ✅
+// BigInt("12.5")  // ❌ RangeError: invalid BigInt string (no decimals)
+`} />
+
+### Unary Operators for Conversion (Concise but Less Clear)
+
+<Code lang="js" title="Unary operators for explicit conversion" code={`// Unary + : ToNumber (concise but can be unclear)
+console.log(+"42");      // 42 ✅
+console.log(+"3.14");    // 3.14 ✅
+console.log(+"abc");     // NaN ❌
+console.log(+true);      // 1 ✅
+console.log(+false);     // 0 ✅
+console.log(+null);      // 0 ✅
+console.log(+undefined); // NaN ❌
+
+// Unary - : ToNumber + negate
+console.log(-"42");      // -42 ✅
+console.log(-true);      // -1 ✅
+
+// Unary ! : ToBoolean + invert (double !! for explicit boolean)
+console.log(!"hello");   // false (truthy → false)
+console.log(!!"hello");  // true (explicit boolean conversion)
+console.log(!!0);        // false
+console.log(!![]);       // true (array is truthy)
+
+// ⚠️ Readability warning:
+const value = +"42";     // Clear to experienced devs
+const result = !!input;  // Intent: "convert to boolean" — consider Boolean(input) instead
+`} />
+
+<Aside type="tip">
+**Pro Pattern**: Prefer **explicit functions** (`Number()`, `Boolean()`) over unary operators for clarity:
+```js
+// ✅ Clear intent:
+const count = Number(userInput);
+const isValid = Boolean(checkResult);
+
+// ⚠️ Concise but less clear:
+const count = +userInput;
+const isValid = !!checkResult;
+```
+Use unary operators when brevity is critical (e.g., competitive programming), but document intent.
+</Aside>
+
+---
+
+## 🔢 Numeric Conversion — Parsing & Edge Cases
+
+### `parseInt()` vs `Number()` vs Unary `+`
+
+| Method | Behavior | Example | Result |
+|--------|----------|---------|--------|
+| `Number("42px")` | Strict — entire string must be numeric | `Number("42px")` | `NaN` |
+| `parseInt("42px")` | Lenient — parses until invalid char | `parseInt("42px")` | `42` |
+| `+"42px"` | Strict (same as `Number()`) | `+"42px"` | `NaN` |
+| `parseFloat("3.14px")` | Lenient for floats | `parseFloat("3.14px")` | `3.14` |
+
+<Code lang="js" title="Parsing numeric strings" code={`// Strict conversion (entire string must be valid number)
+console.log(Number("42"));      // 42 ✅
+console.log(Number("42.5"));    // 42.5 ✅
+console.log(Number("42px"));    // NaN ❌ ("px" invalid)
+console.log(Number(" 42 "));    // 42 ✅ (whitespace trimmed)
+console.log(Number(""));        // 0 ✅ (empty string → 0)
+
+// Lenient parsing (stops at first invalid character)
+console.log(parseInt("42px"));     // 42 ✅
+console.log(parseInt("42.7px"));   // 42 ✅ (stops at decimal for integer parse)
+console.log(parseFloat("42.7px")); // 42.7 ✅ (handles decimals)
+console.log(parseInt("0x10"));     // 16 ✅ (hex prefix recognized)
+console.log(parseInt("10", 2));    // 2 ✅ (binary: "10" base-2 = 2)
+
+// ⚠️ parseInt pitfalls:
+console.log(parseInt("08"));  // 8 in modern JS, but 0 in old engines (octal trap!)
+// ✅ Fix: Always specify radix for parseInt:
+console.log(parseInt("08", 10));  // 8 ✅ explicit base-10
+
+// ✅ Safe parsing pattern:
+function safeInt(str, defaultValue = 0) {
+    const parsed = parseInt(str, 10);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+console.log(safeInt("42px"));  // 42
+console.log(safeInt("abc"));   // 0 (default)
+`} />
+
+### BigInt Conversion — Arbitrary Precision
+
+<Code lang="js" title="BigInt for large integers" code={`// BigInt literal syntax: append 'n'
+const big = 123n;
+
+// Convert from string (no decimals allowed!)
+const fromStr = BigInt("9007199254740991");  // ✅ MAX_SAFE_INTEGER as BigInt
+// BigInt("12.5")  // ❌ RangeError: invalid BigInt
+
+// Convert from Number (may lose precision if > MAX_SAFE_INTEGER)
+const fromNum = BigInt(Number.MAX_SAFE_INTEGER);  // ✅
+const risky = BigInt(123.456);  // ❌ RangeError: can't convert non-integer
+
+// Convert back to Number (may lose precision!)
+const backToNum = Number(123n);  // 123 ✅ (safe for small values)
+const large = BigInt("9007199254740992");  // > MAX_SAFE_INTEGER
+console.log(Number(large) === Number(large + 1n));  // true 😱 precision lost!
+
+// ⚠️ Cannot mix BigInt and Number in operations:
+// 123n + 456  // ❌ TypeError
+
+// ✅ Convert explicitly:
+const result = 123n + BigInt(456);  // 579n ✅
+const asNum = Number(123n) + 456;   // 579 ✅ (but may lose precision for large values)
+`} />
+
+<Aside type="caution">
+**BigInt Limitations**:  
+1. ❌ Cannot use with `Math` methods: `Math.sqrt(4n)` → TypeError  
+2. ❌ Cannot use with JSON: `JSON.stringify({val: 1n})` → TypeError  
+3. ❌ Cannot compare with `==`/`===` to Number: `1n === 1` → false  
+4. ✅ Use `typeof x === "bigint"` to check type  
+5. ✅ BigInt has **no decimal support** — integers only
+</Aside>
+
+---
+
+## 🔄 Boolean Coercion — Truthy/Falsy Rules
+
+### The 7 Falsy Values (Only These!)
+
+```js
+// These 7 values coerce to false — everything else is truthy:
+false
+0
+-0
+0n          // BigInt zero
+""          // empty string
+null
+undefined
+NaN
+```
+
+<Code lang="js" title="Truthy/falsy examples" code={`// Falsy values — coerce to false in boolean context:
+console.log(Boolean(false));      // false
+console.log(Boolean(0));          // false
+console.log(Boolean(-0));         // false
+console.log(Boolean(0n));         // false
+console.log(Boolean(""));         // false
+console.log(Boolean(null));       // false
+console.log(Boolean(undefined));  // false
+console.log(Boolean(NaN));        // false
+
+// Truthy values — coerce to true (common surprises):
+console.log(Boolean("0"));        // true ✅ (non-empty string)
+console.log(Boolean("false"));    // true ✅ (non-empty string)
+console.log(Boolean([]));         // true ✅ (empty array is truthy!)
+console.log(Boolean({}));         // true ✅ (empty object is truthy!)
+console.log(Boolean(function(){})); // true ✅ (functions are truthy)
+console.log(Boolean(Symbol()));   // true ✅ (symbols are truthy)
+
+// Practical: Conditional checks
+if ("0") { console.log("runs"); }      // ✅ Runs — "0" is truthy
+if ([]) { console.log("runs"); }       // ✅ Runs — [] is truthy
+if (0) { console.log("won't run"); }   // ❌ Skips — 0 is falsy
+`} />
+
+### Double Bang `!!` for Explicit Boolean
+
+<Code lang="js" title="Convert any value to boolean explicitly" code={`// !!x = Boolean(x) — explicit boolean conversion
+console.log(!!"hello");    // true
+console.log(!!"");         // false
+console.log(!![]);         // true (array is truthy)
+console.log(!!0);          // false
+console.log(!!null);       // false
+console.log(!!undefined);  // false
+
+// ✅ Use case: Normalize truthy/falsy to strict boolean
+function toBoolean(value) {
+    return !!value;  // or: return Boolean(value);
+}
+
+console.log(toBoolean("yes"));  // true
+console.log(toBoolean(0));      // false
+
+// ⚠️ Readability: Boolean(x) is clearer than !!x for most codebases
+`} />
+
+<Aside type="tip">
+**Interview Gold**: Know the **7 falsy values** by heart — this is a top JS interview question!  
+Everything else — including empty collections, `"0"`, and functions — is **truthy**.
+</Aside>
+
+---
+
+## 🧳 Object "Casting" — Prototype Chain, Not Class Hierarchy
+
+### `instanceof` for Prototype Chain Checks
+
+<Code lang="js" title="instanceof checks prototype chain" code={`// Built-in types
+console.log([] instanceof Array);    // true ✅
+console.log([] instanceof Object);   // true ✅ (Array.prototype → Object.prototype)
+console.log(/regex/ instanceof RegExp);  // true ✅
+console.log(new Date() instanceof Date); // true ✅
+
+// Custom classes
+class Animal {}
+class Dog extends Animal {}
+const dog = new Dog();
+
+console.log(dog instanceof Dog);     // true ✅
+console.log(dog instanceof Animal);  // true ✅ (prototype chain)
+console.log(dog instanceof Object);  // true ✅ (all objects inherit from Object)
+
+// ⚠️ Primitives return false — instanceof only works on objects:
+console.log("hello" instanceof String);  // false ❌ (primitive, not object)
+console.log(42 instanceof Number);       // false ❌
+
+// ✅ Boxed primitives work (but avoid boxing):
+console.log(new String("hello") instanceof String);  // true ✅
+`} />
+
+### `typeof` for Primitive Type Checks
+
+<Code lang="js" title="typeof for runtime type introspection" code={`// Primitive types
+console.log(typeof 42);           // "number"
+console.log(typeof 3.14);         // "number"
+console.log(typeof "hello");      // "string"
+console.log(typeof true);         // "boolean"
+console.log(typeof undefined);    // "undefined"
+console.log(typeof null);         // "object" 😱 (legacy bug, can't be fixed)
+console.log(typeof Symbol("id")); // "symbol"
+console.log(typeof 123n);         // "bigint"
+
+// Objects and functions
+console.log(typeof {});           // "object"
+console.log(typeof []);           // "object" (arrays are objects!)
+console.log(typeof function(){}); // "function" (special case)
+console.log(typeof null);         // "object" (famous quirk)
+
+// ✅ Safe type check pattern:
+function getType(value) {
+    if (value === null) return "null";  // Handle null first
+    if (Array.isArray(value)) return "array";  // Arrays are objects, check first
+    return typeof value;
+}
+
+console.log(getType(null));  // "null" ✅
+console.log(getType([]));    // "array" ✅
+console.log(getType({}));    // "object" ✅
+`} />
+
+### No Compile-Time Type Checks — Runtime Only
+
+<Code lang="js" title="JS has no compile-time casting — all checks are runtime" code={`// ❌ No (Type) syntax in JS:
+// let x = (int) "42";  // SyntaxError — invalid syntax!
+
+// ✅ Use conversion functions:
+let x = Number("42");  // 42 ✅
+
+// ❌ No type compatibility checks at "compile" time:
+function process(value) {
+    // No way to enforce "value must be string" at parse time
+    return value.toUpperCase();  // 💥 TypeError if value is number!
+}
+
+// ✅ Runtime validation patterns:
+function processSafe(value) {
+    if (typeof value !== "string") {
+        throw new TypeError("Expected string");
+    }
+    return value.toUpperCase();  // Safe now
+}
+
+// ✅ TypeScript adds compile-time checks (optional):
+// function processTS(value: string): string {  // TS: compile-time type check
+//     return value.toUpperCase();  // ✅ Safe at compile time
+// }
+`} />
+
+<Aside type="caution">
+**Golden Rule**: JavaScript has **no compile-time type safety** — all type checks happen at runtime.  
+✅ Use **TypeScript** if you need compile-time type guarantees.  
+✅ Use **runtime validation** (`typeof`, `instanceof`, libraries like Zod) for safety in plain JS.
+</Aside>
+
+---
+
+## 🔬 Coercion in Expressions — Order Matters
+
+### Operator Precedence + Coercion
+
+<Code lang="js" title="Coercion order in mixed expressions" code={`// + operator: string concatenation vs numeric addition
+console.log("5" + 3);        // "53" (string + number → string concat)
+console.log(5 + "3");        // "53" (same — left-to-right evaluation)
+console.log("5" + 3 + 2);    // "532" ("5"+3="53", +"2"="532")
+console.log(5 + 3 + "2");    // "82" (5+3=8, +"2"="82")
+
+// Force numeric first with parentheses:
+console.log(("5" - 0) + 3);  // 8 ("5"-0=5 numeric, +3=8)
+console.log(5 + (3 + "2"));  // "532" (3+"2"="32", 5+"32"="532") — still string!
+
+// ✅ Better: explicit conversion:
+console.log(Number("5") + 3 + 2);  // 10 ✅ clear intent
+
+// Template literals always coerce to string:
+const val = 42;
+console.log(\`Value: ${val}\`);  // "Value: 42" (val → string automatically)
+console.log(\`Sum: ${"5" + 3}\`);  // "Sum: 53" (coercion happens inside \${})
+`} />
+
+### Loose Equality `==` Coercion Rules
+
+<Code lang="js" title="== coercion algorithm (simplified)" code={`// == performs coercion before comparison — complex rules!
+console.log(5 == "5");           // true ("5" → 5)
+console.log(true == 1);          // true (true → 1)
+console.log(false == 0);         // true (false → 0)
+console.log(null == undefined);  // true (special case only for ==)
+console.log([] == false);        // true ([] → "" → 0, false → 0)
+console.log([1] == 1);           // true ([1] → "1" → 1)
+
+// ⚠️ Avoid == for most comparisons — use === instead:
+console.log(5 === "5");          // false ✅ (different types)
+console.log([] === false);       // false ✅ (different types)
+
+// ✅ When == is intentional: null/undefined check
+function isEmpty(value) {
+    return value == null;  // true for both null AND undefined
+}
+console.log(isEmpty(null));      // true
+console.log(isEmpty(undefined)); // true
+console.log(isEmpty(""));        // false (empty string is not nullish)
+`} />
+
+<Aside type="danger">
+**Golden Rule**: **Always use `===` and `!==` unless you specifically need coercion**.  
+`==` has 15+ edge cases in the coercion algorithm — `===` is simple: same type AND same value.
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is Number('42px')?" icon="information">
+    **`NaN`** — `Number()` requires the **entire string** to be a valid number.  
+    ✅ Use `parseInt("42px", 10)` for lenient parsing, or validate input first.
+  </Card>
+  
+  <Card title="Q: What is Boolean([])?" icon="caution">
+    **`true`** — empty arrays are **truthy** in JavaScript!  
+    Only 7 values are falsy: `false`, `0`, `-0`, `0n`, `""`, `null`, `undefined`, `NaN`.  
+    Everything else — including `[]`, `{}`, `"0"` — is truthy.
+  </Card>
+
+  <Card title="Q: Difference between == and ===?" icon="approve-check">
+    - `==` (loose equality): coerces types before comparing → `5 == "5"` → `true`  
+    - `===` (strict equality): no coercion, requires same type AND value → `5 === "5"` → `false`  
+    ✅ **Always prefer `===`** unless you specifically need coercion (e.g., `value == null`).
+  </Card>
+
+  <Card title="Q: How to convert string to number safely?" icon="shield">
+    ```js
+    // ✅ Strict conversion (entire string must be numeric):
+    const num = Number(str);
+    if (Number.isNaN(num)) { /* handle error */ }
+
+    // ✅ Lenient parsing (stops at first invalid char):
+    const parsed = parseInt(str, 10);  // Always specify radix!
+    if (!Number.isFinite(parsed)) { /* handle error */ }
+
+    // ✅ Safe pattern with default:
+    const safeInt = (str, defaultVal = 0) => {
+        const n = parseInt(str, 10);
+        return Number.isFinite(n) ? n : defaultVal;
+    };
+    ```
+  </Card>
+
+  <Card title="Q: What is typeof null?" icon="error">
+    **`"object"`** — famous legacy bug in JavaScript that can't be fixed for backwards compatibility.  
+    ✅ Always check `value === null` explicitly — don't rely on `typeof` for null detection.
+  </Card>
+
+  <Card title="Q: Can you cast primitives with (Type) syntax?" icon="error">
+    **NO ❌** — JavaScript has **no `(Type) value` casting syntax** like Java.  
+    ✅ Use conversion functions: `Number(x)`, `String(x)`, `Boolean(x)`, or unary operators: `+x`, `!!x`.
+  </Card>
+
+  <Card title="Q: What is [] == false?" icon="caution">
+    **`true`** 😱 — coercion chain:  
+    `[]` → `""` (via toString) → `0` (via ToNumber)  
+    `false` → `0` (boolean to number)  
+    `0 == 0` → `true`  
+    ✅ This is why you should **avoid `==`** — use `===` for predictability!
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA & Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Safe Numeric Input Parsing" icon="shield">
+    Validate and convert user input robustly:
+```js
+    function parsePositiveInt(str, { min = 0, max = Infinity, defaultVal = null } = {}) {
+        // Trim and validate
+        const trimmed = String(str).trim();
+        if (!trimmed) return defaultVal;
+        
+        // Parse with radix
+        const parsed = parseInt(trimmed, 10);
+        
+        // Validate result
+        if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+            return defaultVal;
+        }
+        
+        return parsed;
+    }
+
+    // Usage:
+    const age = parsePositiveInt(userInput, { min: 0, max: 120, defaultVal: 18 });
+    const count = parsePositiveInt("42px", { defaultVal: 0 });  // 42
+```
+  </Card>
+  
+  <Card title="Pattern: Type Guard Functions" icon="rocket">
+    Create reusable type-checking utilities:
+```js
+    // Primitive type guards
+    const isString = (val) => typeof val === "string";
+    const isNumber = (val) => typeof val === "number" && Number.isFinite(val);
+    const isBoolean = (val) => typeof val === "boolean";
+    
+    // Nullish check (null OR undefined)
+    const isNullish = (val) => val == null;  // Intentional == for both null/undefined
+    
+    // Object type guards
+    const isArray = Array.isArray;  // Built-in, cross-realm safe
+    const isPlainObject = (val) => 
+        val !== null && typeof val === "object" && val.constructor === Object;
+    
+    // Usage in validation:
+    function processUser(data) {
+        if (!isPlainObject(data)) {
+            throw new TypeError("Expected plain object");
+        }
+        if (!isString(data.name)) {
+            throw new TypeError("name must be string");
+        }
+        if (!isNumber(data.age) || data.age < 0) {
+            throw new RangeError("age must be positive number");
+        }
+        // Safe to process...
+    }
+```
+  </Card>
+
+  <Card title="Pattern: Fallback Values with ?? and ||" icon="backspace">
+    Choose the right operator for defaults:
+```js
+    // ✅ Use ?? when 0, "", false are valid values:
+    const port = process.env.PORT ?? 3000;      // Keeps 0 if PORT="0"
+    const name = userInput ?? "Guest";          // Keeps "" if userInput=""
+    
+    // ✅ Use || when falsy values should trigger fallback:
+    const displayName = nickname || name || "Anonymous";  // Falls back if any falsy
+    
+    // ✅ Combine for complex defaults:
+    const config = {
+        retries: options?.retries ?? 3,         // Keep 0 if explicitly set
+        timeout: options?.timeout || 30000,     // Fallback if 0, null, undefined
+        debug: options?.debug ?? false,         // Keep false if explicitly set
+    };
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Competitive Coding Tip**: When parsing input in JS:
+- Use `+str` or `Number(str)` for quick numeric conversion
+- Use `str.split(" ").map(Number)` for array of numbers
+- Use `BigInt` for problems with numbers > `Number.MAX_SAFE_INTEGER`
+- Validate with `Number.isFinite()` to catch `NaN`/`Infinity`
+</Aside>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Implicit Coercion Contexts
+
+| Context | Coerces To | Example | Result |
+|---------|-----------|---------|--------|
+| `+` with string | String | `"5" + 3` | `"53"` |
+| `-` `*` `/` | Number | `"5" - 3` | `2` |
+| `==` | Both operands | `5 == "5"` | `true` |
+| `if` `&&` `||` `!` | Boolean | `if ("")` | false branch |
+| Template literal | String | `` `${null}` `` | `"null"` |
+| Unary `+` `-` | Number | `+"42"` | `42` |
+
+### Explicit Conversion Functions
+
+```js
+// To Number
+Number("42")        // 42
++"42"              // 42 (unary +)
+parseInt("42px", 10) // 42 (lenient)
+
+// To String
+String(42)          // "42"
+`${42}`            // "42" (template literal)
+42.toString()       // "42" (method on number)
+
+// To Boolean
+Boolean("hello")    // true
+!!"hello"          // true (double bang)
+!"hello"           // false (single ! inverts)
+
+// To BigInt
+BigInt("123")       // 123n
+123n               // literal syntax
+```
+
+### Truthy/Falsy Reference
+
+```js
+// Falsy (only these 7):
+false, 0, -0, 0n, "", null, undefined, NaN
+
+// Truthy (everything else):
+"0", "false", [], {}, function(){}, Symbol(), 1, -1, Infinity, etc.
+```
+
+### Type Checking Patterns
+
+```js
+// Primitive types
+typeof x === "string"
+typeof x === "number" && Number.isFinite(x)  // excludes NaN/Infinity
+x === null  // explicit null check (typeof null === "object")
+
+// Object types
+Array.isArray(x)  // ✅ cross-realm safe array check
+x instanceof Constructor  // ⚠️ may fail across iframes/realms
+Object.prototype.toString.call(x) === "[object Date]"  // ✅ reliable
+
+// Nullish check (null OR undefined)
+x == null  // intentional loose equality
+x === null || x === undefined  // explicit alternative
+```
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `===`/`!==` for comparisons — avoid `==`/`!=` coercion surprises
+2. ✅ Know the **7 falsy values** — everything else is truthy
+3. ✅ Use `Number.isFinite()` to validate numeric conversions
+4. ✅ Always specify radix for `parseInt(str, 10)` — avoid octal traps
+5. ✅ Use `??` for nullish defaults, `||` for falsy defaults — choose intentionally
+6. ✅ Check `typeof x === "object"` doesn't catch `null` — handle null explicitly
+7. ✅ Prefer explicit conversion functions (`Number()`) over unary operators (`+`) for clarity
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="js" title="Predict the output" code={`// Q1: Implicit coercion
+console.log("5" + 3);           // ?
+console.log("5" - 3);           // ?
+console.log(5 + "3");           // ?
+
+// Q2: Explicit conversion
+console.log(Number("42px"));    // ?
+console.log(parseInt("42px"));  // ?
+console.log(+"42");             // ?
+
+// Q3: Truthy/falsy
+console.log(Boolean([]));       // ?
+console.log(Boolean("0"));      // ?
+console.log(!!null);            // ?
+
+// Q4: Equality with coercion
+console.log(0 == false);        // ?
+console.log(0 === false);       // ?
+console.log([] == false);       // ?
+
+// Q5: typeof quirks
+console.log(typeof null);       // ?
+console.log(typeof []);         // ?
+console.log(typeof function(){}); // ?
+
+// Q6: BigInt conversion
+console.log(BigInt("123"));     // ?
+console.log(Number(123n));      // ?
+// console.log(123n + 456);     // ? (would this work?)`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: "53", 2, "53"
+    ← + with string = concat; - forces numeric; left-to-right evaluation
+
+Q2: NaN, 42, 42
+    ← Number() strict; parseInt() lenient; unary + same as Number()
+
+Q3: true, true, false
+    ← [] is truthy; "0" is non-empty string (truthy); null is falsy
+
+Q4: true, false, true
+    ← == coerces (0→false); === no coercion; []→""→0, false→0, 0==0
+
+Q5: "object", "object", "function"
+    ← typeof null is legacy "object"; arrays are objects; functions special case
+
+Q6: 123n, 123, TypeError
+    ← BigInt from string; BigInt to Number (safe for small values); can't mix BigInt/Number
+```
+</details>
+
+---
+
+## 📌 Quick Revision Cheat Sheet <Badge text="MUST KNOW" variant="tip" />
+
+```js
+// 🎯 IMPLICIT COERCION (context-driven)
+"5" + 3      → "53"    // + with string = concatenation
+"5" - 3      → 2       // - forces numeric conversion
+if ("")      → false   // empty string is falsy
+![]          → false   // array is truthy, ! inverts
+
+// 🎯 EXPLICIT CONVERSION (intentional)
+Number("42")     → 42      // Strict: entire string must be numeric
+parseInt("42px", 10) → 42  // Lenient: stops at first invalid char
+String(42)       → "42"    // Number to string
+Boolean(0)       → false   // Only 7 falsy values!
+!!value          → boolean // Double bang for explicit boolean
+
+// 🎯 TRUTHY/FALSY (memorize these!)
+Falsy: false, 0, -0, 0n, "", null, undefined, NaN
+Truthy: Everything else — including [], {}, "0", function(){}
+
+// 🎯 EQUALITY OPERATORS
+5 == "5"     → true   // Coerces types before comparing
+5 === "5"    → false  // Strict: same type AND value
+null == undefined → true  // Only == case where they match
+
+// 🎯 TYPE CHECKING
+typeof x === "string"        // Primitive string check
+Array.isArray(x)             // ✅ Cross-realm safe array check
+x instanceof Constructor     // ⚠️ May fail across iframes
+x == null                    // ✅ Checks for null OR undefined
+
+// 🎯 SAFE PATTERNS
+// Numeric input parsing:
+const num = parseInt(str, 10);
+if (!Number.isFinite(num)) { /* handle error */ }
+
+// Nullish coalescing for defaults:
+const port = process.env.PORT ?? 3000;  // Keeps 0 if PORT="0"
+
+// Explicit boolean conversion:
+const isValid = Boolean(checkResult);  // Clearer than !!checkResult
+
+// 🎯 INTERVIEW GOLD
+// "JS has no (Type) cast syntax — use Number(), String(), Boolean()"
+// "Only 7 falsy values: false, 0, -0, 0n, '', null, undefined, NaN"
+// "=== is strict equality — no coercion; == coerces before comparing"
+// "typeof null === 'object' is a legacy bug — check null explicitly"
+// "Use ?? for nullish defaults, || for falsy defaults — choose intentionally"
+// "Array.isArray() is cross-realm safe; instanceof may fail across iframes"
+```
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="JavaScript Type Coercion Deep Dive"
+    href="/computer-languages/javascript/topics/type-coercion"
+    description="ToPrimitive, ToNumber, ToString, ToBoolean abstract operations, coercion table"
+  />
+  <LinkCard
+    title="JavaScript Numbers & BigInt"
+    href="/computer-languages/javascript/topics/numbers"
+    description="IEEE 754, MAX_SAFE_INTEGER, precision, BigInt operations, conversion"
+  />
+  <LinkCard
+    title="JavaScript Type Checking Patterns"
+    href="/computer-languages/javascript/guides/type-checking"
+    description="typeof, instanceof, Array.isArray, duck typing, type guards, validation"
+  />
+  <LinkCard
+    title="JavaScript Equality Operators"
+    href="/computer-languages/javascript/topics/equality"
+    description="== vs ===, coercion rules, NaN behavior, best practices"
+  />
+</CardGrid>
+
+<Aside type="note">
+🎯 **Production Pro Tips**  
+1. Enable ESLint rule `eqeqeq: ["error", "always"]` to enforce `===`/`!==`  
+2. Use `no-implicit-coercion` rule to catch accidental coercion traps  
+3. Prefer `Number.isFinite()` over global `isFinite()` — no coercion surprises  
+4. Use `??` for nullish defaults when `0`, `""`, or `false` are valid inputs  
+5. Document when you intentionally use `==` (e.g., `value == null` pattern)  
+6. For robust validation: use libraries like Zod, Yup, or Joi for schema-based checks 🛡️
+</Aside>
+
+> 💡 **Final Wisdom**: JavaScript type casting is **more flexible but trickier** than Java due to implicit coercion and dynamic typing. Master the 7 falsy values, prefer explicit conversion functions, use `===` for comparisons, and leverage `??`/`?.` for safe defaults — you'll write robust, interview-ready type-handling code! 🚀✨
+
+*Converted for Astro 6 + Starlight • Optimized for interview prep + production use • Quality >>>> Quantity* 🎯
+```
+
+---
+
+## 🔄 Java Type Casting → JS Type Casting Conversion Summary
+
+| Java Feature | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| `(Type) value` cast syntax | `Number(value)`, `String(value)`, `Boolean(value)` | ✅ JS uses **functions**, not parentheses cast syntax |
+| Implicit widening (byte→int) | Implicit coercion in operators (`+`, `==`, `if`) | ⚠️ JS coercion is **context-dependent**, not type-hierarchy based |
+| Explicit narrowing (int→byte) | No primitive narrowing — all Numbers are 64-bit floats | ✅ JS simpler — no overflow from narrowing, but watch precision |
+| `char` → `int` implicit | `"A".charCodeAt(0)` or `+"A"` (coerces to NaN) | ⚠️ JS has **no `char` type** — strings handle Unicode |
+| Object upcast (implicit) | Prototype chain — no explicit "upcast" needed | ✅ JS: all objects inherit from `Object.prototype` automatically |
+| Object downcast with `(Type)` | `instanceof` check + use directly (no cast needed) | ✅ JS: no cast syntax — just check prototype, then use |
+| `ClassCastException` at runtime | `TypeError` for invalid operations, no cast exception | ✅ JS: type errors happen when **using** value, not casting |
+| Compile-time type compatibility | No compile-time checks — all runtime | ⚠️ JS: errors appear at runtime — test thoroughly |
+| `String.valueOf(primitive)` | `String(primitive)` or template literals | ✅ JS: multiple ways to convert, all implicit in templates |
+| `Integer.parseInt(String)` | `Number(str)`, `parseInt(str, 10)`, `+str` | ✅ JS: more options, but `parseInt` needs radix specified |
+| `instanceof` for type check | `instanceof` + `typeof` + `Array.isArray()` | ✅ JS: multiple type-checking tools for different cases |
+| `null` casting rules | `null == undefined` is true; `null === undefined` false | ⚠️ JS: two distinct "empty" values with different coercion |
+
+---
+
+🧠 **Interview Power Move**: When asked about type casting, always mention:  
+1. **No `(Type) value` syntax** — use `Number()`, `String()`, `Boolean()` functions instead  
+2. **7 falsy values** — memorize: `false`, `0`, `-0`, `0n`, `""`, `null`, `undefined`, `NaN`  
+3. **`===` vs `==`** — strict equality avoids 15+ coercion edge cases  
+4. **`??` for nullish defaults** — keeps `0`, `""`, `false` when they're valid inputs  
+5. **`typeof null === "object"`** — famous legacy bug; check `null` explicitly  
+6. **BigInt for large integers** — `123n` syntax, can't mix with `Number`  
+
+---
+
+# 🔄 Type Casting Operators in JavaScript
+
+---
+
+## 🔰 What Is Type Casting in JS?
+
+Type casting = **deliberately converting a value from one type to another**. JS has no dedicated cast syntax like C/Java — instead it uses **functions, operators, and tricks**.
+
+```js
+Number("42")    // 42        — explicit cast
++"42"           // 42        — operator cast
+"42" * 1        // 42        — implicit via operator
+Boolean(0)      // false     — explicit cast
+!!0             // false     — operator cast
+String(42)      // "42"      — explicit cast
+42 + ""         // "42"      — implicit via +
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Type Casting in JavaScript
+│
+├── 🔢 → Number
+│   ├── Number()
+│   ├── parseInt()
+│   ├── parseFloat()
+│   ├── Unary +
+│   └── Math.trunc / Math.floor
+│
+├── 🔤 → String
+│   ├── String()
+│   ├── .toString()
+│   ├── .toFixed() / .toPrecision()
+│   └── Template literal / + ""
+│
+├── ✅ → Boolean
+│   ├── Boolean()
+│   └── !! (double NOT)
+│
+├── 🔢 → BigInt
+│   └── BigInt()
+│
+├── ⚙️  Implicit Coercion (auto-cast)
+│   ├── + operator (string or number)
+│   ├── - * / % (always number)
+│   ├── == (Abstract Equality)
+│   ├── if / while / ternary (→ boolean)
+│   └── template literals (→ string)
+│
+└── 🔬 Internal Algorithms
+    ├── ToNumber
+    ├── ToString
+    ├── ToBoolean
+    ├── ToPrimitive
+    └── ToInt32 / ToUint32
+```
+
+---
+
+## ⚙️ Deep Dive — Internal Conversion Algorithms
+
+> V8 uses these algorithms internally. Every explicit and implicit cast runs through one of these.
+
+### `ToBoolean` — Simplest Algorithm
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    ToBoolean                             │
+│                                                          │
+│  ALWAYS FALSE (the 8 falsy values):                      │
+│    false, 0, -0, 0n, "", null, undefined, NaN            │
+│                                                          │
+│  EVERYTHING ELSE → true                                  │
+│    "0", "false", [], {}, -1, Infinity, function(){}      │
+│                                                          │
+│  No computation — pure lookup table in V8                │
+└──────────────────────────────────────────────────────────┘
+```
+
+### `ToNumber` — Most Complex Algorithm
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     ToNumber                             │
+│                                                          │
+│  undefined   → NaN                                       │
+│  null        → 0                                         │
+│  true        → 1                                         │
+│  false       → 0                                         │
+│  number      → as-is                                     │
+│  symbol      → ❌ TypeError                              │
+│  bigint      → ❌ TypeError                              │
+│                                                          │
+│  string → parse as numeric literal:                      │
+│    ""        → 0                                         │
+│    " "       → 0  (whitespace trimmed first)             │
+│    "42"      → 42                                        │
+│    "3.14"    → 3.14                                      │
+│    "0x1F"    → 31 (hex parsed)                           │
+│    "0b101"   → 5  (binary parsed)                        │
+│    "0o17"    → 15 (octal parsed)                         │
+│    "42abc"   → NaN (not a clean number)                  │
+│    "abc"     → NaN                                       │
+│    "Infinity"→ Infinity                                  │
+│                                                          │
+│  object → ToPrimitive(obj, "number") first               │
+│           then ToNumber on result                        │
+└──────────────────────────────────────────────────────────┘
+```
+
+### `ToString` Algorithm
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     ToString                             │
+│                                                          │
+│  undefined   → "undefined"                               │
+│  null        → "null"                                    │
+│  true        → "true"                                    │
+│  false       → "false"                                   │
+│  number      → numeric string (special cases below)      │
+│  symbol      → ❌ TypeError (explicit String() ok)       │
+│  bigint      → numeric string without n suffix           │
+│                                                          │
+│  Number edge cases:                                      │
+│    0         → "0"                                       │
+│   -0         → "0"  ← -0 VANISHES 😱                    │
+│    Infinity  → "Infinity"                                │
+│   -Infinity  → "-Infinity"                               │
+│    NaN       → "NaN"                                     │
+│    1e21      → "1e+21" (scientific notation)             │
+│    0.000001  → "0.000001"                                │
+│    0.0000001 → "1e-7" (switches to scientific)           │
+│                                                          │
+│  object → ToPrimitive(obj, "string") first               │
+└──────────────────────────────────────────────────────────┘
+```
+
+### `ToPrimitive` — Object → Primitive
+
+```
+ToPrimitive(obj, hint)
+
+  hint = "number":
+    1. Try obj[Symbol.toPrimitive]("number")
+    2. Try obj.valueOf()
+    3. Try obj.toString()
+    4. ❌ TypeError if none return primitive
+
+  hint = "string":
+    1. Try obj[Symbol.toPrimitive]("string")
+    2. Try obj.toString()
+    3. Try obj.valueOf()
+    4. ❌ TypeError if none return primitive
+
+  hint = "default" (used by + and ==):
+    → same as "number" for most objects
+    → same as "string" for Date objects
+```
+
+```js
+// Custom ToPrimitive:
+const obj = {
+  value: 42,
+  [Symbol.toPrimitive](hint) {
+    if (hint === "number")  return this.value;
+    if (hint === "string")  return `Value(${this.value})`;
+    if (hint === "default") return this.value;
+  }
+};
+
++obj          // 42        — hint: "number"
+`${obj}`      // "Value(42)" — hint: "string"
+obj + ""      // "42"      — hint: "default" → 42 → "42"
+obj == 42     // true      — hint: "default" → 42
+```
+
+---
+
+## 1️⃣ → Number Conversions
+
+### `Number()` — Strict Conversion
+
+```js
+// Primitives:
+Number(undefined)   // NaN
+Number(null)        // 0
+Number(true)        // 1
+Number(false)       // 0
+Number(NaN)         // NaN
+
+// Strings:
+Number("")          // 0
+Number("  ")        // 0   — whitespace trimmed
+Number("42")        // 42
+Number("3.14")      // 3.14
+Number("42abc")     // NaN — any non-numeric char = NaN
+Number("0x1F")      // 31  — hex ✅
+Number("0b1010")    // 10  — binary ✅
+Number("0o17")      // 15  — octal ✅
+Number("Infinity")  // Infinity
+Number("1_000")     // NaN — numeric separator NOT supported 😱
+
+// Objects:
+Number([])          // 0   — [] → "" → 0
+Number([3])         // 3   — [3] → "3" → 3
+Number([1,2])       // NaN — [1,2] → "1,2" → NaN
+Number({})          // NaN — {} → "[object Object]" → NaN
+Number(new Date())  // milliseconds since epoch (timestamp)
+```
+
+### `parseInt(string, radix)` — Parse Integer
+
+```js
+// Reads characters until non-numeric:
+parseInt("42")        // 42
+parseInt("42.9")      // 42  — stops at decimal point
+parseInt("42abc")     // 42  — stops at 'a'
+parseInt("abc42")     // NaN — first char invalid
+parseInt("")          // NaN — empty string = NaN (different from Number!)
+parseInt("0x1F")      // 31  — auto-detects hex (with 0x prefix)
+parseInt("011")       // 11  — NOT octal in modern engines (was 9 in ES3)
+
+// ALWAYS provide radix (second argument):
+parseInt("42", 10)    // 42  — decimal ✅ explicit
+parseInt("1F", 16)    // 31  — hex
+parseInt("1010", 2)   // 10  — binary
+parseInt("17", 8)     // 15  — octal
+parseInt("z", 36)     // 35  — base-36 (0-9 + a-z)
+
+// Whitespace trimmed:
+parseInt("  42  ")    // 42  — leading whitespace ok
+parseInt("  42abc ")  // 42  — stops at 'a'
+```
+
+### `parseFloat(string)` — Parse Decimal
+
+```js
+parseFloat("3.14")       // 3.14
+parseFloat("3.14.15")    // 3.14 — stops at second dot
+parseFloat("42")         // 42
+parseFloat("42abc")      // 42  — stops at 'a'
+parseFloat(".5")         // 0.5
+parseFloat("1e3")        // 1000 — scientific notation ✅
+parseFloat("0x1F")       // 0   — stops at 'x' 😱 (only decimal)
+parseFloat("")           // NaN
+parseFloat("Infinity")   // Infinity
+```
+
+### `parseInt` vs `parseFloat` vs `Number`
+
+```
+┌──────────────────────────────────────────────────────────┐
+│          parseInt vs parseFloat vs Number                │
+├─────────────┬──────────┬────────────┬────────────────────┤
+│ Input       │ parseInt │ parseFloat │ Number             │
+├─────────────┼──────────┼────────────┼────────────────────┤
+│ "42"        │ 42       │ 42         │ 42                 │
+│ "42.9"      │ 42       │ 42.9       │ 42.9               │
+│ "42abc"     │ 42       │ 42         │ NaN                │
+│ ""          │ NaN      │ NaN        │ 0  ← diff!         │
+│ " "         │ NaN      │ NaN        │ 0  ← diff!         │
+│ "0x1F"      │ 31       │ 0          │ 31                 │
+│ null        │ NaN      │ NaN        │ 0  ← diff!         │
+│ true        │ NaN      │ NaN        │ 1  ← diff!         │
+│ []          │ NaN      │ NaN        │ 0  ← diff!         │
+└─────────────┴──────────┴────────────┴────────────────────┘
+```
+
+### Unary `+` — Fastest Number Cast
+
+```js
++"42"         // 42   — identical to Number("42")
++""           // 0
++" "          // 0
++"42abc"      // NaN
++true         // 1
++false        // 0
++null         // 0
++undefined    // NaN
++[]           // 0
++[3]          // 3
++{}           // NaN
+
+// Speed: unary + is fastest because it maps directly
+// to ToNumber internal algorithm with zero function call overhead
+```
+
+### `Math.trunc` / `Math.floor` / `Math.ceil` / `Math.round`
+
+```js
+// All convert float to integer — differ on direction:
+
+Math.trunc(3.9)    //  3  — toward 0
+Math.trunc(-3.9)   // -3  — toward 0
+
+Math.floor(3.9)    //  3  — toward -Infinity
+Math.floor(-3.9)   // -4  — toward -Infinity ← different from trunc!
+
+Math.ceil(3.1)     //  4  — toward +Infinity
+Math.ceil(-3.1)    // -3  — toward +Infinity
+
+Math.round(3.5)    //  4  — nearest (0.5 rounds up)
+Math.round(-3.5)   // -3  — nearest (0.5 rounds toward +Infinity)
+Math.round(3.4)    //  3
+
+// For positive numbers: trunc === floor
+// For negative numbers: trunc !== floor
+```
+
+---
+
+## 2️⃣ → String Conversions
+
+### `String()` — Safe Universal Cast
+
+```js
+String(undefined)    // "undefined"
+String(null)         // "null"
+String(true)         // "true"
+String(false)        // "false"
+String(42)           // "42"
+String(-0)           // "0"   ← -0 vanishes 😱
+String(NaN)          // "NaN"
+String(Infinity)     // "Infinity"
+String(Symbol("x"))  // "Symbol(x)" ✅ — works unlike toString
+String(42n)          // "42"  — BigInt without 'n'
+String([1,2,3])      // "1,2,3"
+String({})           // "[object Object]"
+```
+
+### `.toString(radix)` — With Base Conversion
+
+```js
+(42).toString()      // "42"    — decimal (default)
+(42).toString(2)     // "101010" — binary
+(42).toString(8)     // "52"    — octal
+(42).toString(16)    // "2a"    — hex
+(255).toString(16)   // "ff"
+(10).toString(36)    // "a"     — base-36
+
+// TRAP — calling on number literal:
+42.toString(2)       // ❌ SyntaxError — dot is decimal point
+(42).toString(2)     // ✅
+42 .toString(2)      // ✅ — space before dot
+let n = 42;
+n.toString(2)        // ✅
+
+// null/undefined crash:
+null.toString()      // ❌ TypeError
+undefined.toString() // ❌ TypeError
+
+// String() is safe — toString() is not:
+String(null)         // "null"  ✅
+String(undefined)    // "undefined" ✅
+```
+
+### `.toFixed(digits)` — Decimal Places
+
+```js
+(3.14159).toFixed(2)   // "3.14"
+(3.14159).toFixed(4)   // "3.1416"  — ROUNDS
+(3).toFixed(2)         // "3.00"
+(0).toFixed(3)         // "0.000"
+
+// TRAP — returns STRING not number:
+typeof (3.14).toFixed(2)   // "string" 😱
+
+// TRAP — IEEE 754 rounding surprises:
+(1.005).toFixed(2)   // "1.00" 😱 — not "1.01"
+(1.255).toFixed(2)   // "1.25" 😱 — not "1.26"
+// Because 1.005 is stored as 1.00499999... in IEEE 754
+
+// Real fix for money display:
+const price = 1.005;
+(Math.round(price * 100) / 100).toFixed(2)  // "1.01" ✅
+```
+
+### Template Literal — Implicit String Cast
+
+```js
+// Everything inside ${} converted via ToString:
+`${42}`          // "42"
+`${null}`        // "null"
+`${undefined}`   // "undefined"
+`${true}`        // "true"
+`${[1,2,3]}`     // "1,2,3"
+`${{}}`          // "[object Object]"
+`${Symbol()}`    // ❌ TypeError — Symbol refuses ToString 😱
+
+// Uses "string" hint for ToPrimitive:
+const obj = { toString() { return "custom"; } };
+`${obj}`  // "custom" ✅
+```
+
+---
+
+## 3️⃣ → Boolean Conversions
+
+### `Boolean()` — Explicit Cast
+
+```js
+// FALSY → false:
+Boolean(false)      // false
+Boolean(0)          // false
+Boolean(-0)         // false
+Boolean(0n)         // false
+Boolean("")         // false
+Boolean(null)       // false
+Boolean(undefined)  // false
+Boolean(NaN)        // false
+
+// EVERYTHING ELSE → true:
+Boolean(1)          // true
+Boolean("0")        // true  — non-empty string ✅
+Boolean("false")    // true  — non-empty string ✅
+Boolean([])         // true  — empty array ✅
+Boolean({})         // true  — empty object ✅
+Boolean(function(){}) // true
+Boolean(Infinity)   // true
+Boolean(-Infinity)  // true
+Boolean(Symbol())   // true
+Boolean(42n)        // true
+```
+
+### `!!` Double NOT — Fastest Boolean Cast
+
+```js
+!!false      // false
+!!0          // false
+!!""         // false
+!!null       // false
+!!undefined  // false
+!!NaN        // false
+
+!!1          // true
+!!"hello"    // true
+!![]         // true
+!!{}         // true
+
+// !! vs Boolean() — identical result, !! is slightly faster
+// Boolean() has function call overhead
+// !! is two unary operator applications — direct bytecode
+
+// Real use:
+const isLoggedIn = !!user;         // user object → true, null → false
+const hasItems   = !!items.length; // 0 → false, n → true
+```
+
+---
+
+## 4️⃣ → BigInt Conversion
+
+```js
+BigInt(42)          // 42n
+BigInt("42")        // 42n
+BigInt("0x1F")      // 31n  — hex string ✅
+BigInt(true)        // 1n
+BigInt(false)       // 0n
+
+// Fails:
+BigInt(3.14)        // ❌ RangeError — non-integer
+BigInt(null)        // ❌ TypeError
+BigInt(undefined)   // ❌ TypeError
+BigInt("42abc")     // ❌ SyntaxError
+BigInt(NaN)         // ❌ RangeError
+
+// Cannot mix BigInt with Number:
+42n + 1             // ❌ TypeError
+42n + BigInt(1)     // 43n ✅
+Number(42n)         // 42  — BigInt → Number (precision loss possible)
+```
+
+---
+
+## 5️⃣ Implicit Coercion — Auto-Cast
+
+### Arithmetic Operators
+
+```js
+// - * / % always convert to number:
+"6" - 2      // 4   — "6" → 6
+"6" * "2"    // 12  — both → number
+true + true  // 2   — both → 1
+null + 1     // 1   — null → 0
+[] - 1       // -1  — [] → "" → 0
+[3] - 1      // 2   — [3] → "3" → 3
+
+// + is ambiguous — string or number:
+"6" + 2      // "62" — string wins
+6 + "2"      // "62" — string wins
+6 + 2        // 8    — both numbers
+null + "x"   // "nullx" — null → "null"
+true + "x"   // "truex" — true → "true"
+```
+
+### Comparison Operators
+
+```js
+// == uses Abstract Equality (coerces):
+"5" == 5       // true  — "5" → 5
+null == undefined // true — spec rule
+false == 0     // true  — false → 0
+[] == 0        // true  — [] → "" → 0
+[] == ""       // true  — [] → ""
+
+// < > <= >= convert both to number if not both strings:
+"5" < 10       // true  — "5" → 5
+"5" < "10"     // false — string compare '5' > '1'
+null >= 0      // true  — null → 0
+```
+
+### Boolean Context (implicit ToBoolean)
+
+```js
+// if, while, ternary, ||, &&, ! trigger ToBoolean:
+if (1)        { }  // runs — 1 is truthy
+if ("hello")  { }  // runs
+if ([])       { }  // runs — [] is truthy 😱
+if (0)        { }  // skips
+if ("")       { }  // skips
+if (null)     { }  // skips
+
+// Template literals — implicit ToString:
+const x = null;
+`Value: ${x}`   // "Value: null" — null → "null"
+```
+
+---
+
+## 🔬 Complete Conversion Tables
+
+### Any Type → Number
+
+| Value | `Number()` | Unary `+` | `parseInt` | `parseFloat` |
+|---|---|---|---|---|
+| `undefined` | `NaN` | `NaN` | `NaN` | `NaN` |
+| `null` | `0` | `0` | `NaN` | `NaN` |
+| `true` | `1` | `1` | `NaN` | `NaN` |
+| `false` | `0` | `0` | `NaN` | `NaN` |
+| `""` | `0` | `0` | `NaN` | `NaN` |
+| `" "` | `0` | `0` | `NaN` | `NaN` |
+| `"42"` | `42` | `42` | `42` | `42` |
+| `"42.5"` | `42.5` | `42.5` | `42` | `42.5` |
+| `"42abc"` | `NaN` | `NaN` | `42` | `42` |
+| `"0x1F"` | `31` | `31` | `31` | `0` |
+| `[]` | `0` | `0` | `NaN` | `NaN` |
+| `[3]` | `3` | `3` | `NaN` | `NaN` |
+| `{}` | `NaN` | `NaN` | `NaN` | `NaN` |
+| `NaN` | `NaN` | `NaN` | `NaN` | `NaN` |
+| `Infinity` | `Infinity` | `Infinity` | `NaN` | `Infinity` |
+
+---
+
+### Any Type → String
+
+| Value | `String()` | `.toString()` | `` `${x}` `` | `+ ""` |
+|---|---|---|---|---|
+| `undefined` | `"undefined"` | ❌ crash | `"undefined"` | `"undefined"` |
+| `null` | `"null"` | ❌ crash | `"null"` | `"null"` |
+| `true` | `"true"` | `"true"` | `"true"` | `"true"` |
+| `false` | `"false"` | `"false"` | `"false"` | `"false"` |
+| `42` | `"42"` | `"42"` | `"42"` | `"42"` |
+| `-0` | `"0"` | `"0"` | `"0"` | `"0"` |
+| `NaN` | `"NaN"` | `"NaN"` | `"NaN"` | `"NaN"` |
+| `Symbol("x")` | `"Symbol(x)"` | `"Symbol(x)"` | ❌ TypeError | ❌ TypeError |
+| `42n` | `"42"` | `"42"` | `"42"` | ❌ TypeError |
+| `[]` | `""` | `""` | `""` | `""` |
+| `[1,2]` | `"1,2"` | `"1,2"` | `"1,2"` | `"1,2"` |
+| `{}` | `"[object Object]"` | `"[object Object]"` | `"[object Object]"` | `"[object Object]"` |
+
+---
+
+### Any Type → Boolean
+
+| Value | `Boolean()` | `!!` | `if(x)` |
+|---|---|---|---|
+| `false` | `false` | `false` | ❌ skip |
+| `0` | `false` | `false` | ❌ skip |
+| `-0` | `false` | `false` | ❌ skip |
+| `0n` | `false` | `false` | ❌ skip |
+| `""` | `false` | `false` | ❌ skip |
+| `null` | `false` | `false` | ❌ skip |
+| `undefined` | `false` | `false` | ❌ skip |
+| `NaN` | `false` | `false` | ❌ skip |
+| `"0"` | `true` | `true` | ✅ runs |
+| `"false"` | `true` | `true` | ✅ runs |
+| `[]` | `true` | `true` | ✅ runs |
+| `{}` | `true` | `true` | ✅ runs |
+| `Infinity` | `true` | `true` | ✅ runs |
+
+---
+
+## ⚙️ Deep Dive — V8 Type Cast Internals
+
+```
+┌──────────────────────────────────────────────────────────┐
+│           V8 CAST OPTIMIZATION                           │
+│                                                          │
+│  ToBoolean — ZERO cost for known types:                  │
+│    V8 knows statically if value is Smi → check bit       │
+│    If Smi: 0 = false, anything else = true               │
+│    Single bit check — one CPU instruction                │
+│                                                          │
+│  ToNumber on string:                                     │
+│    V8 caches conversion result on string object          │
+│    Same string converted twice → cached result           │
+│    StringToNumber: hand-written fast-path parser         │
+│    Parses digits directly — no regex                     │
+│                                                          │
+│  ToString on number:                                     │
+│    Small integers (Smi): pre-computed lookup table       │
+│    0-9: single char strings cached permanently           │
+│    Larger: dtoa algorithm (Grisu2/Ryu in modern V8)      │
+│                                                          │
+│  ToPrimitive on object:                                  │
+│    Checks for Symbol.toPrimitive first (hash lookup)     │
+│    Then valueOf (prototype chain lookup)                 │
+│    Then toString (prototype chain lookup)                │
+│    3 potential prototype chain walks — slowest cast      │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Safe Number Parsing from API/URL
+
+```js
+// URL params, form inputs, API strings → always strings
+// Need safe parsing with fallback:
+
+function parseIntSafe(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isInteger(n) && Number.isFinite(n) ? n : fallback;
+}
+
+function parseFloatSafe(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+parseIntSafe("42")      // 42  ✅
+parseIntSafe("42.5")    // 0   — not integer → fallback
+parseIntSafe("abc")     // 0   — NaN → fallback
+parseIntSafe(undefined) // 0   — NaN → fallback
+parseIntSafe("999999999999999999999") // 0 — beyond safe integer
+
+// Strict integer from URL param:
+function getPage(req) {
+  const page = parseInt(req.query.page, 10);
+  if (!Number.isFinite(page) || page < 1) return 1; // default
+  return Math.min(page, 1000); // cap
+}
+```
+
+### Pattern 2 — Reliable Type Conversion Utilities
+
+```js
+// Production-grade type converters:
+const cast = {
+  // ToInt — handles all edge cases:
+  toInt(value, fallback = 0) {
+    if (value === null || value === undefined) return fallback;
+    const n = Math.trunc(Number(value));
+    return Number.isFinite(n) ? n : fallback;
+  },
+
+  // ToFloat — safe float:
+  toFloat(value, decimals = 2, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return parseFloat(n.toFixed(decimals));
+  },
+
+  // ToBool — explicit rules:
+  toBool(value) {
+    if (typeof value === "string") {
+      return !["false", "0", "no", "off", ""].includes(
+        value.trim().toLowerCase()
+      );
+    }
+    return Boolean(value);
+  },
+
+  // ToString — never crashes:
+  toStr(value) {
+    if (value === null)      return "null";
+    if (value === undefined) return "";
+    if (typeof value === "symbol") return value.toString();
+    return String(value);
+  }
+};
+
+cast.toInt("42px")    // 0  — "42px" → NaN → fallback
+cast.toInt("42.9")    // 42 — truncated
+cast.toBool("false")  // false ← string "false" → false
+cast.toBool("true")   // true
+cast.toBool(1)        // true
+```
+
+### Pattern 3 — Database/API Serialization
+
+```js
+// Ensure correct types before DB write:
+function sanitizeUser(input) {
+  return {
+    id:        Number.isInteger(+input.id) ? +input.id : null,
+    name:      typeof input.name === "string"
+                 ? input.name.trim().slice(0, 100)
+                 : null,
+    age:       Number.isFinite(+input.age) && +input.age >= 0
+                 ? Math.trunc(+input.age)
+                 : null,
+    isActive:  Boolean(input.isActive),
+    score:     isFinite(+input.score)
+                 ? parseFloat((+input.score).toFixed(2))
+                 : 0,
+    tags:      Array.isArray(input.tags)
+                 ? input.tags.map(String).slice(0, 10)
+                 : []
+  };
+}
+```
+
+### Pattern 4 — Bit-Level Integer Conversion
+
+```js
+// Fast integer truncation for performance-critical code:
+function fastFloor(n)  { return n | 0; }     // truncate (avoid for negatives)
+function fastTrunc(n)  { return ~~n; }        // same as | 0
+function toUint32(n)   { return n >>> 0; }    // unsigned 32-bit
+function toInt32(n)    { return n | 0; }      // signed 32-bit
+
+// Use case — pixel manipulation (canvas):
+function blendColors(c1, c2, alpha) {
+  const a = (alpha * 255) | 0;        // float → byte (0-255)
+  const r = ((c1 >> 16 & 0xFF) * a +
+             (c2 >> 16 & 0xFF) * (255 - a)) >> 8 | 0;
+  const g = ((c1 >> 8  & 0xFF) * a +
+             (c2 >> 8  & 0xFF) * (255 - a)) >> 8 | 0;
+  const b = ((c1       & 0xFF) * a +
+             (c2       & 0xFF) * (255 - a)) >> 8 | 0;
+  return (r << 16) | (g << 8) | b;
+}
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: `parseInt` without radix — octal ambiguity
+
+```js
+// ALWAYS pass radix:
+parseInt("08")      // 8  in modern engines
+parseInt("08", 10)  // 8  ✅ explicit and safe
+parseInt("08", 8)   // 0  — 8 is invalid octal digit
+parseInt("010")     // 10 in modern engines (not 8)
+parseInt("010", 8)  // 8  — explicit octal
+
+// Old engines (IE) parsed "010" as octal = 8 😱
+// Real prod bug: date parsing "09" → 0 in IE → wrong month
+```
+
+---
+
+### Trap 2: `Number("")` vs `parseInt("")`
+
+```js
+Number("")      // 0   — empty string = 0 😱
+parseInt("")    // NaN — empty string = NaN ✅
+
+// This trips people up in validation:
+function isValidInput(val) {
+  return !isNaN(Number(val)); // ❌ — "" passes as valid (0)
+}
+
+function isValidInput(val) {
+  return val.trim() !== "" && Number.isFinite(Number(val)); // ✅
+}
+```
+
+---
+
+### Trap 3: `-0` disappears in String conversion
+
+```js
+String(-0)      // "0" 😱 — sign lost
+`${-0}`         // "0" 😱
+(-0).toString() // "0" 😱
+-0 + ""         // "0" 😱
+
+// Only way to detect -0:
+Object.is(-0, 0)           // false ✅
+(-0).toLocaleString()      // "0" — still loses sign
+
+// Real prod — velocity/direction stored as -0 vs 0:
+const velocity = -0;
+const display = String(velocity); // "0" — direction lost silently
+// Fix: check before converting:
+const display = Object.is(velocity, -0) ? "-0" : String(velocity);
+```
+
+---
+
+### Trap 4: `parseInt` on floating point — scientific notation
+
+```js
+// Large floats get scientific notation:
+0.000005.toString()    // "0.000005"
+0.0000005.toString()   // "5e-7"  ← scientific notation
+
+parseInt(0.000005)     // 0   — "0.000005" → 0 ✅
+parseInt(0.0000005)    // 5   😱 — "5e-7" → parseInt reads "5"
+
+// Even worse:
+parseInt(1/0)          // NaN — "Infinity" → 'I' → NaN? No:
+parseInt(Infinity)     // NaN ← actually NaN
+
+// Real prod — parsing currency with many zeros:
+const tiny = 0.0000001;
+parseInt(tiny)  // 1 😱 — "1e-7" → reads "1"
+// Fix: always work with strings from user input directly
+```
+
+---
+
+### Trap 5: `!!` vs `Boolean()` — both fine, but Symbol edge case
+
+```js
+// Both identical for all types EXCEPT:
+Boolean(Symbol())  // true ✅
+!!Symbol()         // true ✅ — same
+
+// The real trap is assuming Boolean("false") = false:
+Boolean("false")   // true 😱 — non-empty string
+!!"false"          // true 😱
+
+// Real prod — config from env:
+const DEBUG = process.env.DEBUG; // "false" from env file
+
+if (DEBUG) { ... }            // RUNS 😱 — "false" is truthy
+if (Boolean(DEBUG)) { ... }   // RUNS 😱 — same
+if (DEBUG === "true") { ... } // ✅ — explicit string comparison
+
+// Safe boolean env var:
+const DEBUG = process.env.DEBUG?.toLowerCase() === "true";
+```
+
+---
+
+### Trap 6: `toFixed()` returns string — arithmetic after it breaks
+
+```js
+const price = 9.99;
+const taxed = price * 1.1;
+const display = taxed.toFixed(2);  // "10.99" ← STRING
+
+// Now someone does math on it:
+display + 1    // "10.991" 😱 — string concatenation
+display * 1    // 10.99 ✅   — but why multiply
++display       // 10.99 ✅   — unary plus
+
+// Real prod — summing formatted prices:
+const prices = [9.99, 4.99, 14.99];
+const total = prices
+  .map(p => p.toFixed(2))     // ["9.99", "4.99", "14.99"] — strings
+  .reduce((a, b) => a + b, 0); // 0 + "9.99" + ... = "09.994.9914.99" 😱
+
+// Fix — format LAST, compute with numbers:
+const total = prices.reduce((a, b) => a + b, 0);
+const display = total.toFixed(2); // "29.97" ✅
+```
+
+---
+
+### Trap 7: Type casting changes type permanently
+
+```js
+// += with string converts variable permanently:
+let count = 0;        // number
+count += " items";    // "0 items" — now a STRING
+count += 1;           // "0 items1" 😱 — string concat, not addition
+typeof count;         // "string" — silently became string
+
+// Real prod — building log messages:
+let msg = errorCount; // 5 (number)
+msg += " errors in "; // "5 errors in " (string!)
+msg += fileName;      // "5 errors in app.js" ✅ intended
+msg + 1;              // "5 errors in app.js1" 😱 if someone tries arithmetic
+
+// Fix — keep number separate:
+const summary = `${errorCount} errors in ${fileName}`;
+```
+
+---
+
+## 📊 DSA / Internals Connection
+
+> Type casting connects directly to **type systems** in programming language theory. JS uses a **dynamic weak type system** — types are checked at runtime (dynamic) and implicit conversions happen automatically (weak). The internal algorithms (`ToNumber`, `ToString`, `ToBoolean`, `ToPrimitive`) form a **type coercion lattice** — a directed graph where edges represent conversion paths and costs.
+>
+> V8 represents every value as a **tagged union** internally. Type casting = reading the tag, branching on it, and producing a value of the target type. For Smi integers, this is a **single bit operation**. For objects, it requires **prototype chain traversal** + **method calls** — orders of magnitude more expensive. This is why type-stable code (same type throughout) is dramatically faster in hot loops — V8 TurboFan only needs to emit one branch, not the full coercion decision tree.
+
+---

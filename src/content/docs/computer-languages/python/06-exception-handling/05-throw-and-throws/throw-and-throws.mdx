@@ -1,0 +1,1087 @@
+---
+title: Python raise & Exception Propagation
+slug: computer-languages/python/exception-handling/raise
+description: Master Python's `raise` statement, exception chaining (`from`), and how propagation differs from Java's checked/unchecked model.
+sidebar:
+  label: "raise"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [python, raise, exceptions, propagation, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 💥 The `raise` Statement
+
+> In Java, you `throw` an exception. In Python, you **`raise`** it.  
+> Python does not have a `throws` keyword in method signatures. All exceptions are unchecked (runtime).
+
+### 🔬 Syntax
+
+```python
+# 1. Raise a new instance
+raise ValueError("Invalid input")
+
+# 2. Re-raise the current exception (preserves traceback)
+try:
+    do_something()
+except KeyError:
+    print("Logging error...")
+    raise  # <--- No argument!
+
+# 3. Raise with Chaining (Explicit)
+try:
+    open_file()
+except FileNotFoundError as e:
+    raise ConfigError("Config missing") from e
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `raise Error`: "Stop everything and report this problem."  
+- `raise`: "I handled the logging, but I can't fix it. Pass it up."  
+- `raise ... from ...`: "This new error happened BECAUSE of that old error."
+</Aside>
+
+---
+
+## 🌊 Exception Propagation
+
+In Java, checked exceptions force you to declare `throws IOException`. **Python has no checked exceptions.** If an error occurs, it bubbles up the call stack automatically until it is caught or crashes the program.
+
+### 🔬 The Flow
+
+```text
+def level_3():
+    raise ValueError("Boom!")  # 💥 Error starts here
+
+def level_2():
+    level_3()                  # Propagates up
+
+def level_1():
+    level_2()                  # Propagates up
+
+level_1()                      # Crashes if uncaught
+```
+
+If `level_1` doesn't catch it, Python prints a **Traceback**:
+```text
+Traceback (most recent call last):
+  File "main.py", line 8, in <module>
+    level_1()
+  File "main.py", line 5, in level_1
+    level_2()
+  File "main.py", line 2, in level_2
+    level_3()
+  File "main.py", line 1, in level_3
+    raise ValueError("Boom!")
+ValueError: Boom!
+```
+
+---
+
+## 🔗 Exception Chaining (`from`)
+
+Java wraps exceptions (`new Ex("msg", cause)`). Python uses `raise ... from ...`. This is crucial for debugging because it preserves the **original** error context.
+
+<CardGrid>
+  <Card title="Implicit Chaining" icon="information">
+    ```python
+    try:
+        1 / 0
+    except ZeroDivisionError:
+        raise ValueError("Math failed")
+    
+    # Output shows BOTH errors:
+    # ValueError: Math failed
+    # 
+    # The above exception was the direct cause of the following exception:
+    # 
+    # Traceback... ZeroDivisionError
+    ```
+  </Card>
+  
+  <Card title="Explicit Chaining (`from`)" icon="shield">
+    ```python
+    try:
+        connect_db()
+    except ConnectionError as e:
+        # Explicitly link the cause
+        raise ServiceUnavailableError("DB Down") from e
+    ```
+  </Card>
+
+  <Card title="Suppression (`from None`)" icon="rocket">
+    ```python
+    try:
+        risky_op()
+    except SpecificError:
+        # Hide the original error completely
+        raise GenericError("Failed") from None
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 💻 Real-World Code: Validation Pattern
+
+In Java, you might throw `IllegalArgumentException`. In Python, it's the same, but you don't need to declare it.
+
+```python
+class UserRegistration:
+    def register(self, username: str, age: int):
+        # Guard Clauses
+        if not username:
+            raise ValueError("Username cannot be empty")
+        
+        if age < 18:
+            raise ValueError("Must be 18+")
+            
+        if self.db.exists(username):
+            # Custom Exception
+            raise DuplicateUserError(f"{username} is taken")
+        
+        self.db.save(username, age)
+```
+
+<Aside type="caution">
+**Java vs Python**:  
+- Java: `public void register() throws DuplicateUserException`  
+- Python: Just `raise DuplicateUserError(...)`. The caller must know to handle it via documentation or code inspection.
+</Aside>
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Bare `raise` outside `except`" icon="error">
+    ```python
+    def foo():
+        raise  # ❌ RuntimeError: No active exception to reraise
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Losing the Traceback" icon="warning">
+    ```python
+    try:
+        fail()
+    except Exception as e:
+        raise Exception("New error") # ❌ Loses original traceback
+        
+    # ✅ Fix:
+    raise Exception("New error") from e
+    ```
+  </Card>
+
+  <Card title="Trap 3: Raising Strings" icon="shield">
+    ```python
+    raise "Error" # ❌ TypeError: exceptions must derive from BaseException
+    
+    # ✅ Fix:
+    raise ValueError("Error")
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: Does Python have `throws`?
+    A: No. All exceptions are unchecked.
+    
+    Q: How do you re-raise an exception?
+    A: Use bare `raise` inside an except block.
+    ```
+  </Card>
+  
+  <Card title="Chaining" icon="rocket">
+    ```text
+    Q: What does `from` do?
+    A: It links the new exception to the old one (__cause__).
+    
+    Q: What is `from None`?
+    A: It suppresses the display of the original exception context.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+def outer():
+    try:
+        inner()
+    except ValueError:
+        print("Caught in outer")
+
+def inner():
+    try:
+        raise KeyError("Key missing")
+    except KeyError:
+        raise ValueError("Value bad")
+
+outer()
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Caught in outer
+```
+*Reason: `inner` raises `KeyError`, catches it, and raises `ValueError`. `outer` catches `ValueError`.*
+</details>
+
+> 🚀 **Final Wisdom**: Use `raise` to signal errors clearly. Use `from` to preserve context. And remember: just because you *can* raise any exception anywhere doesn't mean you *should*. Document your side effects! 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🚀 Python `raise` — throw & throws
+
+---
+
+## 🧠 Mental Model First
+
+```
+Java:   throw  keyword  → explicitly raise an exception instance
+        throws keyword  → declare exceptions a method can throw
+
+Python: raise  keyword  → covers BOTH throw and throws
+        No throws       → Python has NO forced declaration
+                          (use docstrings + type hints instead)
+
+┌──────────────────────┬──────────────────────────────────────────┐
+│ Java                 │ Python                                   │
+├──────────────────────┼──────────────────────────────────────────┤
+│ throw new Error()    │ raise ValueError()                       │
+│ throw e              │ raise e                                  │
+│ throws IOException   │ # Raises: IOError  (docstring convention)│
+│ rethrow              │ raise  (bare)                            │
+│ throw e from cause   │ raise e from cause                       │
+│ throw e from None    │ raise e from None                        │
+└──────────────────────┴──────────────────────────────────────────┘
+```
+
+---
+
+## 01 — `raise` (Python's `throw`)
+
+### All Forms of `raise`
+
+```python
+# FORM 1 — raise exception instance (most common):
+raise ValueError("invalid port number")
+
+
+# FORM 2 — raise exception class (Python instantiates it):
+raise ValueError           # equivalent to: raise ValueError()
+
+
+# FORM 3 — bare raise (re-raise active exception):
+try:
+    risky()
+except ValueError:
+    log_error()
+    raise                  # re-raises same ValueError, same traceback
+
+
+# FORM 4 — raise with explicit cause (chaining):
+try:
+    int("bad")
+except ValueError as e:
+    raise RuntimeError("conversion failed") from e
+
+
+# FORM 5 — raise suppressing cause:
+try:
+    int("bad")
+except ValueError:
+    raise RuntimeError("conversion failed") from None
+
+
+# FORM 6 — raise inside except re-raises with new message:
+try:
+    connect(host)
+except ConnectionError as e:
+    raise ConnectionError(f"Cannot reach {host}: {e}") from e
+```
+
+---
+
+### 🔬 `raise` Internals — Bytecode
+
+```python
+import dis
+
+def f():
+    raise ValueError("test")
+
+dis.dis(f)
+```
+
+```
+  LOAD_GLOBAL    ValueError
+  LOAD_CONST     'test'
+  CALL           1              ← ValueError("test") instantiated
+  RAISE_VARARGS  1              ← raises with 1 arg (the exception)
+```
+
+```
+RAISE_VARARGS opcode:
+  arg=0 → bare raise  (re-raise active exception)
+  arg=1 → raise exc   (raise given exception)
+  arg=2 → raise exc from cause  (explicit chaining)
+
+CPython raise steps:
+  1. Check: is it BaseException subclass/instance?
+     → No: TypeError: exceptions must derive from BaseException
+  2. If class passed (not instance): instantiate it
+  3. Set __traceback__ to current frame
+  4. Unwind call stack looking for matching except clause
+```
+
+---
+
+### Raise With Validation
+
+```python
+# Real pattern — validate then raise:
+def create_user(name: str, age: int, email: str) -> dict:
+    if not name or not name.strip():
+        raise ValueError("name cannot be empty")
+
+    if not isinstance(age, int):
+        raise TypeError(f"age must be int, got {type(age).__name__}")
+
+    if age < 0 or age > 150:
+        raise ValueError(f"age out of range: {age}")
+
+    import re
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        raise ValueError(f"invalid email format: {email!r}")
+
+    return {"name": name.strip(), "age": age, "email": email}
+```
+
+---
+
+### `raise` Inside Different Contexts
+
+```python
+# Raise from property setter:
+class Temperature:
+    @property
+    def celsius(self): return self._c
+
+    @celsius.setter
+    def celsius(self, v):
+        if v < -273.15:
+            raise ValueError(f"Below absolute zero: {v}")
+        self._c = v
+
+
+# Raise from __init__:
+class Connection:
+    def __init__(self, host, port):
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Invalid port: {port}")
+        self.host = host
+        self.port = port
+
+
+# Raise from generator:
+def positive_range(n: int):
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
+    yield from range(n)
+
+
+# Raise from context manager:
+class Transaction:
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self._conn.rollback()
+            if isinstance(exc_val, TimeoutError):
+                raise RuntimeError("Transaction timed out") from exc_val
+        return False
+```
+
+---
+
+### `raise` — What You CANNOT Raise
+
+```python
+raise "error"           # 💥 TypeError: exceptions must derive from BaseException
+raise 42                # 💥 TypeError
+raise None              # 💥 TypeError
+raise [1, 2]            # 💥 TypeError
+
+# MUST be BaseException subclass or instance:
+raise BaseException()   # ✅
+raise Exception()       # ✅
+raise ValueError()      # ✅
+raise ValueError        # ✅ (class — auto-instantiated)
+raise ValueError("msg") # ✅ (instance)
+```
+
+---
+
+## 02 — `throws` Equivalent — Python Has No Enforcement
+
+### Python's Approach — Declaration by Convention
+
+```python
+# OPTION 1 — Docstring (most common):
+def connect(host: str, port: int) -> "Connection":
+    """
+    Connect to remote server.
+
+    Args:
+        host: Server hostname
+        port: Port number (1-65535)
+
+    Returns:
+        Active Connection object
+
+    Raises:
+        ValueError:              if port is out of valid range
+        ConnectionRefusedError:  if server actively refuses connection
+        TimeoutError:            if connection times out
+        OSError:                 for other network-level errors
+    """
+    ...
+```
+
+```python
+# OPTION 2 — Type hints only (no runtime enforcement):
+from typing import Never
+
+def always_fails() -> Never:    # Never = function that NEVER returns normally
+    raise RuntimeError("always raises")
+
+
+# OPTION 3 — Custom decorator (closest to Java throws):
+from functools import wraps
+from typing import Type
+
+def raises(*exception_types: Type[BaseException]):
+    """Documents declared exceptions — similar to Java throws."""
+    def decorator(func):
+        func.__raises__ = exception_types    # store on function
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+@raises(ValueError, ConnectionError, TimeoutError)
+def connect(host: str, port: int):
+    ...
+
+# Inspect at runtime:
+connect.__raises__    # (ValueError, ConnectionError, TimeoutError)
+```
+
+---
+
+### Sphinx / Google / NumPy Docstring Conventions
+
+```python
+# Sphinx style:
+def divide(a: float, b: float) -> float:
+    """
+    Divide a by b.
+
+    :param a: Numerator
+    :param b: Denominator
+    :raises ZeroDivisionError: When b is zero
+    :raises TypeError: When a or b is not numeric
+    :returns: Result of a / b
+    """
+    return a / b
+
+
+# Google style:
+def fetch_user(user_id: int) -> dict:
+    """
+    Retrieve user by ID.
+
+    Args:
+        user_id: The unique user identifier
+
+    Returns:
+        User data dictionary
+
+    Raises:
+        ValueError: If user_id is not a positive integer
+        KeyError:   If user not found
+        DatabaseError: If database connection fails
+    """
+    ...
+
+
+# NumPy style:
+def process(data: list) -> list:
+    """
+    Process input data.
+
+    Parameters
+    ----------
+    data : list
+        Input data to process
+
+    Returns
+    -------
+    list
+        Processed results
+
+    Raises
+    ------
+    TypeError
+        If data is not a list
+    ValueError
+        If data is empty
+    """
+    ...
+```
+
+---
+
+## 03 — `raise` vs `throws` (Python vs Java Comparison)
+
+### Full Comparison
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      PYTHON raise                               │
+├─────────────────────────────────────────────────────────────────┤
+│ Syntax:     raise ExceptionType(message)                        │
+│             raise ExceptionInstance                             │
+│             raise                          ← re-raise           │
+│             raise NewExc from original     ← chained           │
+│             raise NewExc from None         ← suppress chain    │
+│                                                                 │
+│ When:       inside function body, __init__, property, anywhere  │
+│ Enforcement:NONE — runtime only                                 │
+│ Declaration:convention (docstring) — not enforced               │
+│ Re-raise:   bare raise preserves original traceback             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Exception Chaining — `raise X from Y`
+
+```python
+# EXPLICIT CHAIN — "this exception was caused by that":
+def load_config(path: str) -> dict:
+    try:
+        with open(path) as f:
+            import json
+            return json.load(f)
+    except FileNotFoundError as e:
+        raise ConfigError(f"Config missing: {path}") from e
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Invalid config at line {e.lineno}") from e
+```
+
+```
+Output when ConfigError raised:
+  FileNotFoundError: [Errno 2] No such file or directory: 'config.json'
+
+  The above exception was the direct cause of the following exception:
+
+  ConfigError: Config missing: config.json
+```
+
+```python
+# SUPPRESS CHAIN — "raise X from None":
+def get_user(user_id: int) -> dict:
+    try:
+        return db.query(f"SELECT * FROM users WHERE id={user_id}")[0]
+    except IndexError:
+        raise KeyError(user_id) from None
+        # Hides internal IndexError — caller sees clean KeyError
+        # No "during handling of IndexError, KeyError was raised"
+```
+
+```python
+# IMPLICIT CHAIN — exception during exception handling:
+try:
+    int("bad")
+except ValueError:
+    open("nonexistent_file")      # another exception while handling ValueError
+# Output:
+# During handling of the above exception, another exception occurred:
+# FileNotFoundError: ...
+# __context__ is set automatically — __cause__ is None
+```
+
+---
+
+### Chaining Attributes
+
+```python
+try:
+    try:
+        raise ValueError("original")
+    except ValueError as e:
+        raise RuntimeError("wrapper") from e
+except RuntimeError as e:
+    print(e.__cause__)              # ValueError: original
+    print(e.__context__)            # ValueError: original
+    print(e.__suppress_context__)   # True  (because explicit from)
+
+try:
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise RuntimeError("wrapper")  # no 'from'
+except RuntimeError as e:
+    print(e.__cause__)              # None (no explicit from)
+    print(e.__context__)            # ValueError: original
+    print(e.__suppress_context__)   # False
+
+try:
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise RuntimeError("wrapper") from None  # suppress
+except RuntimeError as e:
+    print(e.__cause__)              # None
+    print(e.__context__)            # ValueError: original (still stored)
+    print(e.__suppress_context__)   # True  ← hides __context__ in output
+```
+
+---
+
+## 04 — Exception Propagation
+
+### The Propagation Mechanism
+
+```
+def c():
+    raise ValueError("from c")    ← BIRTH POINT
+         │
+         │  No handler in c → unwind
+         ▼
+def b():
+    c()
+         │
+         │  No handler in b → unwind
+         ▼
+def a():
+    b()
+         │
+         │  No handler in a → unwind
+         ▼
+def main():
+    try:
+        a()                        ← CATCH POINT
+    except ValueError as e:
+        handle(e)
+```
+
+```python
+def c():
+    print("  c: raising")
+    raise ValueError("from c")
+
+def b():
+    print("  b: calling c")
+    c()
+    print("  b: after c")       # NEVER runs
+
+def a():
+    print("  a: calling b")
+    b()
+    print("  a: after b")       # NEVER runs
+
+try:
+    a()
+except ValueError as e:
+    print(f"Caught: {e}")
+    import traceback
+    traceback.print_exc()
+```
+
+```
+  a: calling b
+  b: calling c
+  c: raising
+Caught: from c
+Traceback (most recent call last):
+  File "x.py", line 12, in <module>
+    a()
+  File "x.py", line 8, in a
+    b()
+  File "x.py", line 5, in b
+    c()
+  File "x.py", line 2, in c
+    raise ValueError("from c")
+ValueError: from c
+```
+
+---
+
+### Propagation Through Multiple Layers
+
+```python
+# Exception propagates until caught OR crashes:
+import traceback
+
+def layer_5():
+    raise RuntimeError("deep error")
+
+def layer_4(): layer_5()
+def layer_3(): layer_4()
+def layer_2(): layer_3()
+def layer_1(): layer_2()
+
+# Catch at any level:
+try:
+    layer_1()
+except RuntimeError as e:
+    frames = traceback.extract_tb(e.__traceback__)
+    print(f"Raised at: {frames[-1].name} line {frames[-1].lineno}")
+    print(f"Caught at: layer_1 call site")
+    print(f"Depth: {len(frames)} frames deep")
+```
+
+---
+
+### Propagation — Control Flow Proof
+
+```python
+def f():
+    print("f: start")
+    try:
+        print("f: before raise")
+        raise ValueError("from f")
+        print("f: NEVER")           # unreachable
+    except TypeError:
+        print("f: TypeError handler")  # wrong type — skipped
+    print("f: NEVER reached")         # exception propagates
+
+def g():
+    print("g: start")
+    f()
+    print("g: NEVER reached")          # f raised, no handler
+
+def h():
+    print("h: start")
+    try:
+        g()
+        print("h: NEVER reached")
+    except ValueError as e:
+        print(f"h: caught {e}")
+    print("h: continues normally")     # ← execution resumes here
+
+h()
+```
+
+```
+h: start
+g: start
+f: start
+f: before raise
+h: caught from f
+h: continues normally
+```
+
+---
+
+### Propagation With `finally` at Each Level
+
+```python
+def c():
+    try:
+        raise ValueError("from c")
+    finally:
+        print("  c.finally")       # runs, exception propagates
+
+def b():
+    try:
+        c()
+    finally:
+        print("  b.finally")       # runs, exception propagates
+
+def a():
+    try:
+        b()
+    except ValueError as e:
+        print(f"  a.caught: {e}")
+    finally:
+        print("  a.finally")       # runs after catch
+
+a()
+```
+
+```
+  c.finally
+  b.finally
+  a.caught: from c
+  a.finally
+```
+
+---
+
+### Partial Re-raise vs Full Propagation
+
+```python
+# RE-RAISE — same exception, same traceback:
+def process(data):
+    try:
+        transform(data)
+    except ValueError as e:
+        log.warning(f"Transform failed: {e}")
+        raise                   # ← re-raise: traceback points to transform()
+
+
+# WRAP AND RAISE — new exception, original as cause:
+def process_v2(data):
+    try:
+        transform(data)
+    except ValueError as e:
+        raise ProcessingError(
+            f"Failed to process data"
+        ) from e                # ← new exception wraps original
+
+
+# TRANSLATE — new exception, suppress original:
+def process_v3(data):
+    try:
+        internal_transform(data)   # internal detail
+    except _InternalError as e:
+        raise PublicAPIError(
+            f"Operation failed"
+        ) from None                # ← hide internal exception type
+
+
+# SWALLOW — catch and don't re-raise (use carefully):
+def safe_process(data):
+    try:
+        transform(data)
+    except ValueError:
+        log.error("Transform failed", exc_info=True)
+        return None                # ← swallowed — caller gets None
+```
+
+---
+
+### Propagation in Async Code
+
+```python
+import asyncio
+
+async def fetch(url: str) -> str:
+    if not url.startswith("https"):
+        raise ValueError(f"Non-HTTPS URL: {url}")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            return await resp.text()
+
+async def process_urls(urls: list[str]) -> list:
+    results = []
+    for url in urls:
+        try:
+            data = await fetch(url)   # await propagates exceptions normally
+            results.append(data)
+        except ValueError as e:
+            print(f"Skipping invalid URL: {e}")
+        except aiohttp.ClientError as e:
+            raise RuntimeError(f"Network failure: {url}") from e
+    return results
+```
+
+```python
+# asyncio.gather — exception propagation in concurrent tasks:
+async def main():
+    try:
+        results = await asyncio.gather(
+            fetch("https://a.com"),
+            fetch("https://b.com"),
+            fetch("http://bad.com"),    # raises ValueError
+        )
+    except ValueError as e:
+        print(f"One task failed: {e}")
+        # OTHER tasks may have completed or still running!
+
+    # return_exceptions=True — collect ALL results including exceptions:
+    results = await asyncio.gather(
+        fetch("https://a.com"),
+        fetch("http://bad.com"),
+        return_exceptions=True         # no raise — exceptions as values
+    )
+    for r in results:
+        if isinstance(r, Exception):
+            print(f"Failed: {r}")
+        else:
+            print(f"Got: {r[:50]}")
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# raise in custom data structures:
+class BinarySearchTree:
+    class _Node:
+        def __init__(self, val):
+            self.val   = val
+            self.left  = None
+            self.right = None
+
+    def __init__(self):
+        self._root = None
+        self._size = 0
+
+    def insert(self, val: int) -> None:
+        if not isinstance(val, (int, float)):
+            raise TypeError(
+                f"BST only supports numeric values, got {type(val).__name__}"
+            )
+        self._root = self._insert(self._root, val)
+        self._size += 1
+
+    def _insert(self, node, val):
+        if node is None:
+            return self._Node(val)
+        if val < node.val:
+            node.left  = self._insert(node.left, val)
+        elif val > node.val:
+            node.right = self._insert(node.right, val)
+        else:
+            raise ValueError(f"Duplicate value not allowed: {val}")
+        return node
+
+    def find_min(self) -> int:
+        if self._root is None:
+            raise IndexError("Cannot find min of empty BST")
+        node = self._root
+        while node.left:
+            node = node.left
+        return node.val
+
+    def delete(self, val: int) -> None:
+        if self._root is None:
+            raise KeyError(f"Value {val} not found in BST")
+        self._root, deleted = self._delete(self._root, val)
+        if not deleted:
+            raise KeyError(f"Value {val} not found in BST")
+        self._size -= 1
+```
+
+---
+
+## 💀 Interview Trap 1 — Bare `raise` Outside `except`
+
+```python
+try:
+    risky()
+except ValueError:
+    handle()
+    raise                    # ✅ re-raises ValueError
+
+# Outside except block:
+def bad():
+    raise                    # 💥 RuntimeError: No active exception to re-raise
+
+# During another exception:
+try:
+    raise ValueError("first")
+except ValueError:
+    try:
+        raise RuntimeError("second")
+    except RuntimeError:
+        raise                # ✅ re-raises RuntimeError (innermost active)
+```
+
+---
+
+## 💀 Interview Trap 2 — `raise Exception(e)` Loses Original Traceback
+
+```python
+try:
+    deep_function()           # raises ValueError at line 50
+except ValueError as e:
+    raise Exception(e)        # 💀 new Exception wraps message string
+                              # traceback now points HERE — line 50 info LOST
+
+# Fix 1 — bare raise (same traceback):
+except ValueError:
+    raise
+
+# Fix 2 — chaining (preserves original as cause):
+except ValueError as e:
+    raise RuntimeError("wrapper") from e   # __cause__ preserves original
+```
+
+---
+
+## 💀 Interview Trap 3 — Raising in `__del__` Silently Ignored
+
+```python
+class Dangerous:
+    def __del__(self):
+        raise RuntimeError("from __del__")    # 💀 IGNORED!
+        # CPython prints warning to stderr:
+        # "Exception ignored in: <function ...>"
+        # but exception does NOT propagate — silently swallowed
+
+d = Dangerous()
+del d
+# Exception ignored in: ...   ← printed to stderr
+# RuntimeError: from __del__  ← printed but not raised!
+```
+
+---
+
+## 💀 Interview Trap 4 — `raise ValueError` vs `raise ValueError()`
+
+```python
+raise ValueError           # raises ValueError() — no message
+raise ValueError()         # same — explicit empty instantiation
+raise ValueError("msg")    # raises ValueError with message
+
+# Both are valid but:
+raise ValueError           # args = ()  → str(e) = ''
+raise ValueError("msg")    # args = ('msg',) → str(e) = 'msg'
+
+# Real difference — class vs instance:
+exc = ValueError("saved")
+raise exc          # ✅ raises saved instance (with its existing traceback if any)
+raise ValueError   # always creates NEW instance — no message
+```
+
+---
+
+## 💀 Interview Trap 5 — Exception Swallowed by Generator
+
+```python
+# Python 3.7+: StopIteration raised INSIDE generator → RuntimeError:
+def my_gen():
+    yield from iter([1, 2])
+    raise StopIteration("done")   # 💀 RuntimeError: generator raised StopIteration
+
+# Why? PEP 479 — prevents accidental StopIteration bubbling
+# which would silently end a for loop
+
+# Fix — return instead of raise StopIteration:
+def correct_gen():
+    yield from iter([1, 2])
+    return                         # ✅ correct way to end generator
+```
+
+---

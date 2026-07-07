@@ -16,6 +16,40 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 
 > **Abstraction** is the OOP principle of **hiding complex implementation details** and exposing only essential features to the user. It focuses on **what** an object does, not **how** it does it.
 
+```
+Without abstraction:
+  Caller knows HOW something works internally
+  Caller depends on implementation details
+  Change internals → break all callers
+
+With abstraction:
+  Caller knows WHAT something does
+  Caller depends on contract (interface/abstract class)
+  Change internals → callers unaffected
+
+Abstraction in Java
+│
+├── What It Is
+│   └── Hide implementation details
+│       expose only what caller needs to know
+│
+├── Mechanisms
+│   ├── Abstract Class     → partial abstraction
+│   ├── Interface          → full abstraction (contract only)
+│   └── Access Modifiers   → hide internal methods/fields
+│
+├── Levels
+│   ├── Method level       → hide HOW, expose WHAT
+│   ├── Class level        → hide implementation class
+│   └── Package level      → hide internal packages
+│
+└── Related Concepts
+    ├── Data Hiding        → hide state (covered)
+    ├── Encapsulation      → hide state + bundle behavior
+    ├── Polymorphism       → abstraction at runtime dispatch
+    └── Dependency Inversion → depend on abstraction not implementation
+```
+
 ```java
 // ❌ Without abstraction — client depends on concrete implementation
 class PaymentProcessor {
@@ -92,9 +126,60 @@ By programming to abstractions (interfaces/abstract classes), you:
   </tbody>
 </table>
 
+```
+Abstract class — use when:
+  ├── Sharing CODE between related classes (not just contract)
+  ├── Common state (fields) needed across subclasses
+  ├── Template method — define algorithm, let subclasses fill steps
+  ├── Gradual migration — can add concrete methods without breaking subclasses
+  └── IS-A relationship is strong: Car IS-A Vehicle
+
+Interface — use when:
+  ├── Defining CONTRACT only — no shared implementation
+  ├── Multiple inheritance needed (class implements many)
+  ├── Unrelated classes share capability: Serializable, Comparable
+  ├── Dependency inversion — caller depends on abstraction
+  └── CAN-DO relationship: Dog CAN-DO Runnable, Serializable
+```
+
+```java
+// Abstract class — IS-A + shared behavior
+abstract class Vehicle {
+    protected int speed;                // shared state
+    protected String id;
+
+    abstract void start();              // subclass defines
+    abstract void stop();               // subclass defines
+
+    final void refuel() {              // shared algorithm
+        System.out.println("Refueling " + id);
+    }
+}
+
+// Interface — CAN-DO capability
+interface Trackable {
+    Location getLocation();            // any class can be trackable
+    void updateLocation(Location loc);
+}
+
+interface Insurable {
+    BigDecimal getPremium();           // any class can be insurable
+}
+
+// Car IS-A Vehicle, CAN-DO Trackable and Insurable
+class Car extends Vehicle implements Trackable, Insurable {
+    @Override public void start()   { speed = 0; }
+    @Override public void stop()    { speed = 0; }
+    @Override public Location getLocation() { return gps.current(); }
+    @Override public void updateLocation(Location l) { gps.update(l); }
+    @Override public BigDecimal getPremium() { return calculatePremium(); }
+}
+```
+
 ### 💻 Code Comparison — Same Goal, Different Approaches
 
-<Code lang="java" title="Abstract class — shared state + partial implementation" code={`// Abstract base for related animals
+<Code lang="java" title="Abstract class — shared state + partial implementation" code={`
+// Abstract base for related animals
 abstract class Animal {
     // Shared state
     protected String name;
@@ -143,9 +228,68 @@ class Dog extends Animal {
 Animal pet = new Dog("Buddy", 3);
 pet.breathe();      // "Buddy is breathing..." (shared implementation)
 pet.makeSound();    // "Buddy says: Woof!" (polymorphic call)
+
+// Abstract Class — Partial Abstraction
+// Abstract class: mix of abstract (what) + concrete (how)
+public abstract class ReportGenerator {
+
+    // WHAT — subclass defines
+    protected abstract List<Record> fetchData(String reportId);
+    protected abstract byte[] format(List<Record> records);
+
+    // HOW — defined here, shared by all subclasses
+    public final Report generate(String reportId) {
+        log.info("Generating report: {}", reportId);
+        List<Record> data      = fetchData(reportId);   // abstract — subclass provides
+        List<Record> filtered  = filter(data);
+        byte[]       formatted = format(filtered);       // abstract — subclass provides
+        return new Report(reportId, formatted);
+    }
+
+    // Concrete hook — subclass may override
+    protected List<Record> filter(List<Record> records) {
+        return records.stream()
+            .filter(Record::isActive)
+            .collect(Collectors.toList());
+    }
+
+    private void log(String message) {
+        System.out.println("[" + LocalDateTime.now() + "] " + message);
+    }
+}
+
+// Subclass: provides WHAT (implementation of abstract methods)
+// Inherits HOW (generate algorithm) from abstract class
+public class PdfReportGenerator extends ReportGenerator {
+
+    private final DataSource dataSource;
+
+    public PdfReportGenerator(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    protected List<Record> fetchData(String reportId) {
+        return dataSource.query("SELECT * FROM reports WHERE id = ?", reportId);
+    }
+
+    @Override
+    protected byte[] format(List<Record> records) {
+        PdfWriter writer = new PdfWriter();
+        records.forEach(writer::addRow);
+        return writer.toBytes();
+    }
+}
+
+Abstract class abstraction:
+  ├── Defines WHAT must be done (abstract methods)
+  ├── Defines HOW some things are done (concrete methods)
+  ├── Hides algorithm structure from subclasses (template method)
+  └── Cannot be instantiated — forces subclassing
 `} />
 
-<Code lang="java" title="Interface — capability for unrelated classes" code={`// Capability: things that can fly
+<Code lang="java" title="Interface — capability for unrelated classes" code={`
+// Capability: things that can fly
 interface Flyable {
     // Abstract method — contract only
     void fly();
@@ -199,6 +343,60 @@ for (Flyable flyer : flyers) {
 
 // Static method — called via interface, not instance
 double lift = Flyable.calculateLift(70, 2.5);
+`} />
+
+<Code lang="java" title="Interface — Full Abstraction" code={`
+// Interface: pure contract — only WHAT, no HOW
+public interface PaymentGateway {
+    PaymentResult charge(String token, BigDecimal amount) throws PaymentException;
+    void          refund(String transactionId, BigDecimal amount) throws PaymentException;
+    PaymentStatus getStatus(String transactionId) throws PaymentException;
+}
+
+// Three completely different implementations — same contract
+public class StripeGateway implements PaymentGateway {
+    @Override
+    public PaymentResult charge(String token, BigDecimal amount)
+            throws PaymentException {
+        // Stripe-specific HTTP calls, auth, retry logic
+        return PaymentResult.success("stripe-txn-123");
+    }
+    // ...
+}
+
+public class BraintreeGateway implements PaymentGateway {
+    @Override
+    public PaymentResult charge(String token, BigDecimal amount)
+            throws PaymentException {
+        // Braintree-specific SDK calls
+        return PaymentResult.success("braintree-txn-456");
+    }
+    // ...
+}
+
+public class MockGateway implements PaymentGateway {
+    @Override
+    public PaymentResult charge(String token, BigDecimal amount)
+            throws PaymentException {
+        return PaymentResult.success("mock-txn-000");  // no real call
+    }
+    // ...
+}
+
+// Caller: knows nothing about Stripe/Braintree/Mock
+public class CheckoutService {
+    private final PaymentGateway gateway;   // abstraction — not concrete
+
+    public CheckoutService(PaymentGateway gateway) {
+        this.gateway = gateway;
+    }
+
+    public OrderConfirmation checkout(Cart cart, String paymentToken) {
+        PaymentResult result = gateway.charge(paymentToken, cart.total());
+        // CheckoutService has zero knowledge of Stripe, Braintree, or Mock
+        return OrderConfirmation.of(cart, result);
+    }
+}
 `} />
 
 <Aside type="note">
@@ -785,6 +983,129 @@ csv.process("  hello   world  ");  // Logs: "Saving: HELLO WORLD"
 </CardGrid>
 
 ---
+## 🔬 Abstraction Levels
+
+### Method Level — Hide HOW
+
+```java
+// Caller sees WHAT — not HOW
+public class EmailService {
+
+    // Caller: "send a welcome email" — doesn't care HOW
+    public void sendWelcomeEmail(String recipientEmail, String name) {
+        String subject = buildSubject(name);
+        String body    = buildBody(name);
+        deliver(recipientEmail, subject, body);
+    }
+
+    // Hidden — caller never sees these
+    private String buildSubject(String name) {
+        return "Welcome, " + name + "!";
+    }
+
+    private String buildBody(String name) {
+        return template.render("welcome.html", Map.of("name", name));
+    }
+
+    private void deliver(String to, String subject, String body) {
+        smtpClient.send(to, subject, body);     // SMTP detail — hidden
+    }
+}
+```
+
+### Class Level — Hide Implementation
+
+```java
+// Caller sees interface — not which implementation runs
+public class RepositoryFactory {
+
+    public static UserRepository createUserRepository(Environment env) {
+        return switch (env) {
+            case PRODUCTION -> new PostgresUserRepository(prodDataSource());
+            case TESTING    -> new InMemoryUserRepository();
+            case STAGING    -> new PostgresUserRepository(stagingDataSource());
+        };
+    }
+}
+
+// Caller — sees UserRepository only
+UserRepository repo = RepositoryFactory.createUserRepository(env);
+repo.findById(userId);      // no knowledge of Postgres vs InMemory
+```
+
+### Package Level — Hide Internal Structure
+
+```java
+// Public API — caller sees only this
+com.company.payment
+  └── PaymentService.java      (public)
+  └── PaymentResult.java       (public)
+  └── PaymentException.java    (public)
+
+// Internal packages — hidden from callers
+com.company.payment.internal
+  └── StripeClient.java        (package-private)
+  └── RequestSigner.java       (package-private)
+  └── TokenVault.java          (package-private)
+
+// Java 9+ module system — module-info.java
+module com.company.payment {
+    exports com.company.payment;            // expose public API
+    // internal package NOT exported — invisible to other modules
+}
+```
+
+---
+
+## 🔬 Step 6 — Dependency Inversion via Abstraction
+
+```java
+// ❌ High-level module depends on low-level implementation — tight coupling
+class OrderService {
+    private MySQLOrderRepository repository;    // concrete class
+    private StripePaymentGateway gateway;       // concrete class
+    private SendGridEmailService email;         // concrete class
+
+    // Cannot test without MySQL, Stripe, SendGrid
+    // Cannot swap MySQL for MongoDB
+    // Cannot swap Stripe for Braintree
+}
+
+// ✅ High-level module depends on abstraction — loose coupling
+class OrderService {
+    private final OrderRepository  repository; // interface
+    private final PaymentGateway   gateway;    // interface
+    private final EmailService     email;      // interface
+
+    // Constructor injection — depends on abstractions
+    OrderService(OrderRepository repository,
+                 PaymentGateway gateway,
+                 EmailService email) {
+        this.repository = repository;
+        this.gateway    = gateway;
+        this.email      = email;
+    }
+
+    // Test: inject mocks — no real MySQL/Stripe/SendGrid needed
+    // Prod: inject real implementations
+    // Tomorrow: swap MySQL → MongoDB — OrderService unchanged
+}
+```
+
+```
+Dependency Inversion Principle:
+  High-level modules (OrderService) should not depend on
+  low-level modules (MySQLOrderRepository).
+  Both should depend on abstractions (OrderRepository).
+
+Abstraction enables DIP:
+  Interface/abstract class = the abstraction
+  High-level code: written against abstraction
+  Low-level code: implements abstraction
+  Change low-level → high-level unaffected
+```
+
+---
 
 ## 🧩 Abstraction in DSA — Practical Patterns
 
@@ -1183,6 +1504,146 @@ This leads to modular, testable, and composable algorithm libraries.
     }
     ```
   </Card>
+
+  <Card title="Pattern: Default Methods for API Evolution" icon="approve-check">
+    ```java
+    // Abstraction: what a notification channel does
+public interface NotificationChannel {
+    void send(Notification notification) throws NotificationException;
+    boolean supports(NotificationType type);
+    String  channelName();
+}
+
+// Abstract base: shared retry + logging logic
+public abstract class BaseNotificationChannel implements NotificationChannel {
+
+    protected final int maxRetries;
+    protected final Logger log = LoggerFactory.getLogger(getClass());
+
+    protected BaseNotificationChannel(int maxRetries) {
+        this.maxRetries = maxRetries;
+    }
+
+    // Template method — retry logic shared, actual send is abstract
+    @Override
+    public final void send(Notification notification)
+            throws NotificationException {
+        int attempt = 0;
+        while (attempt < maxRetries) {
+            attempt++;
+            try {
+                log.debug("Attempt {}/{} sending via {}",
+                    attempt, maxRetries, channelName());
+                doSend(notification);           // abstract — subclass provides
+                log.info("Sent via {} to {}",
+                    channelName(), notification.getRecipient());
+                return;
+            } catch (TransientException e) {
+                if (attempt == maxRetries)
+                    throw new NotificationException(
+                        "Failed after " + maxRetries + " attempts via " + channelName(), e
+                    );
+                sleep(backoff(attempt));
+            }
+        }
+    }
+
+    // Subclass provides actual send mechanism
+    protected abstract void doSend(Notification notification)
+        throws TransientException, NotificationException;
+
+    private long backoff(int attempt) {
+        return (long) Math.pow(2, attempt) * 100;
+    }
+}
+
+// Concrete: email implementation
+public class EmailChannel extends BaseNotificationChannel {
+
+    private final SmtpClient smtpClient;
+
+    public EmailChannel(SmtpClient smtpClient) {
+        super(3);   // 3 retries
+        this.smtpClient = smtpClient;
+    }
+
+    @Override
+    protected void doSend(Notification notification) throws TransientException {
+        smtpClient.send(
+            notification.getRecipient(),
+            notification.getSubject(),
+            notification.getBody()
+        );
+    }
+
+    @Override
+    public boolean supports(NotificationType type) {
+        return type == NotificationType.EMAIL
+            || type == NotificationType.DIGEST;
+    }
+
+    @Override
+    public String channelName() { return "email"; }
+}
+
+// Concrete: SMS implementation
+public class SmsChannel extends BaseNotificationChannel {
+
+    private final TwilioClient twilioClient;
+
+    public SmsChannel(TwilioClient twilioClient) {
+        super(2);   // 2 retries
+        this.twilioClient = twilioClient;
+    }
+
+    @Override
+    protected void doSend(Notification notification) throws TransientException {
+        twilioClient.sendSms(
+            notification.getRecipient(),
+            notification.getBody()
+        );
+    }
+
+    @Override
+    public boolean supports(NotificationType type) {
+        return type == NotificationType.SMS
+            || type == NotificationType.ALERT;
+    }
+
+    @Override
+    public String channelName() { return "sms"; }
+}
+
+// Router — works against abstraction only
+public class NotificationRouter {
+
+    private final List<NotificationChannel> channels;
+
+    public NotificationRouter(List<NotificationChannel> channels) {
+        this.channels = channels;
+    }
+
+    public void route(Notification notification) {
+        channels.stream()
+            .filter(ch -> ch.supports(notification.getType()))
+            .forEach(ch -> {
+                try {
+                    ch.send(notification);
+                } catch (NotificationException e) {
+                    log.error("Channel {} failed: {}", ch.channelName(), e.getMessage());
+                }
+            });
+    }
+}
+
+// Wiring — only place that knows concrete implementations
+NotificationRouter router = new NotificationRouter(List.of(
+    new EmailChannel(smtpClient),
+    new SmsChannel(twilioClient),
+    new PushChannel(fcmClient)
+));
+```
+    </Card>
 </CardGrid>
 
 <Aside type="tip">
@@ -1262,6 +1723,177 @@ This leads to modular, testable, and composable algorithm libraries.
     - Client code depends on abstractions — unchanged when adding new implementations ✅
   </Card>
 </CardGrid>
+
+**🪤 Trap 1 — Abstraction ≠ abstract keyword**
+
+```java
+// Abstraction is a CONCEPT — not just the abstract keyword
+
+// This uses 'abstract' keyword but provides NO abstraction:
+public abstract class Utility {
+    public abstract int add(int a, int b);
+}
+public class ConcreteUtility extends Utility {
+    @Override
+    public int add(int a, int b) { return a + b; }
+}
+// Caller still uses ConcreteUtility directly — no abstraction benefit
+
+// This has NO 'abstract' keyword but provides abstraction:
+public interface Sorter {
+    void sort(int[] arr);
+}
+// Caller uses Sorter — doesn't know if QuickSort, MergeSort, or TimSort runs
+// THAT is abstraction — hiding the HOW
+```
+
+---
+
+**🪤 Trap 2 — Leaky abstraction — implementation detail leaks through interface**
+
+```java
+// Leaky abstraction — interface exposes implementation details
+public interface UserRepository {
+    User findById(long id) throws SQLException;     // ← SQL detail leaked
+    void save(User user) throws SQLException;       // ← SQL detail leaked
+}
+
+// Caller must know about SQL even though it only uses UserRepository
+try {
+    repo.findById(userId);
+} catch (SQLException e) {          // caller knows it's SQL underneath
+    // tightly coupled to SQL — can't swap to MongoDB without breaking callers
+}
+
+// ✅ Proper abstraction — domain exception only
+public interface UserRepository {
+    Optional<User> findById(long id) throws RepositoryException;
+    void save(User user) throws RepositoryException;
+}
+// Caller sees RepositoryException — doesn't know if SQL, MongoDB, or file
+```
+
+---
+
+**🪤 Trap 3 — Over-abstraction — unnecessary layers**
+
+```java
+// Too many abstraction layers — adds complexity without benefit
+interface StringPrinter {
+    void print(String s);
+}
+
+abstract class AbstractStringPrinter implements StringPrinter {
+    protected abstract void doPrint(String s);
+    @Override public void print(String s) { doPrint(s); }
+}
+
+class ConcreteStringPrinter extends AbstractStringPrinter {
+    @Override protected void doPrint(String s) {
+        System.out.println(s);          // just this
+    }
+}
+
+// Should be:
+System.out.println(s);
+// Or at most a simple method — not 3 layers of abstraction
+
+// Rule: add abstraction layer when you have 2+ implementations
+//       or expect to change implementation
+//       not by default
+```
+
+---
+
+**🪤 Trap 4 — Casting back to implementation defeats abstraction**
+
+```java
+PaymentGateway gateway = new StripeGateway();
+
+// ❌ Defeats abstraction — caller casts to concrete type
+if (gateway instanceof StripeGateway stripe) {
+    stripe.setWebhookSecret("secret");  // Stripe-specific method
+}
+
+// This means caller is coupled to Stripe despite interface
+// Adding Braintree: code breaks — BraintreeGateway has no setWebhookSecret
+// Abstraction violated
+
+// ✅ Fix — configure during construction, not after
+PaymentGateway gateway = new StripeGateway(apiKey, webhookSecret);
+// All config at construction — caller never needs to cast
+```
+
+---
+
+**🪤 Trap 5 — Abstract class constructor calling abstract method**
+
+```java
+public abstract class Pipeline {
+    private final String name;
+
+    public Pipeline(String name) {
+        this.name = name;
+        initialize();               // ← abstract method called from constructor
+    }
+
+    protected abstract void initialize();   // subclass implements
+}
+
+public class DataPipeline extends Pipeline {
+    private DataSource source;      // not yet assigned when initialize() called
+
+    public DataPipeline(String name, DataSource source) {
+        super(name);                // ← calls initialize() before source is set
+        this.source = source;
+    }
+
+    @Override
+    protected void initialize() {
+        source.connect();           // source = null → NullPointerException
+    }
+}
+
+// Rule: never call abstract/overridable methods from constructor
+// Subclass fields are NOT initialized when super() runs
+```
+
+
+**Underlying primitive: vtable polymorphic dispatch + interface segregation**
+
+```
+Abstraction in JVM:
+
+Interface reference:
+  PaymentGateway gateway = new StripeGateway();
+
+  Stack:               Heap:
+  gateway → 0x4A2F  →  StripeGateway object
+                        klass pointer → StripeGateway metadata
+                        vtable → [charge, refund, getStatus]
+                                   ↓           ↓         ↓
+                              StripeGateway.charge
+                              StripeGateway.refund
+                              StripeGateway.getStatus
+
+  gateway.charge() — invokeinterface:
+    1. Look up actual klass from object header
+    2. Search itable for PaymentGateway interface
+    3. Find charge() slot → dispatch to StripeGateway.charge()
+    4. Caller never sees StripeGateway — only PaymentGateway
+
+Abstraction cost:
+  invokeinterface: slightly more expensive than invokevirtual
+  JIT: monomorphic inline cache after warmup
+    → after 1st call: direct dispatch (effectively free)
+    → megamorphic (many implementations): vtable dispatch
+
+Module system (Java 9+):
+  module-info.java exports only public packages
+  Internal packages: invisible to other modules
+  Bytecode access checks: module boundary enforced
+  Provides strongest package-level abstraction possible
+```
 
 ---
 

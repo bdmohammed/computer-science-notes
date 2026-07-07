@@ -62,9 +62,9 @@ export default defineConfig({
       lastUpdated: true,
 
       components: {
-        Pagination: "./src/components/Pagination.astro",
+        // Pagination: "./src/components/Pagination.astro",
         // PageFrame: "./src/components/PageFrame.astro",
-        Sidebar: "./src/components/Sidebar.astro",
+        // Sidebar: "./src/components/Sidebar.astro",
       },
 
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 6 },

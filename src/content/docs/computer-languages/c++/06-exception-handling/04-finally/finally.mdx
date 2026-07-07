@@ -1,0 +1,1159 @@
+---
+title: C++ RAII & Cleanup (No `finally`)
+slug: computer-languages/cpp/exception-handling/finally
+description: Why C++ doesn't have a `finally` block, how RAII replaces it, and patterns for guaranteed cleanup.
+sidebar:
+  label: "RAII & Cleanup"
+  badge:
+    text: Core Concept
+    variant: tip
+tags: [cpp, raii, finally, destructor, exception-safety, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🚫 There is No `finally` in C++
+
+---
+
+### 🧠 What It Is
+
+C++ **does not have a `finally` keyword**. Instead, it uses a paradigm called **RAII** (Resource Acquisition Is Initialization). 
+
+In Java, you wrap code in `try-finally` to ensure resources are closed. In C++, you wrap resources in **objects** whose **destructors** automatically run when the object goes out of scope—whether normally or via an exception.
+
+> **Key Insight**: `finally` is explicit manual cleanup. RAII is implicit automatic cleanup tied to object lifetime.
+
+---
+
+### 🔬 Syntax Comparison
+
+```java
+// Java: Explicit finally
+try {
+    Connection conn = db.getConnection();
+    conn.doWork();
+} finally {
+    conn.close(); // Must remember to call this!
+}
+```
+
+```cpp
+// C++: Implicit RAII
+{
+    Connection conn(db.getConnection()); // Constructor acquires resource
+    conn.doWork();
+} // Destructor automatically calls close() here, even if doWork() throws!
+```
+
+<Aside type="note">
+**Why no `finally`?** 
+Bjarne Stroustrup (creator of C++) argued that `finally` leads to repetitive, error-prone code. RAII ensures cleanup is bound to the resource's lifetime, making it impossible to forget.
+</Aside>
+
+---
+
+### 🔬 Execution Flow — RAII vs Finally
+
+When an exception is thrown in C++, **Stack Unwinding** occurs. The runtime walks up the stack, calling destructors for all local objects.
+
+```text
+Java Flow (with finally):
+  try { throw E; } 
+  → catch (skipped) 
+  → finally (runs) 
+  → propagate E
+
+C++ Flow (with RAII):
+  try { 
+      Resource r; 
+      throw E; 
+  } 
+  → r.~Resource() runs (Unwinding) 
+  → catch (if matches) 
+  → propagate E
+```
+
+<Code lang="cpp" title="RAII in Action" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct FileHandle {
+    std::string name;
+    FileHandle(const std::string& n) : name(n) {
+        std::cout << "Opening " << name << "\\n";
+    }
+    ~FileHandle() {
+        std::cout << "Closing " << name << "\\n"; // Guaranteed cleanup
+    }
+};
+
+void process() {
+    FileHandle f("data.txt"); // Acquire
+    std::cout << "Working...\\n";
+    throw std::runtime_error("Crash!"); // Exception
+    std::cout << "Done\\n"; // Skipped
+}
+
+int main() {
+    try {
+        process();
+    } catch (const std::exception& e) {
+        std::cerr << "Caught: " << e.what() << "\\n";
+    }
+    return 0;
+}
+
+// Output:
+// Opening data.txt
+// Working...
+// Closing data.txt  ← Destructor ran during unwind!
+// Caught: Crash!
+`} />
+
+---
+
+### 💻 Real-World Code — Database Transaction
+
+In Java, you might use `finally` to rollback/commit. In C++, you use a **Transaction Guard** object.
+
+<Code lang="cpp" title="Transaction RAII Pattern" code={`
+class Transaction {
+    DBConnection& conn;
+    bool committed = false;
+public:
+    explicit Transaction(DBConnection& c) : conn(c) {
+        conn.begin();
+    }
+    
+    void commit() {
+        conn.commit();
+        committed = true;
+    }
+    
+    ~Transaction() {
+        if (!committed) {
+            conn.rollback(); // Automatic rollback if exception occurred!
+        }
+    }
+};
+
+void transferMoney(DBConnection& db, int from, int to, double amount) {
+    Transaction tx(db); // Begin transaction
+    
+    db.withdraw(from, amount); // Might throw
+    db.deposit(to, amount);    // Might throw
+    
+    tx.commit(); // Mark as successful
+} // If withdraw/deposit threw, dtor rolls back automatically.
+`} />
+
+🔴 **What breaks if done wrong:** If you use raw pointers and `delete` in `finally` (simulated), and an exception happens before allocation, you crash. RAII handles partial construction safely.
+
+---
+
+### 🔬 Simulating `finally` (If You Really Must)
+
+Sometimes you need to run code that isn't tied to a specific resource (e.g., logging, metrics). You can simulate `finally` using a helper class with a lambda.
+
+<Code lang="cpp" title="ScopeGuard / Finally Helper" code={`
+#include <functional>
+
+class ScopeGuard {
+    std::function<void()> cleanup;
+public:
+    explicit ScopeGuard(std::function<void()> f) : cleanup(std::move(f)) {}
+    ~ScopeGuard() {
+        if (cleanup) cleanup();
+    }
+    // Prevent copying
+    ScopeGuard(const ScopeGuard&) = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+};
+
+void demo() {
+    std::cout << "Start\\n";
+    
+    // Simulate finally
+    ScopeGuard guard([]() {
+        std::cout << "Finally Block Executed\\n";
+    });
+    
+    if (true) {
+        throw std::runtime_error("Error");
+    }
+    
+    std::cout << "End\\n"; // Skipped
+}
+// Output:
+// Start
+// Finally Block Executed
+`} />
+
+<Aside type="tip">
+**C++23**: Look into `std::scope_exit` (part of the Contracts proposal or library fundamentals TS) which standardizes this pattern. For now, many teams use simple `ScopeGuard` implementations or libraries like GSL (`gsl::finally`).
+</Aside>
+
+---
+
+### 🔬 `return` Interaction — No Override Trap
+
+In Java, `return` in `finally` overrides previous returns. In C++, since there is no `finally`, this trap doesn't exist in the same way. However, destructors run **before** the function returns.
+
+```cpp
+int compute() {
+    Resource r;
+    return 1; 
+    // r.~Resource() runs HERE
+    // Then function returns 1
+}
+```
+
+You **cannot** change the return value from a destructor. Destructors should generally not throw or alter control flow.
+
+---
+
+### 🔬 Exceptions in Destructors — The Critical Difference
+
+In Java `finally`, if you throw an exception, it replaces the active one (bad!). 
+In C++, if a destructor throws while another exception is active (unwinding), the program calls `std::terminate()` immediately.
+
+```cpp
+~BadResource() {
+    throw std::runtime_error("Cleanup failed"); // 💥 DANGER
+}
+```
+
+✅ **Rule**: Destructors must be `noexcept` (default in C++11+). Handle errors inside the destructor (log them), but never let them escape.
+
+---
+
+### 🔬 Try-Catch-Finally Equivalents
+
+| Java Pattern | C++ Equivalent |
+|--------------|----------------|
+| `try { ... } finally { close(); }` | Use RAII object (constructor opens, destructor closes) |
+| `try { ... } catch (E e) { ... } finally { ... }` | `try { ... } catch (E e) { ... }` + RAII for cleanup |
+| `return` in `finally` | ❌ Don't do this. Return normally; let RAII clean up. |
+| Suppressing exception in `finally` | ❌ Don't do this. Let exceptions propagate. |
+
+---
+
+### 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Thinking `delete` is like `finally`" icon="error">
+    ```cpp
+    void foo() {
+        int* p = new int(10);
+        try {
+            doWork();
+        } catch (...) {
+            delete p; 
+            throw; 
+        }
+        delete p;
+    }
+    ```
+    This is verbose and error-prone. If `doWork` throws a different exception, or if you add a new return path, you leak.
+    ✅ **Fix**: `auto p = std::make_unique<int>(10);`
+  </Card>
+  
+  <Card title="Trap 2: Throwing from Destructor" icon="shield">
+    If an exception is active and a destructor throws, `std::terminate()` is called.
+    ✅ **Fix**: Catch all exceptions in the destructor and log them. Never throw.
+  </Card>
+
+  <Card title="Trap 3: `std::uncaught_exception`" icon="caution">
+    Sometimes you want to know if you are unwinding.
+    ```cpp
+    ~MyClass() {
+        if (std::uncaught_exceptions() > 0) {
+            // We are unwinding due to an exception.
+            // Do NOT throw. Maybe skip risky cleanup.
+        } else {
+            // Normal destruction.
+        }
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 4: Partial Construction" icon="information">
+    If a constructor throws, the destructor is **NOT** called for that object. However, destructors **are** called for any fully constructed member variables.
+    ✅ **Fix**: Rely on member RAII. Don't put raw cleanup in the class destructor if members handle it.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### Stack Unwinding
+
+When an exception is thrown, the C++ runtime looks at the stack frames. For each frame, it checks what local objects exist. It calls their destructors in reverse order of construction. This is **deterministic**.
+
+Java's `finally` is a bytecode instruction block that is jumped to. C++'s RAII is a semantic guarantee enforced by the compiler generating destructor calls at every exit point (return, throw, end of scope).
+
+### Zero-Cost Abstraction
+
+Like `try-catch`, RAII has **zero overhead** when no exception occurs. The destructor call is just a normal function call inserted by the compiler at the end of the scope. There is no runtime check "is there a finally block?".
+
+---
+
+### 📊 Decision Guide
+
+| Situation | C++ Pattern |
+|-----------|---------|
+| Close File/Socket | RAII Wrapper Class |
+| Release Lock | `std::lock_guard` (RAII) |
+| Free Memory | `std::unique_ptr` / `std::shared_ptr` |
+| Log Entry/Exit | `ScopeGuard` (Lambda in destructor) |
+| Complex Cleanup | Custom RAII Class |
+
+---
+
+### 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct A {
+    ~A() { std::cout << "A "; }
+};
+
+struct B {
+    ~B() { std::cout << "B "; }
+};
+
+void foo() {
+    A a;
+    try {
+        B b;
+        throw std::runtime_error("err");
+    } catch (...) {
+        std::cout << "Catch ";
+        throw; // Rethrow
+    }
+}
+
+int main() {
+    try {
+        foo();
+    } catch (...) {
+        std::cout << "Outer ";
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: B A Catch Outer 
+
+Explanation:
+1. foo() creates 'a', then 'b'.
+2. Exception thrown.
+3. Stack unwinds in foo():
+   - 'b' destroyed → prints "B ".
+   - Control jumps to catch in foo().
+4. Catch prints "Catch ".
+5. Catch rethrows.
+6. Stack unwinds further:
+   - 'a' destroyed → prints "A ".
+7. Control jumps to outer catch.
+8. Outer prints "Outer ".
+```
+</details>
+
+---
+
+# 🔚 C++ `finally` — Complete Deep Dive
+
+---
+
+## 📌 First — C++ Has No `finally` Keyword
+
+```java
+// Java
+try {
+    risky();
+} catch (Exception e) {
+    handle(e);
+} finally {
+    cleanup();   // ← ALWAYS runs — Java has this
+}
+```
+
+```cpp
+// C++ — no finally keyword
+// Deliberate design choice:
+// RAII (destructors) replace finally entirely
+// A well-written destructor is better than finally
+```
+
+> 🔑 **Why no `finally`?** Because C++ destructors run **automatically** on scope exit — whether normal, exception, or early return. `finally` is redundant when you have RAII. This is not a missing feature — it is the design.
+
+---
+
+# 📁 01 — The `finally` Block Equivalent
+
+## 🔷 The RAII Pattern — C++'s `finally`
+
+```cpp
+// Java finally:
+FileHandle f = open("file.txt");
+try {
+    process(f);
+} finally {
+    f.close();    // always runs
+}
+
+// C++ equivalent — RAII:
+{
+    std::ifstream f("file.txt");   // RAII — closes in destructor
+    process(f);
+}   // ← f.~ifstream() called here AUTOMATICALLY
+    // Normal exit: ✅ destructor runs
+    // Exception:   ✅ destructor runs (stack unwind)
+    // Early return: ✅ destructor runs
+```
+
+---
+
+### Scope Guard — The Universal `finally`
+
+When RAII doesn't fit naturally, use a scope guard:
+
+```cpp
+// Pattern 1: Manual scope guard
+template<typename F>
+class ScopeGuard {
+    F func_;
+    bool active_ = true;
+
+public:
+    explicit ScopeGuard(F f) : func_(std::move(f)) { }
+
+    ~ScopeGuard() {
+        if (active_) {
+            try { func_(); }           // swallow exceptions from cleanup
+            catch (...) { }            // destructors must not throw
+        }
+    }
+
+    void dismiss() { active_ = false; }  // cancel cleanup
+
+    // Non-copyable, non-movable
+    ScopeGuard(const ScopeGuard&) = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+};
+
+// Convenience factory
+template<typename F>
+ScopeGuard<F> make_scope_guard(F&& f) {
+    return ScopeGuard<F>(std::forward<F>(f));
+}
+
+// Usage — exact Java finally equivalent
+void process_file(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "r");
+    if (!f) throw std::runtime_error("cannot open: " + path);
+
+    auto guard = make_scope_guard([&]{ fclose(f); });  // "finally"
+
+    try {
+        read_data(f);     // may throw
+        parse_data(f);    // may throw
+        // fclose(f) called no matter what ↑ throws
+    } catch (const ParseError& e) {
+        log(e.what());
+        throw;   // fclose still called — guard destructor runs
+    }
+    // Normal exit: guard destructor → fclose
+}
+```
+
+---
+
+### `std::experimental::scope_exit` / Boost `scope_exit`
+
+```cpp
+// C++23 draft / boost — named scope guards
+#include <scope>  // C++23
+
+{
+    auto guard = std::scope_exit([]{
+        std::cout << "finally runs\n";  // runs on any exit
+    });
+
+    // scope_success — only on normal exit
+    auto on_success = std::scope_success([]{
+        commit_transaction();
+    });
+
+    // scope_fail — only on exception
+    auto on_fail = std::scope_fail([]{
+        rollback_transaction();
+    });
+
+    risky_operation();
+}
+// guard destructor → always prints "finally runs"
+```
+
+---
+
+### `defer` Macro — Go-Style finally
+
+```cpp
+// Macro simulating Go's defer
+#define DEFER_CONCAT_(a, b) a##b
+#define DEFER_CONCAT(a, b) DEFER_CONCAT_(a, b)
+#define defer auto DEFER_CONCAT(_defer_, __COUNTER__) = \
+    make_scope_guard
+
+// Usage
+void process() {
+    FILE* f = fopen("data.txt", "r");
+    defer([&]{ fclose(f); });    // ← reads like defer in Go
+
+    auto conn = db_connect();
+    defer([&]{ conn.close(); }); // multiple defers stack
+
+    risky_work(f, conn);
+}   // ← conn.close() runs first (LIFO)
+    //   then fclose(f)
+    //   even if risky_work throws
+```
+
+---
+
+# 📁 02 — Control Flow in `try`/`catch`/`finally` (C++ equivalent)
+
+## 📌 Flow Diagram
+
+```
+C++ equivalent of try-catch-finally:
+
+try {                        Java try block
+    risky();
+} catch (Exception& e) {    Java catch block
+    handle(e);
+}                            Java finally → C++ scope guard / destructor
+                             runs on ALL paths:
+                               ✅ try completes normally
+                               ✅ catch completes
+                               ✅ throw escapes catch
+                               ✅ return in try
+                               ✅ return in catch
+                               ✅ break/continue in loops
+```
+
+---
+
+### All Control Flow Paths
+
+```cpp
+auto guard = make_scope_guard([]{ std::cout << "[finally]\n"; });
+
+// Path 1: normal completion
+try {
+    std::cout << "try\n";
+}
+// Output: try → [finally]
+
+// Path 2: exception caught
+try {
+    std::cout << "try\n";
+    throw std::runtime_error("err");
+    std::cout << "after throw\n";  // SKIPPED
+} catch (const std::exception& e) {
+    std::cout << "catch: " << e.what() << "\n";
+}
+// Output: try → catch: err → [finally]
+
+// Path 3: exception NOT caught — propagates
+try {
+    throw std::runtime_error("uncaught");
+} catch (const std::logic_error&) {
+    std::cout << "wrong catch\n";   // type mismatch — skipped
+}
+// Output: [finally] → then exception propagates up
+// guard destructor runs DURING stack unwinding
+
+// Path 4: return inside try
+auto func = [&]() -> int {
+    try {
+        return 42;    // guard destructor still runs before return
+    } catch (...) { }
+    return -1;
+};
+// Output: [finally]  then returns 42
+
+// Path 5: return inside catch
+auto func2 = [&]() -> int {
+    try {
+        throw std::runtime_error("x");
+    } catch (...) {
+        return 99;   // guard destructor still runs
+    }
+    return -1;
+};
+// Output: [finally] then returns 99
+```
+
+---
+
+### `finally` vs `return` Value Interaction
+
+```java
+// Java — finally can CHANGE return value
+int foo() {
+    try { return 1; }
+    finally { return 2; }   // ← overrides return 1 → returns 2
+}
+// Java finally: return/throw IN finally overrides try's return
+```
+
+```cpp
+// C++ — destructor cannot change return value
+int foo() {
+    int result = 1;
+    auto guard = make_scope_guard([&]{
+        result = 2;    // modifies result variable
+        // but cannot change what the function returns
+        // the return value was already determined
+    });
+    return result;   // returns 1 — guard runs AFTER return value set
+}
+// Returns 1 — guard cannot intercept the return value
+// This is INTENTIONAL — return value unpollutable by cleanup code
+```
+
+---
+
+# 📁 03 — Control Flow in Nested `try`/`catch`/`finally`
+
+## 📌 Nested Structure
+
+```cpp
+// C++ equivalent of nested try-catch-finally
+
+void outer() {
+    auto outer_guard = make_scope_guard([]{ std::cout << "[outer finally]\n"; });
+
+    try {
+        auto inner_guard = make_scope_guard([]{ std::cout << "[inner finally]\n"; });
+
+        try {
+            std::cout << "inner try\n";
+            throw std::runtime_error("inner error");
+        } catch (const std::runtime_error& e) {
+            std::cout << "inner catch: " << e.what() << "\n";
+            // inner_guard destructs here (end of inner scope)
+        }
+        // [inner finally] runs here — inner_guard out of scope
+
+        std::cout << "between inner and outer\n";
+        throw std::logic_error("outer error");
+
+    } catch (const std::logic_error& e) {
+        std::cout << "outer catch: " << e.what() << "\n";
+        // outer_guard still alive
+    }
+    // [outer finally] runs here — outer_guard out of scope
+}
+```
+
+```
+Output:
+inner try
+inner catch: inner error
+[inner finally]
+between inner and outer
+outer catch: outer error
+[outer finally]
+```
+
+---
+
+### Nested — Exception in Inner, Uncaught by Inner
+
+```cpp
+void nested_propagation() {
+    auto outer_guard = make_scope_guard([]{ std::cout << "[outer finally]\n"; });
+    std::cout << "outer try start\n";
+
+    try {
+        auto inner_guard = make_scope_guard([]{ std::cout << "[inner finally]\n"; });
+        std::cout << "inner try start\n";
+
+        throw std::runtime_error("escapes inner");
+        // inner catch: none that matches
+
+    } catch (const std::logic_error&) {
+        std::cout << "inner logic_error catch\n";  // type mismatch — skipped
+    }
+    // Exception not caught by inner catch
+    // [inner finally] runs — inner_guard unwinds
+    // Exception continues propagating to outer
+
+    std::cout << "outer after inner\n";  // NEVER REACHED
+}
+
+// Outer caller:
+try {
+    nested_propagation();
+} catch (const std::runtime_error& e) {
+    std::cout << "outer caller caught: " << e.what() << "\n";
+}
+```
+
+```
+Output:
+outer try start
+inner try start
+[inner finally]      ← runs even though exception escaped inner
+[outer finally]      ← runs as outer_guard unwinds
+outer caller caught: escapes inner
+```
+
+---
+
+### Nested — Exception in Finally (Guard)
+
+```cpp
+// ❌ Exception in cleanup — must be swallowed
+void dangerous_cleanup() {
+    auto guard = make_scope_guard([]{
+        try {
+            risky_cleanup();    // might throw
+        } catch (...) {
+            // MUST catch — cannot let destructor throw
+            log("cleanup failed — swallowed");
+        }
+    });
+
+    throw std::runtime_error("original");
+    // During unwind: guard destructor runs
+    // If risky_cleanup throws AND we don't catch:
+    // → two concurrent exceptions → std::terminate()
+    // The catch(...) inside guard prevents this
+}
+```
+
+---
+
+# 📁 04 — Various Combinations
+
+## 📌 All Combination Patterns
+
+```cpp
+// ─────────────────────────────────────────────
+// COMBINATION 1: try + finally (no catch)
+// ─────────────────────────────────────────────
+{
+    auto guard = make_scope_guard(cleanup);
+    try {
+        risky();
+    }
+}   // cleanup always runs — exception propagates if thrown
+
+// Java equivalent:
+// try { risky(); } finally { cleanup(); }
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// COMBINATION 2: try + catch (no finally)
+// ─────────────────────────────────────────────
+try {
+    risky();
+} catch (const std::exception& e) {
+    handle(e);
+}
+// No cleanup guarantee — use only when no cleanup needed
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// COMBINATION 3: try + catch + finally
+// ─────────────────────────────────────────────
+{
+    auto guard = make_scope_guard(cleanup);    // finally
+    try {
+        risky();
+    } catch (const std::exception& e) {
+        handle(e);
+        // guard runs after this catch block too
+    }
+}   // cleanup always runs regardless
+
+// Java equivalent:
+// try { risky(); }
+// catch (Exception e) { handle(e); }
+// finally { cleanup(); }
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// COMBINATION 4: try + multiple catch + finally
+// ─────────────────────────────────────────────
+{
+    auto guard = make_scope_guard(cleanup);
+    try {
+        risky();
+    } catch (const NetworkError& e) {
+        retry();
+    } catch (const ParseError& e) {
+        log(e.what());
+        throw;    // rethrow — guard still runs during unwind
+    } catch (...) {
+        alert();
+        throw;
+    }
+}
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// COMBINATION 5: try + finally + rethrow
+// ─────────────────────────────────────────────
+void with_cleanup_and_rethrow() {
+    auto guard = make_scope_guard([]{ log("finally\n"); });
+    try {
+        throw std::runtime_error("error");
+    } catch (const std::exception& e) {
+        log("catch: ", e.what(), "\n");
+        throw;    // rethrow — finally STILL RUNS during outer unwind
+    }
+}
+// Output: catch: error → finally
+// then exception propagates to caller
+```
+
+---
+
+### Transaction Pattern — Full Combination
+
+```cpp
+void transfer_funds(Account& from, Account& to, double amount) {
+    Transaction txn = db_.begin();
+
+    // "finally" — always cleanup transaction
+    auto txn_guard = make_scope_guard([&txn]{
+        if (txn.is_active()) {
+            try { txn.rollback(); }
+            catch (...) { log("rollback failed"); }
+        }
+    });
+
+    try {
+        // Validate
+        if (amount <= 0)
+            throw std::invalid_argument("amount must be positive");
+
+        // Execute
+        from.debit(amount);
+        to.credit(amount);
+        db_.log_transfer(from.id(), to.id(), amount);
+
+        // Commit
+        txn.commit();          // ← success: commit
+        txn_guard.dismiss();   // ← cancel the rollback guard
+
+    } catch (const InsufficientFunds& e) {
+        // Specific: already rolled back by guard
+        log("transfer failed: insufficient funds");
+        throw;  // re-propagate for caller
+    } catch (const std::exception& e) {
+        // General: rollback via guard
+        log("transfer failed: ", e.what());
+        throw;
+    }
+    // guard: if dismissed → no rollback
+    //        if not dismissed → rollback on exit
+}
+```
+
+---
+
+# 📁 05 — `final` vs `finally` vs `finalize`
+
+## 📌 Three Different Concepts — C++ Context
+
+```
+Word        │ Java meaning          │ C++ equivalent / meaning
+────────────┼───────────────────────┼────────────────────────────────
+final       │ class/method modifier │ ✅ final (C++11) — same purpose
+finally     │ cleanup block         │ ❌ doesn't exist → RAII + scope guard
+finalize    │ GC cleanup method     │ ❌ doesn't exist → destructor ~T()
+```
+
+---
+
+### `final` — C++ Keyword (C++11)
+
+```cpp
+// final on class — cannot be inherited
+class Singleton final {
+    Singleton() = default;
+public:
+    static Singleton& get() {
+        static Singleton inst;
+        return inst;
+    }
+};
+
+class Extended : public Singleton { };  // ❌ compile error
+// "cannot derive from 'final' base class 'Singleton'"
+
+// final on method — cannot be overridden further
+class Base {
+public:
+    virtual void process() { }
+};
+
+class Middle : public Base {
+public:
+    void process() override final { }  // final override
+};
+
+class Derived : public Middle {
+public:
+    void process() override { }        // ❌ compile error
+    // "overriding final function 'Middle::process()'"
+};
+```
+
+### `final` Performance Benefit
+
+```cpp
+// Without final:
+virtual void process() override { }
+// Compiler: might be overridden → keep vtable dispatch → no inline
+
+// With final:
+virtual void process() override final { }
+// Compiler: NO further overrides possible
+// → devirtualize → direct call → inline possible
+// → eliminates vtable overhead entirely
+
+// Benchmark: hot loop calling final vs non-final virtual
+// Non-final virtual: ~5ns/call (vtable + no-inline)
+// Final virtual:     ~1ns/call (direct call + inlined)
+```
+
+---
+
+### `finally` — Does NOT Exist in C++
+
+```cpp
+// ❌ This is NOT valid C++:
+try {
+    risky();
+} finally {          // SYNTAX ERROR — no finally keyword
+    cleanup();
+}
+
+// ✅ C++ equivalent — choose one:
+
+// Option A: RAII (preferred)
+class Resource {
+    ~Resource() { cleanup(); }  // called on all exits
+};
+{ Resource r; risky(); }
+
+// Option B: scope guard
+auto g = make_scope_guard(cleanup);
+risky();
+
+// Option C: std::unique_ptr with custom deleter
+auto r = std::unique_ptr<RAW, Deleter>(acquire(), Deleter{});
+risky();
+```
+
+---
+
+### `finalize` — Does NOT Exist in C++
+
+```java
+// Java finalize() — called by GC before object collected
+class Foo {
+    @Override
+    protected void finalize() throws Throwable {
+        cleanup_resources();  // UNRELIABLE — GC may never call this
+    }
+}
+```
+
+```cpp
+// C++ equivalent — destructor (RELIABLE, not GC-based)
+class Foo {
+public:
+    ~Foo() {           // destructor — ALWAYS called at deterministic time
+        cleanup_resources();   // ← runs when object goes out of scope
+                               //    or when delete is called
+                               //    not dependent on GC
+    }
+};
+
+// Key differences:
+// Java finalize: non-deterministic (GC decides when)
+//                may NEVER run if process exits
+//                deprecated since Java 9, removed in Java 18
+//
+// C++ destructor: DETERMINISTIC (exact scope exit or explicit delete)
+//                 GUARANTEED to run (unless std::terminate/abort)
+//                 IS the reason C++ doesn't need finally/finalize
+```
+
+---
+
+### Side-by-Side Comparison
+
+| Feature | Java | C++ |
+|---|---|---|
+| `final` class | `final class Foo` | `class Foo final` |
+| `final` method | `final void foo()` | `void foo() override final` |
+| `finally` block | `} finally {` | RAII + scope guard |
+| `finalize()` | `protected void finalize()` | `~Foo()` destructor |
+| Cleanup timing | Non-deterministic (GC) | Deterministic (scope exit) |
+| Cleanup guaranteed? | ❌ May not run | ✅ Always runs |
+| Can cleanup throw? | ✅ (poorly) | ❌ destructors must not throw |
+
+---
+
+### Why C++ Destructors Beat Java `finalize`
+
+```cpp
+// C++ RAII — deterministic cleanup
+void process_file() {
+    std::ifstream file("data.txt");   // constructor opens
+    // ... use file ...
+}   // ← destructor runs HERE — EXACTLY here — file closed NOW
+
+// Java finalize — non-deterministic
+void processFile() {
+    FileReader f = new FileReader("data.txt");
+    // ... use f ...
+    // f goes out of scope — eligible for GC
+    // finalize() runs SOMETIME LATER — maybe seconds, maybe never
+    // meanwhile: file handle held open
+    // → "too many open files" error in large systems
+}
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Replacing `finally` pattern in a network server:**
+
+```cpp
+// ❌ Common mistake — manual cleanup like Java finally
+void handle_request(int client_fd) {
+    Socket sock(client_fd);
+    Buffer buf(65536);
+    Metrics* m = metrics_registry.allocate();
+
+    try {
+        auto req = sock.read_request();
+        auto resp = router.dispatch(req);
+        sock.send_response(resp);
+        m->record_success();
+    } catch (const TimeoutError&) {
+        m->record_timeout();
+        // forgot: sock.close(), buf freed?, m returned?
+    } catch (const std::exception& e) {
+        log(e.what());
+        sock.close();      // manually close on each path
+        metrics_registry.release(m);  // manually release
+        throw;
+    }
+    sock.close();          // close on success path
+    metrics_registry.release(m);  // release on success
+    // One forgotten path = resource leak in production
+}
+
+// ✅ RAII — each resource manages itself
+class MetricsGuard {
+    MetricsRegistry& reg_;
+    Metrics* m_;
+public:
+    MetricsGuard(MetricsRegistry& r) : reg_(r), m_(r.allocate()) { }
+    ~MetricsGuard() { reg_.release(m_); }  // always returns metrics
+    Metrics* get() { return m_; }
+};
+
+void handle_request(int client_fd) {
+    Socket      sock(client_fd);     // closes on destruction
+    Buffer      buf(65536);          // freed on destruction
+    MetricsGuard mg(metrics_registry); // released on destruction
+
+    // No try-catch needed for cleanup — RAII handles it
+    try {
+        auto req = sock.read_request();
+        auto resp = router.dispatch(req);
+        sock.send_response(resp);
+        mg.get()->record_success();
+    } catch (const TimeoutError&) {
+        mg.get()->record_timeout();
+        // sock, buf, mg — ALL cleaned up automatically
+        // Zero manual cleanup code — impossible to forget
+    }
+    // Normal exit: ALL destructors run
+    // Exception: ALL destructors run
+    // Early return: ALL destructors run
+}
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```
+"C++ is missing finally — is this a design flaw?"
+```
+> **No** — deliberate and superior design. `finally` is needed in Java because the GC doesn't guarantee `finalize()` timing. C++ destructors run deterministically at scope exit — making `finally` redundant. RAII is more powerful: it's automatic, composable, works on any exit path, and cannot be forgotten. Java developers writing C++ often add unnecessary `finally` workarounds.
+
+**Trap 2:**
+```cpp
+class Foo final { };
+class Bar final : public Foo { };  // compile error?
+```
+> ❌ **Compile error.** `Foo` is `final` — no class can inherit from it. `Bar : public Foo` is forbidden. Error: "cannot derive from 'final' base class 'Foo'".
+
+**Trap 3:**
+```cpp
+void foo() {
+    auto guard = make_scope_guard([]{ std::cout << "guard\n"; });
+    throw std::runtime_error("error");
+}
+int main() {
+    foo();   // no try-catch — what happens?
+}
+```
+> Guard destructor runs DURING stack unwinding (`"guard"` printed), THEN `std::terminate()` called (uncaught exception). Output: `"guard\n"` then program terminates. Guard runs even without a catch — stack unwinding triggers destructors regardless.
+
+**Trap 4:**
+```cpp
+// Does final affect virtual dispatch performance?
+class Base { virtual void f() { } };
+class D : public Base { void f() final { } };
+Base* b = new D();
+b->f();   // still virtual call?
+```
+> Still a virtual call via `Base*` — compiler doesn't know the runtime type is `D` from this pointer. BUT if you have `D* d = new D(); d->f()` — compiler KNOWS exact type via `D*` + `final` → devirtualizes → direct call. Final helps when the static type is the final type.
+
+**Trap 5:**
+```
+"What's the difference between C++ destructor and Java finalize?"
+```
+> Timing: destructor is **deterministic** (exact scope exit), `finalize` is **non-deterministic** (GC decides, may never run). Guarantee: destructor **always runs** (barring `terminate`), `finalize` **may never run** (process exit, GC skips). Usage: destructor is the **primary** resource cleanup mechanism in C++. `finalize` is deprecated in modern Java (removed in Java 18). C++ destructor is reliable enough to replace `finally` + `finalize` combined.
+
+---

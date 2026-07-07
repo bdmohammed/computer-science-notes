@@ -1,0 +1,1190 @@
+---
+title: Java Coupling
+slug: computer-languages/java/oops/coupling
+description: Master coupling in Java — tight vs loose coupling, dependency injection, interface segregation, event-driven design, and production patterns for maintainable architecture.
+sidebar:
+  label: "Coupling"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [java, coupling, dependency-injection, interfaces, architecture, interview, solid]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🔗 Coupling in Java — Complete Guide
+
+> **Coupling is the degree to which one class directly depends on the internals of another. High coupling = change in one class breaks another. Low coupling = classes can evolve independently. Every architectural decision in backend Java either tightens or loosens coupling.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of coupling as **software gravity**.  
+- Tight coupling = strong gravity — classes are stuck together, hard to move independently.  
+- Loose coupling = weak gravity — classes orbit freely, easy to swap or test in isolation.  
+**Goal**: "High Cohesion, Low Coupling" — classes should do one thing well and depend on abstractions, not concretions.
+</Aside>
+
+---
+
+## 📋 Types of Coupling — Visual Map
+
+```
+Coupling
+├── Tight Coupling  ← BAD
+│   ├── Direct instantiation (new inside class)
+│   ├── Concrete type dependencies
+│   ├── Accessing internal fields directly
+│   └── Static method calls to external logic
+│
+└── Loose Coupling  ← GOOD
+    ├── Dependency Injection
+    ├── Interface-based programming
+    ├── Event-driven / Observer
+    └── Service Locator (acceptable in specific cases)
+```
+
+<CardGrid>
+  <Card title="Tight Coupling" icon="error">
+    ```text
+    +-------+               +-------+
+    | Class |==============>| Class |
+    |   A   |  (Direct)     |   B   |
+    +-------+               +-------+
+    
+    Characteristics:
+    • Hardwired dependencies (new inside class)
+    • Concrete type references
+    • Changes ripple through system
+    • Hard to test, hard to extend
+    ```
+  </Card>
+  
+  <Card title="Loose Coupling" icon="approve-check">
+    ```text
+    +-------+               +-------+
+    | Class |~~~~interface~| Class |
+    |   A   |               |   B   |
+    +-------+               +-------+
+    
+    Characteristics:
+    • Dependencies injected or abstracted
+    • Interface-based programming
+    • Changes isolated to single module
+    • Easy to test, easy to extend
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 The 6 Coupling Types — Severity Order
+
+| Type | Description | Severity | Example |
+|------|-------------|----------|---------|
+| **Content** | Class A directly modifies fields of Class B | 🔴 Worst | `cart.items.clear()` from outside |
+| **Common** | Two classes share mutable global/static state | 🔴 Worst | `AppState.currentUser` static field |
+| **Control** | A passes a flag that controls B's internal behavior | 🟠 Bad | `generate(data, boolean isPDF)` |
+| **Stamp** | A passes full object to B but B uses only one field | 🟡 Moderate | Passing `User` when only `userId` needed |
+| **Data** | A passes only what B needs — primitives/simple objects | 🟢 Good | Passing `String userId` instead of `User` |
+| **Message** | A calls B with no data — just a signal | 🟢 Best | `eventBus.publish(new Event())` |
+
+<Aside type="caution">
+**🎯 Interview Trap**: Many candidates think "using an interface = loose coupling". False! If you still `new ConcreteImpl()` inside your class, you're tightly coupled regardless of the interface. The `new` keyword is often the real coupling point.
+</Aside>
+
+---
+
+## 1️⃣ Content Coupling — The Worst
+
+<Code lang="java" title="❌ Content coupling: accessing internals directly" code={`
+class OrderProcessor {
+    void process(Cart cart) {
+        // 🔴 Direct access to internal fields
+        cart.items.clear();              // bypasses Cart's business logic
+        cart.totalPrice = 0;             // mutates state without validation
+        cart.status = "PROCESSED";       // skips status transition rules
+    }
+}
+
+class Cart {
+    // Package-private or public — exposed internals
+    List<Item> items = new ArrayList<>();
+    double totalPrice;
+    String status;
+    
+    // No encapsulation — any class can mutate these directly
+}`} />
+
+<CardGrid>
+  <Card title="What Breaks" icon="danger">
+    ```text
+    🔴 Cart can never change its internal representation
+    🔴 Rename totalPrice to amount → OrderProcessor breaks
+    🔴 Add validation to status → bypassed entirely
+    🔴 Silent data corruption in production
+    🔴 Impossible to unit test Cart in isolation
+    ```
+  </Card>
+  
+  <Card title="The Fix" icon="shield">
+    ```java
+    // ✅ Encapsulate state, expose behavior
+    class Cart {
+        private List<Item> items = new ArrayList<>();
+        private double totalPrice;
+        private CartStatus status;  // enum, not String
+        
+        public void clear() {
+            items.clear();
+            recalculateTotal();  // internal logic preserved
+        }
+        
+        public void markProcessed() {
+            if (status.canTransitionTo(CartStatus.PROCESSED)) {
+                status = CartStatus.PROCESSED;
+            }
+        }
+        
+        private void recalculateTotal() { /* ... */ }
+    }
+    
+    // OrderProcessor now uses public API only
+    class OrderProcessor {
+        void process(Cart cart) {
+            cart.clear();
+            cart.markProcessed();  // respects business rules ✅
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 2️⃣ Common Coupling — Global Mutable State
+
+<Code lang="java" title="❌ Common coupling: shared mutable static state" code={`
+class AppState {
+    // 🔴 Global mutable state — shared across all threads
+    public static String currentUser;
+    public static int requestCount = 0;
+}
+
+class AuthService {
+    void login(String user) {
+        AppState.currentUser = user;  // mutates global
+    }
+}
+
+class BillingService {
+    void charge() {
+        String user = AppState.currentUser;  // reads global
+        // What if login() hasn't run?
+        // What if another thread changed it mid-request?
+    }
+}`} />
+
+<CardGrid>
+  <Card title="Production Bug Scenario" icon="danger">
+    ```text
+    Multi-threaded request handling:
+    
+    Thread A: AppState.currentUser = "alice"
+    Thread B: AppState.currentUser = "bob"   ← overwrites Alice
+    Thread A: reads currentUser → gets "bob" 💀
+    
+    Result: Alice gets Bob's invoice.
+    Data leak, security violation, compliance failure.
+    ```
+  </Card>
+  
+  <Card title="The Fix — Dependency Injection" icon="approve-check">
+    ```java
+    // ✅ Pass context explicitly — no global state
+    class RequestContext {
+        private final String currentUser;
+        // immutable, thread-safe, explicit
+    }
+    
+    class BillingService {
+        void charge(RequestContext ctx) {
+            String user = ctx.getCurrentUser();  // explicit, safe
+        }
+    }
+    
+    // Or use dependency injection framework
+    @Service
+    class BillingService {
+        private final UserRepository users;
+        
+        @Autowired
+        BillingService(UserRepository users) {
+            this.users = users;  // injected, testable
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 3️⃣ Control Coupling — Flag Passing
+
+<Code lang="java" title="❌ Control coupling: boolean flags control behavior" code={`
+class ReportGenerator {
+    // 🔴 Boolean flag controls internal logic
+    void generate(Data data, boolean isPDF) {
+        if (isPDF) {
+            // PDF generation logic
+            exportToPDF(data);
+        } else {
+            // CSV generation logic
+            exportToCSV(data);
+        }
+    }
+}
+
+// Usage — caller must know internal implementation details
+new ReportGenerator().generate(data, true);  // "true = PDF?"
+new ReportGenerator().generate(data, false); // "false = CSV?"`} />
+
+<CardGrid>
+  <Card title="Why It's Bad" icon="warning">
+    ```text
+    🔴 Caller must understand callee's internal branching
+    🔴 Adding a new format (e.g., XML) requires modifying existing method
+    🔴 Violates Open/Closed Principle
+    🔴 Hard to test each branch independently
+    ```
+  </Card>
+  
+  <Card title="The Fix — Polymorphism" icon="rocket">
+    ```java
+    // ✅ Interface + implementations — no flags needed
+    interface ReportGenerator {
+        void generate(Data data);
+    }
+    
+    class PdfReportGenerator implements ReportGenerator {
+        public void generate(Data data) {
+            exportToPDF(data);  // PDF-specific logic
+        }
+    }
+    
+    class CsvReportGenerator implements ReportGenerator {
+        public void generate(Data data) {
+            exportToCSV(data);  // CSV-specific logic
+        }
+    }
+    
+    // Usage — clear intent, no magic booleans
+    ReportGenerator generator = new PdfReportGenerator();
+    generator.generate(data);  // obvious what format
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 4️⃣ Tight vs Loose — Real Production Comparison
+
+<CardGrid>
+  <Card title="❌ Tight Coupling — Direct Instantiation" icon="error">
+    ```java
+    class OrderService {
+        // 🔴 Concrete types — hardwired dependencies
+        private final StripePaymentClient stripe;
+        private final SendGridEmailClient email;
+        private final MySQLOrderRepository db;
+        
+        OrderService() {
+            // 🔴 Direct instantiation — can't swap implementations
+            this.stripe = new StripePaymentClient();
+            this.email  = new SendGridEmailClient();
+            this.db     = new MySQLOrderRepository();
+        }
+        
+        void placeOrder(Order order) {
+            db.save(order);
+            stripe.charge(order.total());
+            email.sendConfirmation(order.customerId());
+        }
+    }
+    
+    // Problems:
+    // • Can't test without hitting real Stripe/SendGrid/MySQL
+    // • Switching payment provider = modify OrderService code
+    // • Each 'new' is a hardwired dependency
+    ```
+  </Card>
+  
+  <Card title="✅ Loose Coupling — Interface + DI" icon="approve-check">
+    ```java
+    // Abstractions — contracts only
+    interface PaymentGateway {
+        void charge(double amount);
+    }
+    
+    interface EmailService {
+        void sendConfirmation(String customerId);
+    }
+    
+    interface OrderRepository {
+        void save(Order order);
+    }
+    
+    // OrderService depends on abstractions only
+    class OrderService {
+        private final PaymentGateway payment;
+        private final EmailService email;
+        private final OrderRepository repository;
+        
+        // ✅ Dependencies injected — not created
+        OrderService(PaymentGateway payment, 
+                    EmailService email, 
+                    OrderRepository repository) {
+            this.payment    = Objects.requireNonNull(payment);
+            this.email      = Objects.requireNonNull(email);
+            this.repository = Objects.requireNonNull(repository);
+        }
+        
+        void placeOrder(Order order) {
+            repository.save(order);
+            payment.charge(order.total());
+            email.sendConfirmation(order.customerId());
+        }
+    }
+    
+    // Production wiring
+    OrderService prod = new OrderService(
+        new StripePaymentClient(),
+        new SendGridEmailClient(),
+        new MySQLOrderRepository()
+    );
+    
+    // Test wiring — zero external dependencies
+    OrderService test = new OrderService(
+        amount -> {},              // mock payment
+        id -> {},                  // mock email
+        order -> {}                // mock repo
+    );
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**🎯 DSA Connection**: Dependency Injection = **Strategy Pattern** at the architectural level.  
+- Interface = algorithm contract  
+- Concrete implementations = different strategies  
+- DI container = strategy selector  
+This enables runtime polymorphism across your entire application, not just within a single method.
+</Aside>
+
+---
+
+## 5️⃣ Dependency Injection — 3 Forms
+```
+Dependency Injection
+├── Constructor Injection  ← PREFERRED
+│   └── Dependencies declared at construction, immutable
+├── Setter Injection
+│   └── Optional dependencies, mutable after construction
+└── Field Injection (@Autowired)
+    └── Framework magic — avoid in non-Spring code
+```
+
+<Tabs>
+  <TabItem label="Constructor Injection (Preferred)" icon="check">
+    ```java
+    // ✅ Immutable, testable, explicit dependencies
+    class NotificationService {
+        private final EmailService email;
+        private final SMSService sms;
+        
+        NotificationService(EmailService email, SMSService sms) {
+            this.email = Objects.requireNonNull(email);
+            this.sms   = Objects.requireNonNull(sms);
+        }
+    }
+    
+    Benefits:
+    • Dependencies clear at a glance
+    • Object always in valid state after construction
+    • Easy to mock in tests
+    • Framework-agnostic
+    ```
+  </TabItem>
+  
+  <TabItem label="Setter Injection" icon="settings">
+    ```java
+    // ⚠️ For optional dependencies only
+    class ReportService {
+        private AuditLogger logger;  // optional — system works without it
+        
+        void setLogger(AuditLogger logger) {
+            this.logger = logger;
+        }
+        
+        void generate(Report r) {
+            // generate report...
+            if (logger != null) {
+                logger.log("Report generated");  // optional behavior
+            }
+        }
+    }
+    
+    Use when:
+    • Dependency is truly optional
+    • Circular dependency needs breaking
+    • Legacy code refactoring
+    ```
+  </TabItem>
+
+  <TabItem label="Field Injection (@Autowired)" icon="warning">
+    ```java
+    // ❌ Avoid outside Spring-managed beans
+    @Service
+    class UserService {
+        @Autowired  // ← framework magic
+        private UserRepository repo;  // not final, not explicit
+        
+        // Hard to test without Spring context
+        // Dependencies hidden — not visible in constructor
+    }
+    
+    Why avoid:
+    • Dependencies not visible in class signature
+    • Hard to instantiate manually in tests
+    • Tightly coupled to DI framework
+    • Can't enforce immutability
+    ```
+  </TabItem>
+</Tabs>
+
+---
+
+## 6️⃣ Interface Segregation — Don't Over-Couple to Fat Interfaces
+
+<Code lang="java" title="❌ Fat interface — forces stamp coupling" code={`// 🔴 One interface to rule them all — but consumers get too much
+interface UserService {
+    User findById(long id);
+    void updateProfile(User user);
+    void changePassword(String newPass);
+    void deleteAccount(long id);
+    List<Order> getOrderHistory(long id);   // ← unrelated to user management
+    void sendWelcomeEmail(long id);         // ← unrelated to user management
+}
+
+// BillingService only needs to read user info
+class BillingService {
+    private final UserService users;  // 🔴 coupled to methods it never uses
+    
+    BillingService(UserService users) {
+        this.users = users;
+    }
+    
+    void charge(User user) {
+        // Only uses findById, but forced to depend on everything
+        User u = users.findById(user.getId());
+        // ... billing logic
+    }
+}`} />
+
+<Code lang="java" title="✅ Segregated interfaces — minimal coupling" code={`// ✅ Small, focused interfaces — each consumer gets only what it needs
+interface UserReader {
+    User findById(long id);
+}
+
+interface UserWriter {
+    void updateProfile(User user);
+    void deleteAccount(long id);
+}
+
+interface OrderHistoryReader {
+    List<Order> getOrderHistory(long userId);
+}
+
+// BillingService only depends on what it actually uses
+class BillingService {
+    private final UserReader users;  // ✅ minimal coupling
+    
+    BillingService(UserReader users) {
+        this.users = users;
+    }
+    
+    void charge(User user) {
+        User u = users.findById(user.getId());  // only method available
+        // ... billing logic
+    }
+}
+
+// Implementation can implement multiple small interfaces
+class UserRepository implements UserReader, UserWriter, OrderHistoryReader {
+    // ... implementation
+}`} />
+
+<Aside type="note">
+**🎯 SOLID Connection**: This is the **Interface Segregation Principle (ISP)** in action.  
+Clients should not be forced to depend on methods they do not use. Small, focused interfaces reduce the "coupling surface area" — fewer methods = fewer ways for changes to ripple.
+</Aside>
+
+---
+
+## 7️⃣ Event-Driven — Decoupling via Events
+
+<CardGrid>
+  <Card title="Direct Calls — Tight Coupling" icon="error">
+    ```java
+    class InventoryService {
+        // 🔴 Knows about downstream services
+        private final NotificationService notification;
+        private final AuditService audit;
+        
+        void decrementStock(String itemId, int qty) {
+            // update stock...
+            notification.notifyLowStock(itemId);  // direct call
+            audit.logStockChange(itemId, qty);    // direct call
+        }
+    }
+    
+    // Dependency graph:
+    // InventoryService → NotificationService
+    // InventoryService → AuditService
+    // Change in either downstream → may break InventoryService
+    ```
+  </Card>
+  
+  <Card title="Event-Driven — Zero Coupling" icon="approve-check">
+    ```java
+    class InventoryService {
+        // ✅ Only knows about EventBus — not who listens
+        private final EventBus eventBus;
+        
+        void decrementStock(String itemId, int qty) {
+            // update stock...
+            eventBus.publish(new StockDecrementedEvent(itemId, qty));
+            // InventoryService doesn't know:
+            // • Who listens to this event
+            // • What they do with it
+            // • How many listeners there are
+        }
+    }
+    
+    // Completely separate — no reference to InventoryService
+    class NotificationHandler {
+        @Subscribe
+        void onStockDecremented(StockDecrementedEvent e) {
+            // notify users...
+        }
+    }
+    
+    class AuditHandler {
+        @Subscribe
+        void onStockDecremented(StockDecrementedEvent e) {
+            // log to audit trail...
+        }
+    }
+    
+    // Dependency graph:
+    // InventoryService → EventBus
+    // EventBus → NotificationHandler (runtime wiring)
+    // EventBus → AuditHandler (runtime wiring)
+    // Add new handler? InventoryService never changes ✅
+    ```
+  </Card>
+</CardGrid>
+```
+Tight:                          Event-Driven:
+OrderService                    OrderService
+    │──► PaymentService             │──► EventBus
+    │──► EmailService                         │──► PaymentHandler
+    │──► AuditService                         │──► EmailHandler
+    │──► InventoryService                     │──► AuditHandler
+                                              │──► InventoryHandler
+
+Change in PaymentService        Add new handler — OrderService
+→ may break OrderService        never changes
+```
+
+<Aside type="tip">
+**🎯 Real-Life SDE**: Event-driven architecture is how large systems scale.  
+- Inventory doesn't care if 1 or 100 services listen to `StockDecrementedEvent`.  
+- New features (analytics, ML recommendations) can subscribe without modifying existing code.  
+- This is the **Open/Closed Principle** at the system level.
+</Aside>
+
+---
+
+## 💣 Interview Traps — Avoid These
+
+<CardGrid>
+  <Card title="Trap 1 — Interface ≠ Loose Coupling" icon="error">
+    ```java
+    interface PaymentGateway {
+        void charge(double amount);
+    }
+    
+    class OrderService {
+        void placeOrder(Order order) {
+            // 🔴 Still tight coupling!
+            PaymentGateway gw = new StripePaymentClient();  // 'new' is the problem
+            gw.charge(order.total());
+        }
+    }
+    
+    // Fix: Inject the implementation, don't instantiate it
+    class OrderService {
+        private final PaymentGateway gateway;
+        
+        OrderService(PaymentGateway gateway) {  // ✅ injected
+            this.gateway = gateway;
+        }
+    }
+    ```
+  </Card>
+  
+  <Card title="Trap 2 — Coupling Through Return Types" icon="warning">
+    ```java
+    class UserRepository {
+        // 🔴 Returns concrete type — couples callers to ArrayList
+        public ArrayList<User> findAll() { ... }
+    }
+    
+    class UserService {
+        void process() {
+            ArrayList<User> users = repo.findAll();
+            users.trimToSize();  // ArrayList-specific method
+            // If repo changes to return LinkedList → this breaks 💀
+        }
+    }
+    
+    // ✅ Fix: Return the most abstract type
+    class UserRepository {
+        public List<User> findAll() { ... }  // interface, not implementation
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 3 — Static Methods = Hidden Coupling" icon="caution">
+    ```java
+    class OrderValidator {
+        static boolean isValid(Order order) {
+            // 🔴 Static call — untestable, unmockable
+            return TaxCalculator.compute(order) > 0;
+        }
+    }
+    
+    class TaxCalculator {
+        static double compute(Order order) {
+            // hits external tax rate API
+        }
+    }
+    
+    // Problem: Can't mock TaxCalculator.compute() in tests
+    // Solution: Make it instance-based + injectable
+    interface TaxService {
+        double compute(Order order);
+    }
+    
+    class OrderValidator {
+        private final TaxService tax;
+        
+        OrderValidator(TaxService tax) {
+            this.tax = tax;
+        }
+        
+        boolean isValid(Order order) {
+            return tax.compute(order) > 0;  // mockable ✅
+        }
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 4 — Circular Dependencies" icon="danger">
+    ```java
+    @Service
+    class A {
+        @Autowired B b;  // A depends on B
+    }
+    
+    @Service
+    class B {
+        @Autowired A a;  // B depends on A → circular!
+    }
+    
+    // Spring throws:
+    // BeanCurrentlyInCreationException:
+    // Error creating bean 'a': Requested bean is currently in creation
+    
+    // Fix: Extract shared logic into class C
+    @Service
+    class C { /* shared logic */ }
+    
+    @Service
+    class A {
+        @Autowired C c;  // A → C
+    }
+    
+    @Service
+    class B {
+        @Autowired C c;  // B → C (no A ↔ B cycle)
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 5 — Stamp Coupling = Security Risk" icon="shield">
+    ```java
+    class AuditLogger {
+        void log(User user) {
+            // Only needs userId and action
+            // But receives full User object with:
+            // • passwordHash
+            // • creditCardToken
+            // • SSN
+        }
+    }
+    
+    // Risk: If AuditLogger serializes user to logs → sensitive data leak!
+    
+    // ✅ Fix: Pass only what's needed
+    class AuditLogger {
+        void log(long userId, String action, Instant timestamp) {
+            // Minimal data — no sensitive fields possible
+        }
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+### 💣 Interview Traps
+
+**🪤 Trap 1 — Interface doesn't guarantee loose coupling**
+
+```java
+interface PaymentGateway {
+    void charge(double amount);
+}
+
+class OrderService {
+    void placeOrder(Order order) {
+        PaymentGateway gw = new StripePaymentClient(); // ← still tight!
+        gw.charge(order.total());
+    }
+}
+```
+
+Using an interface but **instantiating inside** the method = still tight coupling. The `new` is the coupling, not the type. Interface alone means nothing if you're still `new`-ing the concrete class.
+
+---
+
+**🪤 Trap 2 — Coupling through return type, not just parameter**
+
+```java
+class UserRepository {
+    public ArrayList<User> findAll() { ... }   // returns concrete type
+}
+
+class UserService {
+    void process() {
+        ArrayList<User> users = repo.findAll();
+        users.trimToSize();                     // ArrayList-specific method
+    }
+}
+```
+
+`UserService` is now coupled to `ArrayList` internals. If `UserRepository` changes to return `LinkedList` (same data, better insert performance) → `UserService` breaks. **Always return the most abstract type** (`List<User>`).
+
+---
+
+**🪤 Trap 3 — Static utility methods are hidden coupling**
+
+```java
+class OrderValidator {
+    static boolean isValid(Order order) {
+        return TaxCalculator.compute(order) > 0;  // static call — untestable
+    }
+}
+
+class TaxCalculator {
+    static double compute(Order order) {
+        // hits external tax rate API
+    }
+}
+```
+
+`static` method calls are **compile-time hardwired**. You cannot mock `TaxCalculator.compute()` in tests without byte-code manipulation (PowerMock). Every class that calls a static method from another class is **tightly coupled** to it — invisible in the constructor signature.
+
+---
+
+**🪤 Trap 4 — Circular dependency causes Spring context failure**
+
+```java
+@Service
+class A {
+    @Autowired B b;   // A depends on B
+}
+
+@Service
+class B {
+    @Autowired A a;   // B depends on A
+}
+
+// Spring throws:
+// BeanCurrentlyInCreationException:
+// Error creating bean 'a': Requested bean is currently in creation
+```
+
+Circular dependency = symptom of wrong responsibility distribution. Not a Spring bug. Fix: extract shared logic into a third class `C` that neither `A` nor `B` depends on each other for.
+
+---
+
+**🪤 Trap 5 — Stamp coupling silently passes sensitive data**
+
+```java
+class AuditLogger {
+    void log(User user) {
+        // only needs user.getId() and user.getAction()
+        // but receives the full User object including:
+        // user.getPasswordHash(), user.getCreditCardToken()
+    }
+}
+```
+
+`AuditLogger` receives a `User` with sensitive fields it never needs. If `AuditLogger` serializes `user` to a log file → password hash in plaintext logs. Stamp coupling is a **security vulnerability** when objects carry sensitive fields.
+
+**Fix:** Pass only what's needed — `log(long userId, String action)`.
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Graph — dependency graph, cycle detection**
+
+Coupling in a codebase is literally a **directed graph** problem:
+
+```
+Nodes  = classes/modules
+Edges  = dependencies (A → B means A depends on B)
+
+Tight coupling = densely connected graph
+                 high in-degree nodes = fragile hotspots
+
+Loose coupling = sparse graph with clear direction
+                 DAG (Directed Acyclic Graph) = ideal
+
+Circular dep  = cycle in graph → BeanCreationException in Spring
+                detected by DFS on dependency graph
+```
+
+Build tools (Maven, Gradle) detect circular **module** dependencies using topological sort. Spring's DI container does DFS at startup to detect circular bean dependencies. Coupling is graph theory applied to software.
+
+---
+
+## 🔩 DSA / Internals Connection — Coupling as Graph Theory
+
+```text
+Coupling in a codebase = Directed Graph problem:
+
+Nodes  = classes/modules
+Edges  = dependencies (A → B means A depends on B)
+
+Tight coupling = densely connected graph
+                 high in-degree nodes = fragile hotspots
+
+Loose coupling = sparse graph with clear direction
+                 DAG (Directed Acyclic Graph) = ideal architecture
+
+Circular dependency = cycle in graph
+                      → BeanCreationException in Spring
+                      → detected by DFS on dependency graph
+```
+
+<Code lang="text" title="Build tools detect coupling issues" code={`# Maven/Gradle use topological sort to detect circular module deps
+# Spring DI container does DFS at startup to detect circular beans
+
+Ideal dependency graph:
+    
+    Controller → Service → Repository → Database
+         ↓           ↓           ↓
+      (HTTP)    (Business)   (Persistence)
+      
+No cycles. Clear layers. Easy to test each layer in isolation.
+
+Anti-pattern:
+    
+    Controller ↔ Service ↔ Repository
+         ↑___________↓
+         (circular dependency → startup failure)
+`} />
+
+<Aside type="note">
+**🎯 Interview Answer**: *"How do you detect circular dependencies?"*  
+**A**: Model dependencies as a directed graph. Use Depth-First Search (DFS) to detect cycles. Build tools (Maven/Gradle) do this for modules; Spring does this for beans at context initialization.
+</Aside>
+
+---
+
+## 📊 Coupling Spectrum — Decision Guide
+
+```text
+TIGHT ◄────────────────────────────────────► LOOSE
+
+Content    Common    Control    Stamp    Data    Message
+   │          │          │        │        │        │
+Modify     Static    Boolean   Object   Fields   Signal
+fields     global     flag     param    only     only
+directly   state
+
+NEVER     NEVER     AVOID    REDUCE   TARGET   IDEAL
+```
+
+<CardGrid>
+  <Card title="Quick Self-Check" icon="information">
+    ```text
+    Ask these questions about your dependencies:
+    
+    1. Do I 'new' a concrete class inside my class?
+       → If yes: Tight coupling. Inject instead.
+    
+    2. Do I depend on a concrete return type?
+       → If yes: Stamp coupling. Return interface.
+    
+    3. Do I pass boolean flags to control behavior?
+       → If yes: Control coupling. Use polymorphism.
+    
+    4. Do I pass objects with fields I don't use?
+       → If yes: Stamp coupling. Extract minimal DTO.
+    
+    5. Do I call static methods from other classes?
+       → If yes: Hidden tight coupling. Make instance-based.
+    ```
+  </Card>
+  
+  <Card title="Refactoring Checklist" icon="rocket">
+    ```text
+    To reduce coupling:
+    
+    ✅ Replace 'new Concrete()' with constructor injection
+    ✅ Replace concrete return types with interfaces
+    ✅ Replace boolean flags with Strategy pattern
+    ✅ Replace fat objects with minimal DTOs
+    ✅ Replace static calls with injectable services
+    ✅ Replace direct calls with events for cross-cutting concerns
+    ✅ Extract shared logic to break circular dependencies
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🏭 SDE/SRE Relevance — What You Must Know
+
+<CardGrid>
+  <Card title="🔴 MUST KNOW — Production Critical" icon="danger">
+    ```text
+    • Constructor injection over field injection
+      → Immutable, testable, explicit dependencies
+    
+    • 'new' inside class = tight coupling
+      → Hard to test, hard to swap implementations
+    
+    • Static method calls = untestable coupling
+      → Can't mock without bytecode manipulation
+    
+    • Return interface types, not concrete
+      → Prevents stamp coupling through return values
+    
+    • Circular dependency → Spring context failure
+      → Detect early with architecture tests
+    
+    • Stamp coupling = security vulnerability
+      → Passing sensitive data to components that don't need it
+    
+    • Event-driven decoupling for cross-cutting concerns
+      → Scale features without modifying core logic
+    ```
+  </Card>
+  
+  <Card title="🟡 GOOD TO KNOW — Architecture Depth" icon="information">
+    ```text
+    • Dependency graph = DAG target
+      → Use tools like ArchUnit to enforce layer boundaries
+    
+    • Interface segregation reduces coupling surface
+      → Smaller interfaces = fewer breaking changes
+    
+    • Coupling metrics (afferent/efferent)
+      → Measure with SonarQube, JDepend
+    
+    • Package-by-feature vs package-by-layer
+      → Feature packages often have lower coupling
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is coupling?
+    A: Degree to which one class depends on internals of another.
+       High coupling = change in A breaks B.
+    
+    Q: Tight vs Loose coupling?
+    A: Tight = direct instantiation, concrete types, field access.
+       Loose = DI, interfaces, events, abstractions.
+    
+    Q: Why is 'new' inside a class bad?
+    A: Hardwires dependency — can't swap/test without modifying code.
+    ```
+  </Card>
+  
+  <Card title="Patterns & Fixes" icon="rocket">
+    ```text
+    Q: How to fix control coupling (boolean flags)?
+    A: Use polymorphism — separate implementations per behavior.
+    
+    Q: How to fix stamp coupling (over-passing data)?
+    A: Pass minimal DTO or primitives — only what's needed.
+    
+    Q: Interface doesn't guarantee loose coupling — why?
+    A: If you still 'new ConcreteImpl()' inside, you're tight.
+       Injection point matters more than type.
+    
+    Q: How to detect circular dependencies?
+    A: Model as directed graph, run DFS for cycles.
+       Spring does this at context startup.
+    ```
+  </Card>
+
+  <Card title="Security & Testing" icon="shield">
+    ```text
+    Q: Why is stamp coupling a security risk?
+    A: Passing full objects may leak sensitive fields to components
+       that don't need them (e.g., logging password hashes).
+    
+    Q: Why are static methods hard to test?
+    A: Can't mock without bytecode manipulation (PowerMock).
+       Instance methods + DI = mockable via constructor.
+    
+    Q: How does event-driven reduce coupling?
+    A: Publisher doesn't know subscribers — add/remove listeners
+       without modifying publisher code.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Coupling Decision Tree
+
+```text
+Need to use another class?
+│
+├─ Do you need its behavior?
+│  ├─ Yes → Depend on interface, inject implementation ✅
+│  └─ No  → Do you really need this dependency? ❓
+│
+├─ Do you need to pass data?
+│  ├─ Yes → Pass minimal DTO/primitives (Data coupling) ✅
+│  └─ No  → Use events/signals (Message coupling) ✅
+│
+├─ Are you tempted to pass a boolean flag?
+│  └─ Yes → Use polymorphism instead ✅
+│
+├─ Are you accessing internal fields directly?
+│  └─ Yes → Encapsulate state, expose behavior ✅
+│
+└─ Are you using static methods from other classes?
+   └─ Yes → Make instance-based + injectable ✅
+```
+
+### Coupling Anti-Patterns & Fixes
+
+| Anti-Pattern | Symptom | Fix |
+|-------------|---------|-----|
+| `new Concrete()` inside class | Can't test/mock, hard to swap | Constructor injection |
+| Returning `ArrayList<T>` | Caller coupled to implementation | Return `List<T>` interface |
+| `boolean isPDF` parameter | Caller controls callee logic | Polymorphism (Strategy) |
+| Passing `User` when only `id` needed | Security risk, unnecessary coupling | Pass `long userId` |
+| Static `TaxCalculator.compute()` | Untestable, hidden dependency | Instance `TaxService` + DI |
+| Circular `@Autowired` fields | Spring startup failure | Extract shared class `C` |
+
+<Aside type="caution">
+**Final Checklist for Low Coupling**:
+1. ✅ Never `new` a concrete dependency inside your class — inject it
+2. ✅ Return interface types, never concrete implementations
+3. ✅ Avoid boolean flags that control behavior — use polymorphism
+4. ✅ Pass minimal data — primitives or DTOs, not fat objects
+5. ✅ Replace static utility calls with injectable services
+6. ✅ Use events for cross-cutting concerns (logging, notifications)
+7. ✅ Enforce layer boundaries with architecture tests (ArchUnit)
+8. ✅ Measure coupling metrics — aim for sparse dependency graph
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="java" title="Predict coupling severity" code={`// Q1: What coupling type is this?
+class ReportService {
+    void generate(Data data, String format) {  // "PDF", "CSV"
+        if (format.equals("PDF")) { /* ... */ }
+        else { /* ... */ }
+    }
+}
+
+// Q2: How to fix this tight coupling?
+class UserService {
+    private MySQLUserRepository repo = new MySQLUserRepository();
+    public User find(long id) { return repo.findById(id); }
+}
+
+// Q3: Why is this stamp coupling a security risk?
+class Logger {
+    void log(User user) {  // User has passwordHash, creditCard
+        System.out.println("User: " + user);  // may leak sensitive data
+    }
+}
+
+// Q4: What breaks if we change this return type?
+class OrderRepo {
+    public ArrayList<Order> findAll() { ... }  // concrete return
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Control coupling — boolean-like String flag controls internal logic.
+   Fix: Use polymorphism — PdfReportGenerator, CsvReportGenerator.
+
+Q2: Tight coupling via direct instantiation ('new').
+   Fix: Constructor injection: UserService(MySQLUserRepository repo).
+
+Q3: Stamp coupling — Logger receives full User with sensitive fields it doesn't need.
+   Risk: Serializing user to logs may leak passwordHash/creditCard.
+   Fix: Pass only needed fields: log(long userId, String action).
+
+Q4: Any caller using ArrayList-specific methods breaks if return type changes.
+   Example: users.trimToSize() fails if repo returns LinkedList.
+   Fix: Return List<Order> interface — implementation can change safely.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your codebase for `new Concrete()` inside classes — replace with DI
+2. ✅ Replace boolean flags with Strategy pattern implementations
+3. ✅ Return interface types from repositories/services — never concrete collections
+4. ✅ Use ArchUnit tests to enforce layer boundaries and prevent cycles
+5. ✅ Measure coupling metrics — aim for sparse, acyclic dependency graph
+
+Mastering coupling turns fragile code into resilient, evolvable systems. ☕✨
+</Aside>

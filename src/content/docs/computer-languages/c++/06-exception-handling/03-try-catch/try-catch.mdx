@@ -1,0 +1,485 @@
+---
+title: C++ try-catch Blocks
+slug: computer-languages/cpp/exception-handling/try-catch
+description: Deep dive into C++ try-catch syntax, stack unwinding, RAII, catch-by-reference, and the differences from Java's exception model.
+sidebar:
+  label: "Control Flow"
+  badge:
+    text: Core Concept
+    variant: tip
+tags: [cpp, try-catch, exception, raii, stack-unwinding, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🎯 try-catch — Syntax & Basic Usage in C++
+
+---
+
+### 🧠 What It Is
+
+`try-catch` in C++ is similar to Java but with critical differences in **cleanup** and **type matching**. 
+1. **No `finally`**: C++ uses **RAII** (destructors) for cleanup.
+2. **No Checked Exceptions**: The compiler does not enforce handling.
+3. **Catch by Reference**: You should almost always catch by `const&` to avoid slicing.
+
+```cpp
+// Form 1 — basic
+try {
+    // risky code
+} catch (const std::exception& e) {
+    // handler
+}
+
+// Form 2 — multiple catch
+try {
+    // risky code
+} catch (const std::logic_error& e) {
+    // handler 1
+} catch (const std::runtime_error& e) {
+    // handler 2
+}
+
+// Form 3 — Catch-all (Use sparingly!)
+try {
+    // risky code
+} catch (...) {
+    // handles ANYTHING (even int, char*, etc.)
+}
+```
+
+<Aside type="note">
+**Java vs C++**: 
+- Java: `try { ... } catch (E e) { ... } finally { ... }`
+- C++: `try { ... } catch (const E& e) { ... }` (No finally. Use destructors/RAII).
+</Aside>
+
+---
+
+### 🔬 Execution Flow — Exact Mechanics
+
+When an exception is thrown, C++ performs **Stack Unwinding**. It destroys all local objects in the current scope and previous scopes until a matching `catch` is found.
+
+```text
+try block starts
+       │
+       ▼
+  statement 1 ──── no exception ──► statement 2 ──► ... ──► try block ends
+       │                                                            │
+  exception thrown                                                  │
+       │                                            no exception path▼
+       ▼                                                     skip catch blocks
+  try block STOPS immediately                                       │
+  remaining statements SKIPPED                                      ▼
+       │                                                    code after try-catch
+       ▼
+  Runtime checks catch blocks top → bottom
+  first matching type → execute that catch
+       │
+       ▼
+  Destructors for local vars run (Unwinding)
+       │
+       ▼
+  catch block runs
+       │
+       ▼
+  code after try-catch continues
+```
+
+```cpp
+#include <iostream>
+
+struct Resource {
+    ~Resource() { std::cout << "Resource Cleaned Up\\n"; }
+};
+
+void demo() {
+    try {
+        Resource r; // Constructor called
+        std::cout << "Throwing...\\n";
+        throw std::runtime_error("Error");
+        std::cout << "This is skipped\\n"; 
+    } catch (const std::exception& e) {
+        std::cout << "Caught: " << e.what() << "\\n";
+    }
+    std::cout << "After catch\\n";
+}
+
+// Output:
+// Throwing...
+// Resource Cleaned Up  ← Destructor called during unwind!
+// Caught: Error
+// After catch
+```
+
+---
+
+### 🔬 What `e` Is — The Exception Variable
+
+In C++, `e` is a local variable. 
+- **Best Practice**: Catch by `const reference` (`const std::exception& e`).
+- **Why?**: Catching by value causes **Object Slicing** (losing derived class data) and unnecessary copying.
+
+```cpp
+try {
+    riskyOp();
+} catch (const std::exception& e) {
+    // e is a reference to the exception object
+    // e.what() returns const char* description
+    
+    std::cerr << "Error: " << e.what() << '\\n';
+}
+// e is out of scope here
+```
+
+<Aside type="danger">
+**Never catch by pointer** (`catch (std::exception* e)`) unless you manually `delete` it. Standard exceptions are typically thrown by value and caught by reference.
+</Aside>
+
+---
+
+### 💻 Real-World Code — Payment Service
+
+```cpp
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+class PaymentException : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+class NetworkError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+void processPayment(double amount) {
+    if (amount <= 0) {
+        throw std::invalid_argument("Amount must be positive");
+    }
+    if (amount > 10000) {
+        throw PaymentException("Limit exceeded");
+    }
+    // Simulate network issue
+    throw NetworkError("Connection timed out");
+}
+
+int main() {
+    try {
+        processPayment(500);
+    } catch (const std::invalid_argument& e) {
+        // Bad input
+        std::cerr << "Bad Input: " << e.what() << '\\n';
+    } catch (const PaymentException& e) {
+        // Business logic failure
+        std::cerr << "Payment Failed: " << e.what() << '\\n';
+    } catch (const NetworkError& e) {
+        // Transient error - maybe retry?
+        std::cerr << "Network Error: " << e.what() << '\\n';
+    } catch (const std::exception& e) {
+        // Fallback for anything else
+        std::cerr << "Unknown Error: " << e.what() << '\\n';
+    }
+    return 0;
+}
+```
+
+---
+
+### 🔬 Checked vs Unchecked — No Compiler Enforcement
+
+C++ has **NO checked exceptions**. You don't need `throws` declarations.
+
+```cpp
+void readFile(const std::string& path) {
+    // Might throw std::ios_base::failure
+    // Compiler DOES NOT force you to catch it
+    // Caller might not know it throws!
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Open failed");
+}
+
+void caller() {
+    readFile("test.txt"); // Compiles fine, might crash at runtime if not caught
+}
+```
+
+<Aside type="tip">
+**Documentation**: Since the compiler doesn't help, document exceptions in comments or use `noexcept` to specify when a function *won't* throw.
+</Aside>
+
+---
+
+### 🔬 Scope Rules
+
+Variables declared inside `try` are **not** accessible in `catch`.
+
+```cpp
+try {
+    int x = 10;
+    riskyOp(); 
+} catch (const std::exception& e) {
+    // std::cout << x; // ❌ Error: 'x' was not declared in this scope
+    std::cerr << e.what();
+}
+```
+
+To share state, declare variables **before** the try block.
+
+```cpp
+std::string result = "default";
+try {
+    result = riskyOp();
+} catch (const std::exception& e) {
+    // result is accessible
+    std::cerr << "Failed, using default";
+}
+std::cout << result; // ✅
+```
+
+---
+
+## 🎯 Multiple catch Blocks
+
+---
+
+### 🔬 Matching — Exact Mechanics
+
+C++ matches exceptions based on **type hierarchy**. It checks `catch` blocks top-to-bottom.
+
+1. Exact match.
+2. Match against base class (pointer/reference conversion).
+3. Match against `...` (catch-all).
+
+```cpp
+try {
+    throw std::out_of_range("Index error");
+} catch (const std::logic_error& e) {
+    // ✅ Matches: out_of_range derives from logic_error
+    std::cerr << "Logic: " << e.what() << '\\n';
+} catch (const std::exception& e) {
+    // Skipped
+}
+```
+
+---
+
+### 🔬 Order Rule — Specific Before General
+
+Just like Java, you must catch specific exceptions before general ones.
+
+```cpp
+// ✅ CORRECT
+try {
+    // ...
+} catch (const std::out_of_range& e) { 
+    // Specific
+} catch (const std::logic_error& e) { 
+    // General
+}
+
+// ❌ WARNING/ERROR
+try {
+    // ...
+} catch (const std::logic_error& e) { 
+    // Catches out_of_range too!
+} catch (const std::out_of_range& e) { 
+    // ⚠️ Unreachable code (Compiler warning)
+}
+```
+
+---
+
+### 🔬 Catch-All (`...`)
+
+C++ allows catching **anything**, even non-exceptions (like `int` or `char*`).
+
+```cpp
+try {
+    throw 42; // Throwing an int! (Bad practice, but legal C++)
+} catch (int e) {
+    std::cerr << "Caught int: " << e << '\\n';
+} catch (...) {
+    std::cerr << "Caught something else\\n";
+}
+```
+
+<Aside type="caution">
+**Avoid throwing primitives**. Always throw objects derived from `std::exception`. Using `catch(...)` is useful for logging unexpected crashes before termination, but hides details.
+</Aside>
+
+---
+
+## 🔀 Control Flow & RAII
+
+---
+
+### 🧠 RAII replaces `finally`
+
+In Java, you use `finally` to close resources. In C++, you rely on **Destructors**.
+
+```java
+// Java
+try {
+    conn = open();
+    use(conn);
+} finally {
+    conn.close(); // Explicit cleanup
+}
+```
+
+```cpp
+// C++
+{
+    Connection conn("db"); // Constructor opens
+    use(conn);
+} // Destructor closes automatically here, even if exception occurs
+```
+
+If an exception is thrown, the destructor of `conn` is called during **stack unwinding**. This is safer than `finally` because it's hard to forget.
+
+---
+
+### 🔬 Case: Exception in Catch Block
+
+If a `catch` block throws a new exception, the original one is **lost** (unless chained).
+
+```cpp
+try {
+    throw std::runtime_error("Original");
+} catch (const std::runtime_error& e) {
+    std::cerr << "Caught: " << e.what() << '\\n';
+    throw std::logic_error("New Error"); // Original exception is gone!
+}
+```
+
+✅ **Chaining**: Use `std::throw_with_nested` or custom exceptions to preserve the cause.
+
+---
+
+### 🔬 `noexcept` and Termination
+
+If a function is marked `noexcept` and throws, the program calls `std::terminate()` immediately. No stack unwinding.
+
+```cpp
+void safe() noexcept {
+    throw std::runtime_error("Oops"); // 💥 std::terminate() called
+}
+```
+
+---
+
+### 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Catching by Value (Slicing)" icon="error">
+    ```cpp
+    try {
+        throw std::out_of_range("err");
+    } catch (std::exception e) { // ❌ SLICED!
+        // e is just a std::exception, lost out_of_range info
+    }
+    ```
+    ✅ **Fix**: `catch (const std::exception& e)`
+  </Card>
+  
+  <Card title="Trap 2: Throwing Pointers" icon="shield">
+    ```cpp
+    throw new std::runtime_error("err"); // ❌ BAD
+    ```
+    Who deletes it? If you catch by value, you leak. If you catch by pointer, you must `delete`.
+    ✅ **Fix**: Throw by value: `throw std::runtime_error("err");`
+  </Card>
+
+  <Card title="Trap 3: Destructors Throwing" icon="caution">
+    If a destructor throws while another exception is active (unwinding), the program calls `std::terminate()`.
+    ✅ **Rule**: Destructors should never throw. Mark them `noexcept` (default in C++11+).
+  </Card>
+
+  <Card title="Trap 4: `catch(...)` Hides Bugs" icon="error">
+    Using `catch(...)` swallows all errors, including hardware signals or bad allocs, making debugging impossible.
+    ✅ **Fix**: Only use `catch(...)` at the very top level of `main()` for logging before exit.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### Stack Unwinding
+
+When an exception is thrown, the runtime walks up the stack frame by frame.
+1. Check if current frame has a handler.
+2. If no, **destroy local objects** (call destructors).
+3. Pop frame.
+4. Repeat.
+
+This ensures **RAII** works: resources are cleaned up as the stack unwinds.
+
+### Zero-Cost Abstraction
+
+Modern C++ compilers use a "zero-cost" model for `try-catch`.
+- **No Exception**: Zero overhead. No extra instructions in the hot path.
+- **Exception Thrown**: Expensive. Requires looking up tables and unwinding stack.
+
+✅ **Best Practice**: Use exceptions for **rare** errors. Do not use them for control flow (e.g., loop termination).
+
+---
+
+### 📊 Decision Guide
+
+| Situation | C++ Pattern |
+|-----------|---------|
+| Recoverable Error | `try-catch` specific types |
+| Resource Cleanup | RAII (Constructors/Destructors) |
+| Non-Recoverable | Let it propagate to `main` |
+| Unexpected Error | `catch(...)` at top level (log & abort) |
+| Performance Critical | Return codes or `std::expected` (C++23) |
+
+---
+
+### 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct A {
+    ~A() { std::cout << "A "; }
+};
+
+void foo() {
+    A a;
+    throw std::runtime_error("err");
+}
+
+int main() {
+    try {
+        foo();
+    } catch (const std::exception& e) {
+        std::cout << "Caught ";
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: A Caught 
+
+Explanation:
+1. foo() creates 'a'.
+2. Exception thrown.
+3. Stack unwinds: 'a' is destroyed → prints "A ".
+4. Control jumps to catch block → prints "Caught ".
+```
+</details>
+
+---
+
+*Converted from Java try-catch guide → Modern C++ (C++11/14/17/20). Emphasizes RAII, catch-by-reference, and zero-cost abstraction. 🦾*
+```

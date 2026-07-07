@@ -1,0 +1,1623 @@
+---
+title: JavaScript Short Circuit Operators
+slug: computer-languages/javascript/operators/short-circuit
+description: How &&, ||, ??, and ?. skip evaluation, truthy/falsy coercion, return values, safety patterns, and interview essentials.
+sidebar:
+  label: "Short Circuit"
+  badge:
+    text: Operators
+    variant: tip
+tags: [javascript, operators, short-circuit, truthy-falsy, nullish-coalescing, interview, astro6]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## ⚡ Short Circuit Operators in JavaScript
+
+```text
+&&   short circuit AND  (returns operand value, not just boolean)
+||   short circuit OR   (returns operand value, not just boolean)
+??   nullish coalescing (ES2020+ — short circuit on null/undefined only)
+?.   optional chaining  (ES2020+ — short circuit property access)
+```
+
+> **Short circuit** means: **skip evaluating the right operand if the result is already determined by the left operand**.
+
+<Code lang="js" title="&& — skip right if left is falsy" code={`// && → if LEFT is falsy, RIGHT is NOT evaluated!
+let x = 0;
+if (x !== 0 && 10/x > 1) {  // 10/x never runs! ✅ no division error
+    console.log("safe");
+}
+// Because x !== 0 is false (0 is falsy), the entire && expression short-circuits.
+// JS skips 10/x > 1 → prevents runtime error!
+
+// 🎯 JS Bonus: && returns the actual operand value!
+let result = "hello" && "world";  // "world" (last truthy)
+let empty = "" && "skip";          // "" (first falsy)
+console.log(result, empty);  // "world", ""`} />
+
+<Code lang="js" title="|| — skip right if left is truthy" code={`// || → if LEFT is truthy, RIGHT is NOT evaluated!
+let s = null;
+if (s === null || s.isEmpty?.()) {  // s.isEmpty() never called if null ✅
+    console.log("empty or null");
+}
+// Because s === null is true, the entire || expression short-circuits.
+// JS skips s.isEmpty?.() → prevents TypeError!
+
+// 🎯 JS Bonus: || returns the actual operand value!
+let name = "" || "Guest";      // "Guest" (first truthy)
+let user = {name: "Alice"} || {name: "Bob"};  // {name: "Alice"} (first truthy)
+console.log(name, user);  // "Guest", {name: "Alice"}
+
+// 🎯 Modern pattern: nullish coalescing for null/undefined only
+let config = null ?? "default";    // "default" (null triggers fallback)
+let empty = "" ?? "default";       // "" (empty string is NOT null/undefined)
+console.log(config, empty);  // "default", ""`} />
+
+<Aside type="tip" title="🎯 MUST KNOW">
+**JS Superpowers vs Java**:  
+✅ **Operands returned, not just booleans** — `&&`/`||` return actual values for chaining  
+✅ **Truthy/falsy coercion** — any value can short-circuit, not just `true`/`false`  
+✅ **Nullish coalescing `??`** — short-circuit only on `null`/`undefined`, not all falsy values  
+✅ **Optional chaining `?.`** — short-circuit property access without nested null checks  
+✅ **No bitwise boolean ops** — `true & false` coerces to numbers first (avoid!)  
+</Aside>
+
+---
+
+## 🔬 Truthy/Falsy Coercion — The Foundation
+
+> JavaScript converts values to boolean context using **truthy/falsy rules** before short-circuit evaluation.
+
+### 📊 Falsy Values (Only 7!)
+
+```js
+// These 7 values are FALSY — everything else is TRUTHY:
+false
+0
+-0
+0n          // BigInt zero
+""          // empty string
+null
+undefined
+NaN
+```
+
+<Code lang="js" title="Truthy/falsy examples" code={`// Falsy values — short-circuit &&, trigger || fallback:
+console.log(false && "skip");   // false (falsy, short-circuits)
+console.log(0 && "skip");       // 0 (falsy, short-circuits)
+console.log("" || "default");   // "default" (empty string is falsy)
+console.log(null ?? "default"); // "default" (null triggers ??)
+
+// Truthy values — continue &&, skip || fallback:
+console.log("hello" && "world");  // "world" (both truthy → return last)
+console.log(1 || "fallback");     // 1 (truthy → short-circuits, returns 1)
+console.log({} || "fallback");    // {} (objects are truthy, even empty!)
+console.log([] ?? "fallback");    // [] (arrays are truthy, ?? doesn't trigger)
+
+// ⚠️ Common surprises:
+console.log("0" && "1");   // "1" (non-empty strings are truthy!)
+console.log([] && {});     // {} (empty array is truthy!)
+console.log(function(){} && "hi");  // "hi" (functions are truthy!)`} />
+
+<Aside type="caution">
+**Interview Trap**: `[]` and `{}` are **truthy**, not falsy!  
+```js
+if ([]) { console.log("runs"); }  // ✅ Runs — empty array is truthy
+if ({}) { console.log("runs"); }  // ✅ Runs — empty object is truthy
+```
+Only the 7 values listed above are falsy. Everything else — including empty collections — is truthy!
+</Aside>
+
+---
+
+## 🔬 Return Values — Operands, Not Just Booleans
+
+> Unlike Java, JavaScript's `&&` and `||` **return one of the original operands**, not a boolean.
+
+### 🔄 Evaluation + Return Rules
+
+| Operator | Left Value | Right Evaluated? | Return Value |
+|----------|-----------|------------------|--------------|
+| `a && b` | Falsy | ❌ No | `a` (the falsy left value) |
+| `a && b` | Truthy | ✅ Yes | `b` (the right value, whatever it is) |
+| `a \|\| b` | Truthy | ❌ No | `a` (the truthy left value) |
+| `a \|\| b` | Falsy | ✅ Yes | `b` (the right value, whatever it is) |
+| `a ?? b` | `null`/`undefined` | ✅ Yes | `b` (fallback) |
+| `a ?? b` | Any other value | ❌ No | `a` (the non-nullish value) |
+
+<Code lang="js" title="Return value examples" code={`// && returns first falsy OR last truthy:
+console.log(5 && 10);           // 10 (both truthy → return right)
+console.log(0 && 10);           // 0 (left falsy → return left, skip right)
+console.log("hi" && null);      // null (left truthy → eval right, return it)
+console.log(null && "skip");    // null (left falsy → return left)
+
+// || returns first truthy OR last falsy:
+console.log(5 || 10);           // 5 (left truthy → return left, skip right)
+console.log(0 || 10);           // 10 (left falsy → eval right, return it)
+console.log("" || "default");   // "default" (empty string falsy → fallback)
+console.log("hi" || "skip");    // "hi" (left truthy → return left)
+
+// ?? returns first non-nullish OR fallback:
+console.log(0 ?? 10);           // 0 (zero is NOT nullish → return left)
+console.log("" ?? "default");   // "" (empty string is NOT nullish)
+console.log(null ?? "default"); // "default" (null triggers fallback)
+console.log(undefined ?? "x");  // "x" (undefined triggers fallback)
+
+// 🎯 Practical: Default values with ??
+const port = process.env.PORT ?? 3000;  // Use env var if set, else 3000
+const name = userInput?.trim() ?? "Guest";  // Safe access + fallback`} />
+
+<Aside type="tip">
+**Pro Pattern**: Use `??` for default values when `0`, `""`, or `false` are valid inputs:
+```js
+// ❌ || coerces valid values:
+let count = userInput || 10;  // If userInput is 0, gets 10 (wrong!)
+
+// ✅ ?? only falls back on null/undefined:
+let count = userInput ?? 10;  // If userInput is 0, keeps 0 ✅
+```
+</Aside>
+
+---
+
+## 🔬 Optional Chaining `?.` — Short-Circuit Property Access <Badge text="ES2020+" variant="success" />
+
+> The `?.` operator safely accesses nested properties — short-circuits to `undefined` if any step is `null`/`undefined`.
+
+<Code lang="js" title="Optional chaining patterns" code={`// Without optional chaining — nested null checks:
+let city = user && user.address && user.address.city;
+
+// With optional chaining — clean and safe:
+let city = user?.address?.city;  // undefined if any step is null/undefined
+
+// Works with method calls:
+let name = user?.getName?.();  // undefined if user or getName is null/undefined
+
+// Works with array access:
+let firstTag = tags?.[0];  // undefined if tags is null/undefined
+
+// Combine with nullish coalescing for defaults:
+let city = user?.address?.city ?? "Unknown";  // "Unknown" if any step fails
+
+// 🎯 Real-world: API response handling
+const userName = response?.data?.user?.profile?.name ?? "Guest";
+// Safe even if response, data, user, or profile is missing!`} />
+
+<Code lang="js" title="❌ Common optional chaining traps" code={`// Trap 1: ?? has lower precedence than ?.
+let result = obj?.value ?? "default";  // ✅ Correct: (obj?.value) ?? "default"
+
+// Trap 2: Can't use ?. on non-optional access
+let val = obj.value?.nested;  // ❌ SyntaxError: ?. must be first in chain
+// ✅ Correct: obj?.value?.nested
+
+// Trap 3: ?. doesn't catch TypeErrors for wrong property types
+let obj = { user: "Alice" };
+console.log(obj?.user?.name);  // ❌ TypeError: "Alice".name is not a function/property
+// ?. only short-circuits on null/undefined, not on type mismatches!
+
+// ✅ Fix: Combine with typeof checks if needed:
+let name = typeof obj?.user === "object" ? obj.user.name : undefined;`} />
+
+<Aside type="note">
+**Precedence Note**: `?.` has high precedence, but `??` has lower precedence than `||`.  
+Use parentheses when mixing: `(a ?? b) || c` vs `a ?? (b || c)` — different results!
+</Aside>
+
+---
+
+## 🔬 Short Circuit vs. Bitwise Operators in JS
+
+### Key Differences Table
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>&amp;</code> / <code>|</code></th>
+      <th><code>&amp;&amp;</code> / <code>||</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Evaluation</strong></td>
+      <td>Both sides <strong>always</strong> evaluated</td>
+      <td>Right side <strong>optional</strong> (short circuit)</td>
+    </tr>
+    <tr>
+      <td><strong>Return Type</strong></td>
+      <td>Number (after coercion)</td>
+      <td>Original operand value (any type)</td>
+    </tr>
+    <tr>
+      <td><strong>Boolean Context</strong></td>
+      <td>Coerces booleans to numbers first</td>
+      <td>Uses truthy/falsy coercion</td>
+    </tr>
+    <tr>
+      <td><strong>Primary Use</strong></td>
+      <td>Bitwise math on numbers</td>
+      <td>Conditional logic, safety checks, value chaining</td>
+    </tr>
+  </tbody>
+</table>
+
+<Code lang="js" title="Danger: & does NOT short circuit + coerces to number" code={`// & and | → BOTH sides always evaluated + coerce to numbers!
+let x = 0;
+if (x !== 0 & 10/x > 1) {  // 10/x IS evaluated → 💥 Division error!
+    console.log("not safe");
+}
+// Even though x !== 0 is false, JS still evaluates 10/x > 1 → crash!
+
+// ✅ Always prefer && for boolean conditions:
+if (x !== 0 && 10/x > 1) {  // Safe: 10/x skipped when x === 0
+    console.log("safe");
+}
+
+// ⚠️ Boolean coercion trap:
+console.log(true & false);   // 0 (number! true→1, false→0, 1&0=0)
+console.log(true && false);  // false (boolean, short-circuits)
+console.log(typeof (true & false));   // "number" 😱
+console.log(typeof (true && false));  // "boolean" ✅`} />
+
+<Aside type="danger">
+**Golden Rule**: **Always use `&&`/`||` for boolean logic**, never `&`/`|`.  
+`&`/`|` on booleans coerce to numbers first and return numbers — a common source of subtle bugs!
+</Aside>
+
+---
+
+## 🔢 Side Effects & Evaluation Order — Interview Trap
+
+When operands have **side effects** (like `++x` or function calls), short circuit behavior changes the final state.
+
+<Code lang="js" title="Increment operators reveal evaluation order" code={`let x = 10, y = 15;
+
+// Test with different operators:
+// Condition: (++x < 10) [op] (++y > 15)
+
+// Case 1: & (always eval both, coerces to numbers)
+// ++x < 10 → 11 < 10 = false
+// ++y > 15 → 16 > 15 = true  
+// false & true → 0 & 1 = 0 (falsy) → else branch: y++ → y=17
+// Result: x=11, y=17
+
+// Case 2: | (always eval both)
+// ++x < 10 → 11 < 10 = false
+// ++y > 15 → 16 > 15 = true
+// false | true → 0 | 1 = 1 (truthy) → if branch: x++ → x=12
+// Result: x=12, y=16
+
+// Case 3: && (short circuit: skip right if left falsy)
+// ++x < 10 → 11 < 10 = false → skip ++y > 15!
+// Result: false → else branch: y++ → y=16
+// Result: x=11, y=16  (y was NOT incremented in condition!)
+
+// Case 4: || (short circuit: skip right if left truthy)
+// ++x < 10 → 11 < 10 = false → MUST eval ++y > 15
+// ++y > 15 → 16 > 15 = true
+// Result: true → if branch: x++ → x=12
+// Result: x=12, y=16`} />
+
+### 📊 Results Summary Table
+
+```text
+┌──────────┬─────────┬─────────┬─────────┐
+│ Operator │ Final x │ Final y │ Why?    │
+├──────────┼─────────┼─────────┼─────────┤
+│    &     │   11    │   17    │ Both sides evaluated + number coercion │
+│    |     │   12    │   16    │ Both sides evaluated + number coercion │
+│   &&     │   11    │   16    │ Right skipped (left falsy) │
+│   ||     │   12    │   16    │ Right evaluated (left falsy) │
+└──────────┴─────────┴─────────┴─────────┘
+```
+
+<Code lang="js" title="Reproducible test code" code={`function testWith(op) {
+    let x = 10, y = 15;
+    let result;
+    
+    switch (op) {
+        case "&":  result = (++x < 10) & (++y > 15); break;
+        case "|":  result = (++x < 10) | (++y > 15); break;
+        case "&&": result = (++x < 10) && (++y > 15); break;
+        case "||": result = (++x < 10) || (++y > 15); break;
+        default: return;
+    }
+    
+    if (result) { x++; } else { y++; }
+    console.log(\`${op} → x=${x}, y=${y}\`);
+}
+
+testWith("&");   // &  → x=11, y=17
+testWith("|");   // |  → x=12, y=16
+testWith("&&");  // && → x=11, y=16
+testWith("||");  // || → x=12, y=16`} />
+
+<Aside type="danger">
+**Interview Trap**: Questions with `++` in conditions test your understanding of:
+1. Short circuit evaluation order
+2. When side effects occur
+3. How skipped expressions affect final state
+4. **JS-specific**: `&`/`|` coerce booleans to numbers first!
+
+**Pro Tip**: Avoid side effects in condition expressions — extract to separate statements for clarity:
+```js
+// ❌ Hard to reason about:
+if (++x < 10 && ++y > 15) { ... }
+
+// ✅ Clear and maintainable:
+x++;
+y++;
+if (x < 10 && y > 15) { ... }
+```
+</Aside>
+
+---
+
+## 🛡️ Practical Safety Patterns
+
+<CardGrid>
+  <Card title="Pattern: Null-Safe Method Calls" icon="shield">
+```js
+    // ✅ Safe: null check first with &&
+    if (user && user.isActive()) {
+        process(user);
+    }
+    
+    // ✅ Safer: optional chaining
+    if (user?.isActive()) {
+        process(user);  // user can be null/undefined — safe!
+    }
+    
+    // ✅ Safe: null or empty check with ||
+    if (!input || input.trim() === "") {
+        return "Please enter a value";
+    }
+    
+    // ✅ Modern: nullish coalescing for defaults
+    const name = userInput?.trim() ?? "Guest";
+```
+  </Card>
+  
+  <Card title="Pattern: Defensive Division" icon="approve-check">
+```js
+    // ✅ Safe: check divisor first
+    if (divisor && dividend / divisor > threshold) {
+        // Safe to use result (divisor truthy → non-zero for numbers)
+    }
+    
+    // ✅ Safer: explicit nullish check
+    if (divisor != null && dividend / divisor > threshold) {
+        // Handles both null and undefined
+    }
+    
+    // ❌ Dangerous: division before check
+    if (dividend / divisor > threshold && divisor) {  // 💥 if divisor is 0 or null!
+        // Never reaches here safely
+    }
+```
+  </Card>
+
+  <Card title="Pattern: Lazy Initialization with Short Circuit" icon="rocket">
+```js
+    // ✅ Efficient: only compute expensive value if needed
+    if (!cache || cache.isExpired?.()) {
+        cache = loadExpensiveData();  // Only runs when necessary
+    }
+    
+    // ✅ Chain multiple conditions safely with ??
+    const config = getConfig()
+                ?? loadDefaultConfig()
+                ?? { enabled: false };
+    
+    // ✅ Guard chain with &&
+    if (config?.enabled 
+        && config.value != null
+        && config.value.isValid?.()) {
+        use(config.value);
+    }
+    // Each check protects the next — short circuit prevents errors!
+```
+  </Card>
+
+  <Card title="Pattern: Value Chaining with &&/||" icon="information">
+```js
+    // ✅ Return first falsy or last truthy with &&
+    const result = checkAuth() && checkPermissions() && fetchData();
+    // If any check fails (returns falsy), stops and returns that value
+    
+    // ✅ Return first truthy or last falsy with ||
+    const value = localStorage.getItem("key") 
+               || sessionStorage.getItem("key") 
+               || "default";
+    // Tries each source until one returns truthy
+    
+    // ✅ Combine && for guards, ?? for defaults
+    const name = user?.profile && user.profile.name ?? "Anonymous";
+    // Safe access + fallback in one expression
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: When is the right operand of && evaluated?" icon="information">
+    **Only if the left operand is truthy**.  
+    If left is falsy, the result is already falsy — right is skipped, and left is returned.
+  </Card>
+  
+  <Card title="Q: When is the right operand of || evaluated?" icon="information">
+    **Only if the left operand is falsy**.  
+    If left is truthy, the result is already truthy — right is skipped, and left is returned.
+  </Card>
+
+  <Card title="Q: What does `5 && 'hello'` return?" icon="approve-check">
+    **`"hello"`** — both operands truthy, so `&&` returns the **right operand**.  
+    JS short-circuit operators return **operand values**, not booleans!
+  </Card>
+
+  <Card title="Q: What does `0 || 'default'` return?" icon="approve-check">
+    **`"default"`** — `0` is falsy, so `||` evaluates and returns the right operand.  
+    This is the foundation of default value patterns in JS!
+  </Card>
+
+  <Card title="Q: Difference between `||` and `??`?" icon="caution">
+    - `||` short-circuits on **any falsy value** (`0`, `""`, `false`, `null`, `undefined`, `NaN`)  
+    - `??` short-circuits **only on `null` or `undefined`**  
+    ✅ Use `??` when `0`, `""`, or `false` are valid inputs that shouldn't trigger fallback.
+  </Card>
+
+  <Card title="Q: Can `&&` be used with non-booleans?" icon="approve-check">
+    **YES ✅** — JS `&&`/`||` work with **any type**, using truthy/falsy coercion.  
+    They return the actual operand value, not a boolean — powerful for chaining!
+  </Card>
+
+  <Card title="Q: What does `true & false` return in JS?" icon="error">
+    **`0`** (a number!) — `&` coerces booleans to numbers first: `true→1`, `false→0`, then `1&0=0`.  
+    ✅ For boolean logic, **always use `&&`/`||`** — they return booleans and short-circuit.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA & Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Early Exit with Short Circuit" icon="rocket">
+    Use `||` to skip expensive checks when a simple condition suffices:
+```js
+    function isValid(input) {
+        // Quick rejections first (cheap checks)
+        if (!input || input.length === 0 || banned.has(input)) {
+            return false;  // Short circuit: skip expensive validation
+        }
+        // Only run heavy validation if quick checks pass
+        return expensiveValidation(input);
+    }
+```
+  </Card>
+  
+  <Card title="Pattern: Cascading Fallbacks with ?? and ||" icon="shield">
+    Chain fallback values using short-circuit operators:
+```js
+    // Use first non-nullish value (??)
+    const config = process.env.APP_CONFIG
+                ?? process.env.DEFAULT_CONFIG
+                ?? loadConfigFile()
+                ?? { debug: false };
+    
+    // Use first truthy value (||) — be careful with 0/""
+    const displayName = user.nickname 
+                     || user.name 
+                     || user.email?.split('@')[0] 
+                     || "Anonymous";
+```
+  </Card>
+
+  <Card title="Pattern: Safe Nested Access with ?." icon="backspace">
+    Avoid nested null checks with optional chaining:
+```js
+    // ❌ Old way — pyramid of doom:
+    if (response && response.data && response.data.user) {
+        if (response.data.user.profile) {
+            console.log(response.data.user.profile.name);
+        }
+    }
+    
+    // ✅ Modern way — flat and safe:
+    console.log(response?.data?.user?.profile?.name ?? "Unknown");
+    
+    // ✅ With method calls:
+    const initials = user?.getName?.()?.charAt(0)?.toUpperCase() ?? "?";
+```
+  </Card>
+
+  <Card title="Pattern: Conditional Rendering (React/Vue)" icon="information">
+    Short-circuit operators are idiomatic for conditional UI:
+```js
+    // React: Render only if condition truthy
+    {isLoggedIn && <Dashboard />}  // && returns component or false
+    
+    // React: Fallback UI if value falsy
+    {userName || <LoginPrompt />}  // || returns name or fallback
+    
+    // ✅ Clearer with ternary for complex logic:
+    {isLoggedIn ? <Dashboard /> : <LoginPrompt />}
+    
+    // ⚠️ Trap: 0, "", false will render!
+    {count && <Badge>{count}</Badge>}  // If count=0, renders "0" 😱
+    // ✅ Fix:
+    {count > 0 && <Badge>{count}</Badge>}  // Only render if positive
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Performance Note**: While short-circuit operators skip evaluation, **don't prematurely optimize**. Write clear, safe conditions first:
+```js
+// ✅ Clear and safe:
+if (obj && obj.isValid && obj.getValue() > 0) { ... }
+
+// ❌ Over-optimized and hard to read:
+if (obj) { if (obj.isValid) { if (obj.getValue() > 0) { ... } } }
+```
+Modern JS engines optimize boolean expressions well — prioritize readability and correctness.
+</Aside>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Scenario | Use `&&` / `||` | Use `??` | Use `?.` | Why? |
+|----------|----------------|----------|----------|------|
+| Null-safe method call | ✅ `obj && obj.method()` | ✅ `obj?.method()` | ✅ `obj?.method?.()` | Short circuit prevents TypeError |
+| Default value (0/"" valid) | ❌ `||` coerces valid values | ✅ `value ?? "default"` | N/A | `??` only falls back on null/undefined |
+| Default value (0/"" invalid) | ✅ `value || "default"` | ❌ `??` won't catch 0/"" | N/A | `||` falls back on any falsy |
+| Nested property access | ❌ Manual null checks | N/A | ✅ `obj?.a?.b?.c` | Clean, safe, short-circuits on null |
+| Bitwise flag check | ❌ Not for bitwise | ❌ | ❌ | Use `&`/`|` for bitwise on numbers |
+| Boolean logic in `if` | ✅ Always | ❌ | ❌ | Clarity, safety, short-circuit |
+| Value chaining/defaults | ✅ `a && b && c` or `a \|\| b \|\| c` | ✅ `a ?? b ?? c` | ✅ `a?.b ?? "default"` | Return operand values, not just booleans |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `&&`/`||` for **boolean conditions and value chaining** — they return operands, not just booleans
+2. ✅ Use `??` for **default values** when `0`, `""`, or `false` are valid inputs
+3. ✅ Use `?.` for **safe nested property access** — short-circuits on `null`/`undefined`
+4. ✅ Remember: `&`/`|` on booleans **coerce to numbers** and return numbers — avoid for logic!
+5. ✅ Know the **7 falsy values**: `false`, `0`, `-0`, `0n`, `""`, `null`, `undefined`, `NaN`
+6. ✅ Avoid side effects (`++`, function calls) in condition expressions — extract for clarity
+7. ✅ In interviews: explain **truthy/falsy coercion**, **return values**, and **safety benefits**
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="js" title="Predict the output" code={`// Q1: Basic short circuit + return values
+console.log(5 && 10);           // ?
+console.log(0 && 10);           // ?
+console.log(5 || 10);           // ?
+console.log(0 || 10);           // ?
+
+// Q2: Nullish coalescing vs OR
+console.log(0 ?? 10);           // ?
+console.log(0 || 10);           // ?
+console.log("" ?? "default");   // ?
+console.log("" || "default");   // ?
+
+// Q3: Optional chaining
+let obj = { user: { name: "Alice" } };
+console.log(obj?.user?.name);   // ?
+console.log(obj?.profile?.name ?? "Unknown");  // ?
+
+// Q4: Side effects with short circuit
+let x = 10, y = 15;
+if (++x < 10 && ++y > 15) { x++; y++; }
+console.log(x, y);              // ? ?
+
+// Q5: Boolean coercion trap
+console.log(true & false);      // ? (number!)
+console.log(true && false);     // ? (boolean)
+console.log(typeof (true & false));  // ?
+
+// Q6: Falsy values
+console.log([] && "hi");        // ?
+console.log({} || "fallback");  // ?
+console.log(NaN ?? "default");  // ?`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 10, 0, 5, 10
+    ← && returns first falsy or last truthy; || returns first truthy or last falsy
+
+Q2: 0, 10, "", "default"
+    ← ?? only falls back on null/undefined; || falls back on any falsy value
+
+Q3: "Alice", "Unknown"
+    ← Optional chaining returns value if path exists, undefined if any step null
+
+Q4: 11, 16
+    ← ++x<10 is false (11<10), so && short-circuits — ++y never runs, y++ in else runs once
+
+Q5: 0, false, "number"
+    ← & coerces booleans to numbers (1&0=0); && returns boolean false; typeof 0 is "number"
+
+Q6: "hi", {}, "default"
+    ← [] and {} are truthy (not in 7 falsy values); NaN is falsy but ?? only checks null/undefined
+```
+</details>
+
+---
+
+## 📌 Quick Revision Cheat Sheet <Badge text="MUST KNOW" variant="tip" />
+
+```js
+// 🎯 SHORT CIRCUIT OPERATORS (return operand values!)
+a && b   // Returns: first falsy OR last truthy
+a || b   // Returns: first truthy OR last falsy  
+a ?? b   // Returns: first non-nullish OR fallback (ES2020+)
+a?.b     // Returns: property value OR undefined if a null/undefined (ES2020+)
+
+// 🎯 TRUTHY/FALSY (only 7 falsy values!)
+Falsy: false, 0, -0, 0n, "", null, undefined, NaN
+Truthy: Everything else — including [], {}, "0", function(){}
+
+// 🎯 COERCION TRAPS
+true & false   → 0 (number! avoid for logic)
+true && false  → false (boolean ✅)
+[] && "hi"     → "hi" ([] is truthy!)
+"" || "def"    → "def" (empty string is falsy)
+"" ?? "def"    → "" (empty string is NOT nullish ✅)
+
+// 🎯 SAFE PATTERNS
+// Null-safe access:
+user?.profile?.name ?? "Guest"
+
+// Default values (0/"" valid):
+count = input ?? 0;      // Keeps 0 if input is 0
+name = input ?? "Guest"; // Keeps "" if input is ""
+
+// Default values (0/"" invalid):
+count = input || 10;     // Falls back if input is 0
+name = input || "Guest"; // Falls back if input is ""
+
+// Guard chain:
+if (config?.enabled && config.value != null && config.value.isValid?.()) { ... }
+
+// Conditional rendering (React):
+{count > 0 && <Badge>{count}</Badge>}  // Avoid rendering 0
+
+// 🎯 INTERVIEW GOLD
+// "&& returns first falsy or last truthy; || returns first truthy or last falsy"
+// "?? only falls back on null/undefined — use when 0/''/false are valid"
+// "?. short-circuits property access on null/undefined — prevents TypeError"
+// "Only 7 falsy values: false, 0, -0, 0n, '', null, undefined, NaN"
+// "& on booleans coerces to numbers — always use &&/|| for boolean logic"
+// "Short circuit skips evaluation — safety + performance benefits"
+```
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="JavaScript Type Coercion"
+    href="/computer-languages/javascript/topics/type-coercion"
+    description="Truthy/falsy, ToBoolean, coercion table, strict vs loose equality"
+  />
+  <LinkCard
+    title="JavaScript Nullish Coalescing & Optional Chaining"
+    href="/computer-languages/javascript/topics/nullish-optional"
+    description="?? and ?. operators, use cases, precedence, interview patterns"
+  />
+  <LinkCard
+    title="JavaScript Conditional Rendering"
+    href="/computer-languages/javascript/guides/conditional-rendering"
+    description="&&, ||, ternary, patterns for React/Vue, common traps"
+  />
+  <LinkCard
+    title="JavaScript Operators Reference"
+    href="/computer-languages/javascript/topics/operators"
+    description="All operators, precedence, associativity, best practices"
+  />
+</CardGrid>
+
+<Aside type="note">
+🎯 **Production Pro Tips**  
+1. Use `??` for default values when `0`, `""`, or `false` are valid inputs  
+2. Use `?.` for nested property access — prevents "Cannot read property of null" errors  
+3. Avoid `&`/`|` for boolean logic — they coerce to numbers and don't short-circuit  
+4. Use ESLint rules: `no-unused-expressions`, `no-constant-condition`, `prefer-logical-operator-over-ternary`  
+5. Document when you rely on truthy/falsy coercion — team members may expect strict boolean checks  
+6. In React: use `count > 0 && <Component>` to avoid rendering `0` as text 🛡️
+</Aside>
+
+> 💡 **Final Wisdom**: JavaScript short-circuit operators are **more powerful but nuanced** than Java due to truthy/falsy coercion and operand return values. Master the 7 falsy values, prefer `??` for nullish defaults, use `?.` for safe access, and always choose `&&`/`||` over `&`/`|` for boolean logic — you'll write robust, interview-ready conditional code! 🚀✨
+
+*Converted for Astro 6 + Starlight • Optimized for interview prep + production use • Quality >>>> Quantity* 🎯
+```
+
+---
+
+## 🔄 Java Short Circuit → JS Short Circuit Conversion Summary
+
+| Java Feature | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| `&&` short-circuit AND | `&&` short-circuit AND | ✅ Same evaluation rule, but JS **returns operand value**, not boolean |
+| `||` short-circuit OR | `||` short-circuit OR | ✅ Same rule, JS returns operand value for chaining |
+| `&`/`|` on booleans (non-short-circuit) | `&`/`|` coerce booleans to numbers first | ⚠️ JS: `true & false` → `0` (number), not `false` (boolean) |
+| Boolean-only `&&`/`||` | Any type with truthy/falsy coercion | ✅ JS: `5 && "hi"` → `"hi"` (powerful for defaults) |
+| No nullish coalescing | `??` operator (ES2020+) | ✅ JS: `value ?? "default"` only falls back on `null`/`undefined` |
+| No optional chaining | `?.` operator (ES2020+) | ✅ JS: `obj?.prop?.method?.()` safe nested access |
+| Compile-time type errors | Runtime coercion (silent) | ⚠️ JS: any expression can use `&&`/`||` — test edge cases |
+| `!` only on boolean | `!` coerces any type to boolean first | ✅ JS: `![]` → `false` (array is truthy, negated) |
+| Side effects in conditions | Same evaluation order, but return values differ | ⚠️ JS: `a && b` returns `a` or `b`, not boolean — affects chaining |
+| No truthy/falsy concept | 7 falsy values, everything else truthy | ⚠️ JS: `[]`, `{}`, `"0"` are truthy — common interview trap |
+
+---
+
+🧠 **Interview Power Move**: When asked about short-circuit operators, always mention:  
+1. **Truthy/falsy coercion** — only 7 falsy values; `[]`, `{}`, `"0"` are truthy  
+2. **Operand return values** — `&&`/`||` return actual values, not just booleans (powerful for chaining)  
+3. **`??` vs `||`** — use `??` when `0`, `""`, or `false` are valid inputs that shouldn't trigger fallback  
+4. **`?.` for safe access** — prevents "Cannot read property of null" without nested checks  
+5. **Avoid `&`/`|` for logic** — they coerce booleans to numbers and don't short-circuit  
+
+---
+
+# ⚡ Short Circuit Operators in JavaScript
+
+---
+
+## 🔰 What Is Short Circuiting?
+
+Short circuiting = **stopping evaluation the moment the result is determined** — the right-hand side is **never evaluated** if the left side decides the outcome.
+
+```js
+true  || heavyFn()   // heavyFn NEVER called — || already knows result
+false && heavyFn()   // heavyFn NEVER called — && already knows result
+null  ?? heavyFn()   // heavyFn IS called — null triggers ??
+```
+
+Three operators short circuit in JS:
+
+```
+&&   — Logical AND         → stops on FALSY
+||   — Logical OR          → stops on TRUTHY
+??   — Nullish Coalescing  → stops on non-null/undefined
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Short Circuit Operators
+│
+├── 🔴 && (Logical AND)
+│   ├── returns first FALSY or last value
+│   ├── short circuits on falsy
+│   └── compound: &&=
+│
+├── 🟢 || (Logical OR)
+│   ├── returns first TRUTHY or last value
+│   ├── short circuits on truthy
+│   └── compound: ||=
+│
+├── 🟣 ?? (Nullish Coalescing)
+│   ├── returns first NON-NULLISH value
+│   ├── only null and undefined trigger fallback
+│   ├── short circuits on non-null/undefined
+│   └── compound: ??=
+│
+├── ⚙️  Logical Assignment
+│   ├── &&=
+│   ├── ||=
+│   └── ??=
+│
+└── 🔗 Chaining and Combinations
+    ├── optional chaining ?.
+    ├── ?? with ?.
+    └── precedence traps
+```
+
+---
+
+## 🔬 Core Mechanic — They Return VALUES, Not Booleans
+
+```
+┌──────────────────────────────────────────────────────────┐
+│          THE MOST IMPORTANT THING TO UNDERSTAND          │
+│                                                          │
+│  && and || do NOT return true/false                      │
+│  They return one of the ACTUAL OPERAND VALUES            │
+│                                                          │
+│  a && b  →  if a is falsy  → return a (stop)            │
+│             if a is truthy → return b (no short circuit) │
+│                                                          │
+│  a || b  →  if a is truthy → return a (stop)            │
+│             if a is falsy  → return b (no short circuit) │
+│                                                          │
+│  a ?? b  →  if a is null/undefined → return b           │
+│             if a is anything else  → return a (stop)    │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// && returns the DECIDING value:
+1    && 2       // 2       — 1 truthy → return right
+0    && 2       // 0       — 0 falsy  → return left (stops)
+"a"  && "b"    // "b"     — "a" truthy → return right
+""   && "b"    // ""      — "" falsy → return left (stops)
+null && "b"    // null    — null falsy → return left (stops)
+
+// || returns the DECIDING value:
+1    || 2       // 1       — 1 truthy → return left (stops)
+0    || 2       // 2       — 0 falsy → return right
+""   || "b"    // "b"     — "" falsy → return right
+"a"  || "b"    // "a"     — "a" truthy → return left (stops)
+null || "b"    // "b"     — null falsy → return right
+
+// ?? only cares about null/undefined:
+null      ?? "b"   // "b"    — null → return right
+undefined ?? "b"   // "b"    — undefined → return right
+0         ?? "b"   // 0      — 0 is NOT nullish → return left ✅
+""        ?? "b"   // ""     — "" is NOT nullish → return left ✅
+false     ?? "b"   // false  — false is NOT nullish → return left ✅
+NaN       ?? "b"   // NaN    — NaN is NOT nullish → return left ✅
+```
+
+---
+
+## 1️⃣ `&&` — Logical AND
+
+### Algorithm
+```
+a && b:
+  1. Evaluate a → get value
+  2. Is a FALSY? → return a immediately (short circuit)
+  3. Is a TRUTHY? → evaluate b → return b
+```
+
+```js
+// Falsy values that trigger short circuit:
+false && x    // false    (boolean)
+0     && x    // 0        (zero)
+""    && x    // ""       (empty string)
+null  && x    // null
+undefined && x // undefined
+NaN   && x    // NaN
+
+// Truthy — evaluates right side:
+1     && "hello"    // "hello"
+"a"   && 42         // 42
+[]    && "yes"      // "yes"  — [] is truthy
+{}    && "yes"      // "yes"  — {} is truthy
+```
+
+### Chaining `&&`
+```js
+// Returns first falsy or last value:
+1 && 2 && 3         // 3       — all truthy → last value
+1 && 0 && 3         // 0       — stops at 0 (first falsy)
+1 && 2 && null && 3 // null    — stops at null
+1 && 2 && false     // false   — stops at false
+
+// Step by step — 1 && 2 && 3:
+// (1 && 2) → 2 (1 truthy → return 2)
+// (2 && 3) → 3 (2 truthy → return 3)
+// Result: 3
+```
+
+### Real Use Patterns
+```js
+// Guard pattern — only execute if left is truthy:
+user && user.profile && user.profile.avatar;
+// If user is null → stops → returns null (no crash)
+
+// Conditional execution — right side only runs if left is true:
+isLoggedIn && renderDashboard();
+hasPermission && deleteRecord(id);
+
+// Conditional property assignment:
+const avatar = user && user.avatar;  // null if no user
+```
+
+---
+
+## 2️⃣ `||` — Logical OR
+
+### Algorithm
+```
+a || b:
+  1. Evaluate a → get value
+  2. Is a TRUTHY? → return a immediately (short circuit)
+  3. Is a FALSY?  → evaluate b → return b
+```
+
+```js
+// Truthy values that trigger short circuit:
+true   || x    // true
+1      || x    // 1
+"hi"   || x    // "hi"
+[]     || x    // []
+{}     || x    // {}
+
+// Falsy — evaluates right side:
+false     || "default"  // "default"
+0         || "default"  // "default"
+""        || "default"  // "default"
+null      || "default"  // "default"
+undefined || "default"  // "default"
+NaN       || "default"  // "default"
+```
+
+### Chaining `||`
+```js
+// Returns first truthy or last value:
+0 || "" || null || "found"   // "found" — all falsy → last
+0 || "first" || "second"     // "first" — stops at first truthy
+null || undefined || 0       // 0       — all falsy → last value
+```
+
+### Classic Default Value Pattern
+```js
+// Pre-ES2020 — || for defaults:
+function greet(name) {
+  const displayName = name || "Guest";
+  return `Hello, ${displayName}`;
+}
+
+greet("Ali")  // "Hello, Ali"
+greet("")     // "Hello, Guest" — empty string triggers fallback
+greet(null)   // "Hello, Guest"
+greet(0)      // "Hello, Guest" — 0 triggers fallback 😱 (if 0 is valid)
+```
+
+---
+
+## 3️⃣ `??` — Nullish Coalescing (ES2020)
+
+### Algorithm
+```
+a ?? b:
+  1. Evaluate a → get value
+  2. Is a null OR undefined? → evaluate b → return b
+  3. Is a anything ELSE?     → return a (short circuit)
+```
+
+```js
+// ONLY null and undefined trigger right side:
+null      ?? "default"   // "default"
+undefined ?? "default"   // "default"
+
+// Everything else — return left as-is:
+0         ?? "default"   // 0       ✅ — 0 is valid, keep it
+""        ?? "default"   // ""      ✅ — empty string is valid
+false     ?? "default"   // false   ✅ — false is valid
+NaN       ?? "default"   // NaN     ✅ — NaN returned (not replaced)
+[]        ?? "default"   // []      ✅
+{}        ?? "default"   // {}      ✅
+```
+
+### `||` vs `??` — The Critical Difference
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              || vs ?? COMPARISON                         │
+│                                                          │
+│  ||  treats ALL falsy as "missing":                      │
+│      false, 0, "", null, undefined, NaN                  │
+│                                                          │
+│  ??  treats ONLY nullish as "missing":                   │
+│      null, undefined                                     │
+│                                                          │
+│  When 0, "", false are VALID values → use ??             │
+│  When 0, "", false mean "absent"   → use ||              │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// Real scenario — user settings:
+const settings = {
+  volume: 0,        // 0 is valid — user wants silence
+  username: "",     // "" is valid — user cleared their name
+  darkMode: false,  // false is valid — user wants light mode
+  timeout: null     // null — user didn't set this
+};
+
+// WRONG — || replaces valid values:
+const volume   = settings.volume   || 50;   // 50 😱 — ignores 0
+const username = settings.username || "Guest"; // "Guest" 😱
+const darkMode = settings.darkMode || true; // true 😱
+
+// RIGHT — ?? only replaces nullish:
+const volume   = settings.volume   ?? 50;   // 0     ✅
+const username = settings.username ?? "Guest"; // ""  ✅
+const darkMode = settings.darkMode ?? true; // false  ✅
+const timeout  = settings.timeout  ?? 5000; // 5000  ✅
+```
+
+---
+
+## ⚙️ Deep Dive — V8 Short Circuit Internals
+
+```
+┌──────────────────────────────────────────────────────────┐
+│          V8 BYTECODE — SHORT CIRCUIT FLOW                │
+│                                                          │
+│  a || b  compiles to:                                    │
+│                                                          │
+│  LdaNamedProperty <a>    ← load a                        │
+│  JumpIfToBooleanTrue [label_end]  ← test + maybe jump   │
+│  LdaNamedProperty <b>    ← load b (only if not jumped)  │
+│  [label_end]:                                            │
+│  ← result is in accumulator                             │
+│                                                          │
+│  a && b  compiles to:                                    │
+│                                                          │
+│  LdaNamedProperty <a>    ← load a                        │
+│  JumpIfToBooleanFalse [label_end]  ← test + maybe jump  │
+│  LdaNamedProperty <b>    ← load b (only if not jumped)  │
+│  [label_end]:                                            │
+│                                                          │
+│  The JUMP is the short circuit.                          │
+│  Right side bytecode literally NOT executed.             │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// Short circuit = branch prediction opportunity for TurboFan:
+// If left side is ALWAYS truthy in hot code:
+//   → TurboFan learns → eliminates right-side evaluation branch
+//   → speculative optimization (deopt if assumption breaks)
+
+// This is why short circuit matters for performance —
+// not just skipping one function call
+// but giving TurboFan branch prediction hints
+```
+
+---
+
+## 4️⃣ Logical Assignment Operators (ES2021)
+
+### `&&=` — Assign only if left is TRUTHY
+
+```js
+// a &&= b  means:  a && (a = b)
+// Only assigns if a is truthy
+
+let user = { name: "Ali" };
+user &&= { name: "Ali", role: "admin" }; // assigns ✅ — user was truthy
+console.log(user); // { name: "Ali", role: "admin" }
+
+let guest = null;
+guest &&= { name: "Guest" }; // does NOT assign — guest is falsy
+console.log(guest); // null ✅ — unchanged
+
+// Real use — update only if exists:
+config.debug &&= process.env.NODE_ENV !== "production";
+// Only overwrites config.debug if it was already truthy
+```
+
+### `||=` — Assign only if left is FALSY
+
+```js
+// a ||= b  means:  a || (a = b)
+// Only assigns if a is falsy
+
+let name = "";
+name ||= "Guest";     // assigns — "" is falsy
+console.log(name);    // "Guest"
+
+let role = "admin";
+role ||= "user";      // does NOT assign — "admin" is truthy
+console.log(role);    // "admin" ✅
+
+// Real use — initialize if not set:
+cache[key] ||= computeExpensiveValue(key);
+// Only computes if cache[key] is falsy (empty/null/undefined)
+```
+
+### `??=` — Assign only if left is NULLISH
+
+```js
+// a ??= b  means:  a ?? (a = b)
+// Only assigns if a is null or undefined
+
+let count = 0;
+count ??= 10;         // does NOT assign — 0 is not nullish ✅
+console.log(count);   // 0
+
+let score = null;
+score ??= 100;        // assigns — null is nullish
+console.log(score);   // 100
+
+let level = undefined;
+level ??= 1;          // assigns — undefined is nullish
+console.log(level);   // 1
+
+// Real use — lazy initialization:
+class Config {
+  #cache = null;
+
+  get data() {
+    this.#cache ??= this.#loadFromDisk(); // load only once
+    return this.#cache;
+  }
+}
+```
+
+### Key Difference — Assignment Behavior
+
+```js
+// Regular assignment ALWAYS writes:
+let obj = { a: 1 };
+obj.b = obj.b || [];  // reads obj.b, writes obj.b — ALWAYS writes
+
+// Logical assignment only writes if condition met:
+obj.b ||= [];         // reads obj.b → only writes if obj.b is falsy
+
+// WHY this matters — object setters/watchers:
+const reactive = new Proxy({}, {
+  set(t, k, v) {
+    console.log(`SET ${k} = ${v}`);
+    t[k] = v;
+    return true;
+  }
+});
+
+reactive.x = reactive.x || 5;  // logs "SET x = 5" ALWAYS
+reactive.x ||= 5;               // logs "SET x = 5" only if x is falsy ✅
+// reactive.x is already 5 → ||= does NOT trigger setter again
+```
+
+---
+
+## 🔗 `?.` Optional Chaining — Short Circuit Partner
+
+`?.` short circuits to `undefined` if left side is `null` or `undefined`.
+
+```js
+// Without optional chaining:
+const city = user && user.address && user.address.city;
+
+// With optional chaining:
+const city = user?.address?.city;
+// If user is null → stops → returns undefined (no crash)
+
+// Method calls:
+user?.getProfile()        // calls only if user is not null/undefined
+arr?.map(x => x * 2)      // calls only if arr is not null/undefined
+
+// Bracket notation:
+user?.["first-name"]      // property access with special chars
+
+// With ??:
+const city = user?.address?.city ?? "Unknown";
+// If user is null → undefined ?? "Unknown" → "Unknown" ✅
+```
+
+### `?.` vs `&&` for null checks
+
+```js
+// && checks TRUTHINESS (blocks on 0, ""):
+const len = str && str.length;  // 0 if str = "" — correct but fragile
+const len = str && str.length;  // 0 if str = 0  — wrong if str is a num
+
+// ?. checks NULLISHNESS only:
+const len = str?.length;        // undefined if str = null/undefined
+                                // 0 if str = "" ← correct ✅
+
+// Combined:
+const len = str?.length ?? 0;
+// null/undefined → 0
+// ""  → 0 (length = 0)
+// "hi" → 2
+```
+
+---
+
+## 🧩 Precedence — The Hidden Trap
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              OPERATOR PRECEDENCE                         │
+│  Higher number = evaluated first                         │
+│                                                          │
+│  ||      → precedence 4                                 │
+│  &&      → precedence 5  (higher than ||)               │
+│  ??      → precedence 3  (lower than || and &&)         │
+│  &&=, ||=, ??= → precedence 2 (lowest)                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// && binds tighter than ||:
+true || false && false   // true — parsed as: true || (false && false)
+                         //                 = true || false = true
+
+// Without knowing precedence:
+// devs assume left-to-right: (true || false) && false = false 😱
+
+// Always use parens when mixing:
+(true || false) && false  // false ✅ — explicit
+true || (false && false)  // true  ✅ — explicit
+
+// ?? cannot be mixed with || or && without parens:
+null ?? "a" || "b"   // ❌ SyntaxError — must use parens
+(null ?? "a") || "b" // "a" || "b" = "a" ✅
+null ?? ("a" || "b") // null → "a" ✅
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Config with Layered Defaults
+
+```js
+// Load config with priority: env > file > hardcoded defaults
+function loadConfig(env, fileConfig) {
+  return {
+    port:     env.PORT     ?? fileConfig?.port     ?? 8080,
+    host:     env.HOST     ?? fileConfig?.host     ?? "0.0.0.0",
+    debug:    env.DEBUG    ?? fileConfig?.debug    ?? false,
+    timeout:  env.TIMEOUT  ?? fileConfig?.timeout  ?? 5000,
+    logLevel: env.LOG_LEVEL ?? fileConfig?.logLevel ?? "info",
+  };
+}
+
+// ?? is correct here — 0, false, "" are valid config values
+// Using || would replace valid 0 (port), false (debug)
+```
+
+### Pattern 2 — Guard Clause Pattern
+
+```js
+// Short circuit as guard — exit early:
+async function processOrder(orderId, userId) {
+  const order = await db.orders.findById(orderId);
+  order       || throw new NotFoundError(`Order ${orderId} not found`);
+
+  const user = await db.users.findById(userId);
+  user        || throw new UnauthorizedError("User not found");
+
+  const canProcess = user.permissions.includes("PROCESS_ORDERS");
+  canProcess  || throw new ForbiddenError("Insufficient permissions");
+
+  // All guards passed — safe to proceed:
+  return await processOrderInternal(order, user);
+}
+```
+
+### Pattern 3 — React Conditional Rendering (&&)
+
+```js
+// Component renders only if condition truthy:
+function UserProfile({ user, isLoading, error }) {
+  return (
+    <div>
+      {isLoading && <Spinner />}
+      {error && <ErrorMessage message={error.message} />}
+      {user && (
+        <div>
+          <h1>{user.name}</h1>
+          <p>{user?.bio ?? "No bio provided"}</p>
+          {user.isAdmin && <AdminBadge />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// TRAP — 0 renders as "0" in JSX:
+{items.length && <List items={items} />}  // renders "0" when empty 😱
+{items.length > 0 && <List items={items} />} // ✅ boolean coercion
+{!!items.length && <List items={items} />}   // ✅ double NOT
+```
+
+### Pattern 4 — Lazy Default Initialization
+
+```js
+class Cache {
+  #store = new Map();
+
+  get(key, factory) {
+    // Only compute factory() if key not in cache:
+    this.#store.has(key) || this.#store.set(key, factory());
+
+    // Or with ??=:
+    // this.#store.get(key) ??= factory(); ← would need Map to support it
+
+    return this.#store.get(key);
+  }
+}
+
+const cache = new Cache();
+const user = cache.get("user:42", () => db.fetchUser(42));
+// db.fetchUser only called if not cached ✅
+```
+
+### Pattern 5 — Middleware Chain Short Circuit
+
+```js
+// Express-style middleware — short circuit on failure:
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  token || (res.status(401).json({ error: "No token" }) && next("route"));
+
+  const user = verifyToken(token);
+  user || (res.status(401).json({ error: "Invalid token" }) && next("route"));
+
+  req.user = user;
+  next();
+};
+
+// Pipeline pattern — chain of validators:
+function validateUser(data) {
+  return (
+    (data.name?.length > 0      || "Name is required")       &&
+    (data.email?.includes("@")  || "Invalid email")          &&
+    (data.age >= 18             || "Must be 18 or older")    &&
+    true // all passed → return true
+  );
+}
+
+const result = validateUser({ name: "Ali", email: "ali@x.com", age: 20 });
+// true ✅ or first error message string
+```
+
+### Pattern 6 — Safe Deep Access
+
+```js
+// API response with uncertain shape:
+async function getUserAvatar(userId) {
+  const response = await api.getUser(userId).catch(() => null);
+
+  return (
+    response?.data?.profile?.avatar?.url ??
+    response?.data?.avatar ??
+    "/images/default-avatar.png"
+  );
+}
+
+// Multiple fallbacks with ??:
+const displayName =
+  user?.displayName ??
+  user?.username ??
+  user?.email?.split("@")[0] ??
+  `User ${user?.id}` ??
+  "Anonymous";
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: `0` and `""` as valid values — `||` kills them
+
+```js
+// Function with numeric parameter:
+function setTimeout(delay) {
+  const ms = delay || 1000; // 😱 delay=0 → 1000 (not 0)
+}
+setTimeout(0); // gets 1000 — completely wrong
+
+// Fix:
+function setTimeout(delay) {
+  const ms = delay ?? 1000; // ✅ delay=0 → 0 (null/undefined → 1000)
+}
+
+// Real prod — counting:
+let count = 0;
+const display = count || "No items"; // "No items" 😱 — 0 is falsy
+const display = count ?? "No items"; // 0 ✅ — 0 is not nullish
+```
+
+---
+
+### Trap 2: `&&` with `0` renders in JSX
+
+```js
+// In React JSX:
+const items = [];
+
+// This renders "0" as text in the DOM:
+<div>{items.length && <List />}</div>
+// items.length = 0 → falsy → && returns LEFT operand = 0
+// React renders 0 as text node 😱
+
+// Fixes:
+<div>{items.length > 0 && <List />}</div>   // ✅ boolean
+<div>{!!items.length && <List />}</div>      // ✅ double NOT
+<div>{items.length ? <List /> : null}</div>  // ✅ ternary
+```
+
+---
+
+### Trap 3: Short circuit skips side effects — silently
+
+```js
+// Function with side effects:
+let count = 0;
+function increment() {
+  count++;
+  return true;
+}
+
+false && increment();  // increment NEVER called — count stays 0
+true  || increment();  // increment NEVER called — count stays 0
+
+// Real prod — logging inside short circuit:
+const value = cache.get(key) || (log("cache miss"), compute(key));
+// log() only called on cache miss ✅ — intentional side effect pattern
+
+// TRAP — relying on side effect that gets skipped:
+function validate(x) {
+  logAudit("validating", x);  // side effect
+  return x > 0;
+}
+
+// Audit log never fires:
+const isValid = false && validate(input);
+// Someone short circuits validate() thinking it's pure
+// but it has a required audit side effect 😱
+```
+
+---
+
+### Trap 4: `??` precedence with `||` and `&&`
+
+```js
+// This is a SyntaxError — ?? cannot be directly mixed:
+null ?? "a" || "b"    // ❌ SyntaxError
+true && "a" ?? "b"    // ❌ SyntaxError
+
+// Must use explicit parens:
+(null ?? "a") || "b"  // "a" || "b" = "a" ✅
+null ?? ("a" || "b")  // "a" ✅
+
+// Why? Precedence of ?? is ambiguous relative to || and &&
+// JS spec requires explicit grouping to prevent bugs
+```
+
+---
+
+### Trap 5: `||=` triggers setter even when not needed (vs `??=`)
+
+```js
+// Object with reactive setter:
+const state = {
+  _count: 0,
+  get count() { return this._count; },
+  set count(v) {
+    console.log(`SETTER called with ${v}`);
+    this._count = v;
+  }
+};
+
+// ||= — reads then conditionally writes:
+state.count = state.count || 0;  // ALWAYS calls setter 😱
+// Even though count = 0, setter is called with 0
+
+// Logical assignment:
+state.count ||= 0;  // only calls setter if count is falsy
+// count = 0 → falsy → DOES call setter with 0
+// count = 5 → truthy → does NOT call setter ✅
+
+// ??= — only writes if null/undefined:
+state.count ??= 0;  // count = 0 → NOT nullish → setter NOT called ✅
+```
+
+---
+
+### Trap 6: Chained `?.` with `??` — undefined vs null distinction
+
+```js
+const user = {
+  profile: null  // explicitly null — user has no profile
+};
+
+user?.profile?.avatar           // undefined — ?. returns undefined on null
+user?.profile?.avatar ?? "pic"  // "pic" ✅ — undefined triggers ??
+
+// But:
+user?.name   // undefined — name doesn't exist
+user?.name ?? "Anonymous"  // "Anonymous" ✅
+
+// TRAP — optional chaining always returns undefined (never null):
+null?.anything   // undefined — NOT null 😱
+// So ?? after ?. always gets undefined, never null
+// Both trigger ?? — no behavioral difference here
+// But matters if you're doing strict null checks later
+
+const result = user?.profile?.avatar;
+result === null        // false 😱 — it's undefined
+result === undefined  // true ✅
+result == null        // true ✅ — loose equality catches both
+```
+
+---
+
+### Trap 7: `&&=` doesn't work like you think on missing properties
+
+```js
+const obj = {};
+
+// Property doesn't exist:
+obj.x &&= "value";
+console.log(obj.x);   // undefined — x doesn't exist → falsy → no assign
+                      // obj.x is still undefined 😱 not "value"
+
+obj.x = false;
+obj.x &&= "value";    // x exists but is false → falsy → no assign
+console.log(obj.x);   // false — still not assigned 😱
+
+// Only assigns if existing value is TRUTHY:
+obj.x = "existing";
+obj.x &&= "new";
+console.log(obj.x);   // "new" ✅
+```
+
+---
+
+## 📊 Operator Behavior Comparison Table
+
+| Expression | `\|\|` Result | `&&` Result | `??` Result |
+|---|---|---|---|
+| `null op "b"` | `"b"` | `null` | `"b"` |
+| `undefined op "b"` | `"b"` | `undefined` | `"b"` |
+| `0 op "b"` | `"b"` | `0` | `0` ✅ |
+| `"" op "b"` | `"b"` | `""` | `""` ✅ |
+| `false op "b"` | `"b"` | `false` | `false` ✅ |
+| `NaN op "b"` | `"b"` | `NaN` | `NaN` ✅ |
+| `1 op "b"` | `1` | `"b"` | `1` |
+| `"a" op "b"` | `"a"` | `"b"` | `"a"` |
+| `[] op "b"` | `[]` | `"b"` | `[]` |
+
+---
+
+## 📊 When to Use What
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    DECISION GUIDE                        │
+│                                                          │
+│  Use ||  when:                                           │
+│    → any falsy value means "use default"                 │
+│    → 0, "", false are NOT valid values                   │
+│    → old code / browser compatibility                    │
+│                                                          │
+│  Use ??  when:                                           │
+│    → only null/undefined means "use default"             │
+│    → 0, false, "" ARE valid values                       │
+│    → user settings, counts, flags, prices                │
+│                                                          │
+│  Use &&  when:                                           │
+│    → execute/return right only if left is truthy         │
+│    → guard pattern                                       │
+│    → conditional rendering                               │
+│                                                          │
+│  Use ?.  when:                                           │
+│    → deep property access on possibly-null object        │
+│    → optional method calls                               │
+│    → replaces && chains for property access              │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📊 DSA / Internals Connection
+
+> Short circuit operators implement **lazy evaluation** — a fundamental CS concept where expressions are only evaluated when their value is actually needed. This is the same principle behind **lazy sequences** in functional programming, **generator functions** in JS, and **call-by-need** evaluation strategy.
+>
+> In V8's bytecode, short circuit is a **conditional jump instruction** — identical to `if` statements at the CPU level. `JumpIfToBooleanTrue` / `JumpIfToBooleanFalse` — a single branch instruction. TurboFan uses **branch prediction** on these jumps — if the left operand is almost always truthy (e.g., in a `&&` guard that almost never fails), the CPU prefetches the right-side instructions and executes them speculatively. Short circuit operators are therefore both a **correctness** tool (avoid evaluating expressions with side effects) and a **performance** tool (give the CPU predictable branches).
+
+---

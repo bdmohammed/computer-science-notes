@@ -1,0 +1,1118 @@
+---
+title: C++ Operators Deep Dive
+slug: computer-languages/cpp/topics/operators-advanced
+description: Assignment, ternary, new/delete, typeid/dynamic_cast, precedence, evaluation order, smart pointers, and undefined behavior traps — with zero data loss.
+sidebar:
+  label: "Advanced Operators"
+  badge:
+    text: Reference
+    variant: tip
+tags: [cpp, operators, assignment, ternary, rtti, smart-pointers, interview, c++11, c++17, c++20]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 📝 Assignment Operators in C++
+
+```text
+=     simple assignment
++=    add and assign
+-=    subtract and assign
+*=    multiply and assign
+/=    divide and assign
+%=    modulus and assign
+&=    bitwise AND assign
+|=    bitwise OR assign
+^=    bitwise XOR assign
+<<=   left shift assign
+>>=   right shift assign
+// ❌ NO >>>= in C++ (use unsigned types for logical shift)
+```
+
+---
+
+### 1. Simple Assignment & Chaining
+
+<Code lang="cpp" title="Basic and chained assignment" code={`
+int x = 10;  // ✅ Simple assignment
+
+// Chained assignment works similarly to Java
+int a, b, c, d;
+a = b = c = d = 20;  // ✅ All get 20 (evaluates right-to-left)
+
+// ❌ Invalid: Cannot use undeclared variables in initializer
+// int a = b = c = 30;  // ❌ Error: 'b' was not declared in this scope
+`} />
+
+<Aside type="note">
+**Evaluation Order**: Like Java, chained assignment evaluates **right-to-left**. However, C++ allows initialization at declaration, so `int a=10, b=10;` is preferred over chaining for clarity.
+</Aside>
+
+---
+
+### 2. Compound Assignment — The "Implicit Cast" Difference
+
+In Java, `b += 1` includes an implicit cast `(byte)(b+1)`.  
+In C++, **compound assignments do NOT implicitly narrow types** if the types differ significantly, but they **do** perform standard conversions.
+
+<Code lang="cpp" title="Compound ops and type safety" code={`
+#include <cstdint>
+#include <iostream>
+
+int main() {
+    int x = 10;
+    x += 5;   // ✅ x = x + 5
+    
+    // ⚠️ C++ Difference: Narrowing requires explicit cast or warning
+    int8_t b = 10;
+    
+    // b = b + 1;  // ❌ Error: conversion from 'int' to 'int8_t' requires narrowing
+    
+    b += 1;      // ✅ Compiles! 
+                 // Why? Compound ops are defined as E1 = E1 op E2.
+                 // For built-in types, this involves standard conversion.
+                 // However, many compilers warn about narrowing in compound ops too.
+                 
+    std::cout << static_cast<int>(b) << '\\n'; // 11
+    
+    // ✅ Best Practice: Use explicit cast for clarity
+    b = static_cast<int8_t>(b + 1);
+    
+    return 0;
+}
+`} />
+
+<Aside type="caution">
+**Compiler Warnings**: Enable `-Wconversion` or `-Wnarrowing`. Unlike Java, C++ compilers often warn when a compound assignment results in data loss (e.g., `int` to `byte`), whereas Java silently casts it.
+</Aside>
+
+#### 🧮 Complex Expression Evaluation
+
+<Code lang="cpp" title="Chained compound assignment" code={`
+int a = 20, b = 20, c = 20, d = 20;
+
+// C++17 guarantees left-to-right evaluation for built-in types
+a += b -= c *= d /= 2;
+
+// Step-by-step (Right-to-Left associativity of =, but L-to-R evaluation of operands):
+// 1. d /= 2 → d becomes 10
+// 2. c *= d → c becomes 20 * 10 = 200
+// 3. b -= c → b becomes 20 - 200 = -180
+// 4. a += b → a becomes 20 + (-180) = -160
+
+std::cout << a << "--" << b << "---" << c << "---" << d;
+// Output: -160---180---200---10
+`} />
+
+<Aside type="danger">
+**Avoid Complex Chains**: Expressions like `a += b -= c` are hard to read and prone to **Undefined Behavior** in pre-C++17 standards if variables are modified multiple times without sequencing. In C++17+, built-in assignment is sequenced, but it's still bad practice.
+</Aside>
+
+---
+
+## Conditional (Ternary) Operator `?:`
+
+```text
+condition ? valueIfTrue : valueIfFalse
+```
+
+<Code lang="cpp" title="Basic ternary usage" code={`
+int a = 10, b = 20;
+int max = (a > b) ? a : b;  // 20 ✅
+
+// Nested ternary (hard to read — prefer if-else or std::max)
+int x = 5;
+std::string result = (x > 0) ? "positive" : (x < 0) ? "negative" : "zero";
+`} />
+
+### ⚠️ Type Deduction in Ternary — C++ Specifics
+
+In Java, the result type follows numeric promotion. In C++, the result type must be **common** or convertible.
+
+<Code lang="cpp" title="Ternary type rules" code={`
+int a = 10, b = 20;
+
+// Both branches are int literals → result is int
+// int8_t c1 = (a > b) ? 30 : 40;  // ⚠️ Warning: narrowing conversion
+
+// ✅ Fix: Explicit cast
+int8_t c2 = static_cast<int8_t>((a < b) ? 30 : 40);
+
+// ⚠️ Trap: Different types in branches
+// double d = true ? 1 : 2.0;  // ✅ 1 promoted to 1.0
+// auto x = true ? 1 : 2.0;    // x is double
+`} />
+
+<Aside type="note">
+**C++17 Feature**: `std::optional` and `std::variant` often replace complex ternary logic for safer type handling.
+</Aside>
+
+---
+
+## Memory Management: `new`/`delete` vs Smart Pointers
+
+> In Java, `new` allocates on Heap, GC cleans up.  
+> In C++, `new` allocates on Heap, **you must clean up** (or use smart pointers).
+
+### 1. Raw `new` / `delete` (Legacy/Avoid)
+
+<Code lang="cpp" title="Raw memory management" code={`
+// ❌ Legacy C++ (Prone to leaks)
+int* p = new int(42);  // Allocate on Heap
+// ... use p ...
+delete p;              // MUST manually free memory
+
+int* arr = new int[5]; // Array allocation
+// ... use arr ...
+delete[] arr;          // MUST use delete[] for arrays
+`} />
+
+### 2. Smart Pointers (Modern C++ Standard)
+
+✅ **Rule**: Never use raw `new`/`delete` in modern C++. Use `std::unique_ptr` or `std::shared_ptr`.
+
+<Code lang="cpp" title="Smart pointers — RAII" code={`
+#include <memory>
+#include <iostream>
+
+class Student {
+public:
+    std::string name;
+    Student(std::string n) : name(std::move(n)) { 
+        std::cout << "Created " << name << '\\n'; 
+    }
+    ~Student() { 
+        std::cout << "Destroyed " << name << '\\n'; 
+    }
+};
+
+int main() {
+    // ✅ unique_ptr: Exclusive ownership, auto-delete when out of scope
+    {
+        auto s1 = std::make_unique<Student>("Alice");
+        // No delete needed!
+    } // "Destroyed Alice" printed here
+
+    // ✅ shared_ptr: Shared ownership, reference counting
+    {
+        auto s2 = std::make_shared<Student>("Bob");
+        auto s3 = s2; // Reference count increases
+    } // "Destroyed Bob" printed when last shared_ptr dies
+    
+    return 0;
+}
+`} />
+
+<Aside type="tip">
+**RAII (Resource Acquisition Is Initialization)**: Resources (memory, files, sockets) are tied to object lifetime. When the object goes out of scope, the destructor frees the resource. This is C++'s answer to Garbage Collection — but deterministic and faster.
+</Aside>
+
+---
+
+## Array Access Operator `[]`
+
+> Used for accessing elements. C++ arrays are **not objects** (unlike Java). They don't have `.length`.
+
+<Code lang="cpp" title="Array access and dangers" code={`
+#include <array>
+#include <vector>
+#include <iostream>
+
+int main() {
+    // C-Style Array (Dangerous)
+    int arr[] = {10, 20, 30};
+    // std::cout << arr.length; // ❌ Error: no member 'length'
+    
+    // ✅ Access
+    std::cout << arr[0] << '\\n'; // 10
+    
+    // 💥 DANGER: No bounds checking!
+    // std::cout << arr[10]; // Undefined Behavior (Crash or Garbage)
+
+    // ✅ Modern C++: std::array (Fixed size, safe)
+    std::array<int, 3> safeArr = {10, 20, 30};
+    // safeArr.at(10); // Throws std::out_of_range exception ✅
+
+    // ✅ Modern C++: std::vector (Dynamic size)
+    std::vector<int> dynArr = {10, 20, 30};
+    dynArr.push_back(40); // Dynamic growth
+    std::cout << dynArr.size() << '\\n'; // 4
+}
+`} />
+
+<Aside type="danger">
+**Bounds Checking**:
+- C-style arrays (`int arr[]`): **No bounds check**. Accessing `arr[-1]` or `arr[100]` is **Undefined Behavior**.
+- `std::vector`/`std::array`: Use `.at(index)` for bounds-checked access (throws exception). Use `[]` for performance (no check).
+</Aside>
+
+---
+
+## Operator Precedence Table (Highest → Lowest)
+
+C++ precedence is very similar to Java, but with added C++ specific operators.
+
+```text
++------------+--------------------------------------+-----------------------------------+----------------+
+| Precedence | Operators                            | Description                       | Associativity  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 1          | []  .  ->  ()                        | Array, Member, Ptr-Member, Call   | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 2          | ++  --  +  -  !  ~  (type)           | Unary operators                   | Right-to-left  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 3          | *  /  %                              | Multiplicative                    | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 4          | +  -                                 | Additive                          | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 5          | <<  >>                               | Shift operators                   | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 6          | <  >  <=  >=                         | Relational                        | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 7          | ==  !=                               | Equality                          | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 8          | &                                    | Bitwise AND                       | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 9          | ^                                    | Bitwise XOR                       | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 10         | |                                    | Bitwise OR                        | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 11         | &&                                   | Logical AND                       | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 12         | ||                                   | Logical OR                        | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 13         | ?:                                   | Ternary conditional               | Right-to-left  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 14         | =  +=  -=  ...                       | Assignment                        | Right-to-left  |
++------------+--------------------------------------+-----------------------------------+----------------+
+| 15         | ,                                    | Comma operator                    | Left-to-right  |
++------------+--------------------------------------+-----------------------------------+----------------+
+```
+
+<Code lang="cpp" title="Precedence in action" code={`
+// * has higher precedence than +
+int result = 2 + 3 * 4;  // 14 (NOT 20!)
+
+// Mixed operators:
+int x = 10;
+int y = x++ + ++x * 2;  
+// ⚠️ WARNING: In C++, modifying 'x' twice in one expression without sequencing is UNDEFINED BEHAVIOR (pre-C++17) or implementation-defined.
+// Unlike Java, C++ does NOT guarantee left-to-right operand evaluation for + before C++17.
+// Avoid this code entirely!
+`} />
+
+<Aside type="danger">
+**Critical C++ Trap**: In Java, `x++ + ++x` is well-defined (left-to-right evaluation). In C++ (pre-C++17), this was **Undefined Behavior**. In C++17, it is defined, but still **strongly discouraged** due to portability and readability issues.
+</Aside>
+
+---
+
+## Operand Evaluation Order
+
+> **Java**: Always Left-to-Right.  
+> **C++**: 
+> - **C++17 and later**: Left-to-Right for most operators (including `+`, `<<`).
+> - **Pre-C++17**: Unspecified for many operators (e.g., `f() + g()` could call `g` first).
+
+<Code lang="cpp" title="Method call evaluation order (C++17)" code={`
+#include <iostream>
+
+int m1(int x) {
+    std::cout << x << " ";
+    return x;
+}
+
+int main() {
+    // C++17 guarantees left-to-right evaluation for operands
+    int result = m1(1) + m1(2) * m1(3);
+    
+    // Output: 1 2 3  (Guaranteed in C++17+)
+    // Pre-C++17: Could be 3 2 1 or any order!
+    
+    std::cout << "\\nResult: " << result << '\\n'; // 1 + 2*3 = 7
+    return 0;
+}
+`} />
+
+<Aside type="tip">
+**Interview Gold**: If asked about evaluation order in C++, specify: *"Since C++17, operand evaluation is left-to-right for built-in operators. Before C++17, it was unspecified for most operators, leading to potential bugs."*
+</Aside>
+
+---
+
+## Runtime Type Information: `typeid` vs `dynamic_cast`
+
+Java has `instanceof` and `Class.forName()`. C++ has **RTTI (Run-Time Type Information)**.
+
+### 1. `dynamic_cast` (Safe Downcasting)
+
+Equivalent to Java's `(SubClass) obj` with `instanceof` check.
+
+<Code lang="cpp" title="Safe polymorphic casting" code={`
+#include <iostream>
+#include <typeinfo>
+
+class Animal {
+public:
+    virtual ~Animal() {} // Needs virtual destructor for RTTI
+};
+class Dog : public Animal {};
+class Cat : public Animal {};
+
+int main() {
+    Animal* ptr = new Dog();
+    
+    // ✅ Safe downcast
+    if (Dog* dog = dynamic_cast<Dog*>(ptr)) {
+        std::cout << "It's a Dog!\\n";
+    } else {
+        std::cout << "Not a Dog.\\n";
+    }
+    
+    // ❌ Fails safely
+    if (Cat* cat = dynamic_cast<Cat*>(ptr)) {
+        std::cout << "It's a Cat!\\n";
+    } else {
+        std::cout << "Not a Cat.\\n"; // Prints this
+    }
+    
+    delete ptr;
+    return 0;
+}
+`} />
+
+### 2. `typeid` (Type Identification)
+
+Equivalent to Java's `obj.getClass().getName()`.
+
+<Code lang="cpp" title="Using typeid" code={`
+#include <iostream>
+#include <typeinfo>
+
+int main() {
+    int x = 10;
+    std::cout << typeid(x).name() << '\\n'; // Implementation-defined (e.g., "i")
+    
+    Dog d;
+    Animal* a = &d;
+    std::cout << typeid(*a).name() << '\\n'; // "Dog" (if RTTI enabled)
+    
+    return 0;
+}
+`} />
+
+<Aside type="note">
+**RTTI Overhead**: `dynamic_cast` and `typeid` require RTTI to be enabled (compiler flag `-frtti`). They have a small runtime cost. Prefer `static_cast` if you are sure of the type, or use virtual functions instead of casting.
+</Aside>
+
+---
+
+## `new` vs Reflection in C++
+
+C++ does **not** have built-in reflection like Java's `Class.forName()`. You cannot create a class from a string name without external libraries or manual registration.
+
+<CardGrid>
+  <Card title="`new` Operator" icon="rocket">
+```cpp
+    // Compile-time object creation
+    auto s = std::make_unique<Student>("Alice");
+    
+    // Characteristics:
+    // • Class known at compile time
+    // • Fast, type-safe
+    // • Returns smart pointer (modern C++)
+```
+  </Card>  
+  <Card title="Factory Pattern (Reflection Alternative)" icon="shield">
+  ```cpp
+      // Manual registration map
+      #include <map>
+      #include <functional>
+      
+      std::map<std::string, std::function<std::unique_ptr<Animal>()>> factory;
+      
+      // Register classes
+      factory["Dog"] = []() { return std::make_unique<Dog>(); };
+      factory["Cat"] = []() { return std::make_unique<Cat>(); };
+      
+      // Runtime creation
+      std::string type = "Dog";
+      auto animal = factory[type](); // Creates Dog
+      
+      // Characteristics:
+      // • Requires manual registration
+      // • No built-in language support
+      // • Flexible, but verbose
+  ```
+  </Card>
+</CardGrid>
+
+---
+
+## Exception Handling: `std::bad_alloc` vs `std::bad_cast`
+
+Java has `OutOfMemoryError` and `ClassCastException`. C++ has equivalents.
+
+<CardGrid>
+  <Card title="`std::bad_alloc`" icon="error">
+```cpp
+    // Thrown when new fails to allocate memory
+    try {
+        int* p = new int[1000000000000LL];
+    } catch (const std::bad_alloc& e) {
+        std::cerr << "Allocation failed: " << e.what() << '\\n';
+    }
+    
+    // Note: new never returns nullptr (unless std::nothrow is used)
+    // int* p = new (std::nothrow) int[100]; // Returns nullptr on failure
+```
+  </Card>
+  
+  <Card title="`std::bad_cast`" icon="error">
+```cpp
+    // Thrown when dynamic_cast<Reference> fails
+    try {
+        Animal a;
+        Dog& d = dynamic_cast<Dog&>(a); // Throws bad_cast
+    } catch (const std::bad_cast& e) {
+        std::cerr << "Cast failed: " << e.what() << '\\n';
+    }
+    
+    // Pointer version returns nullptr instead of throwing
+    Dog* d = dynamic_cast<Dog*>(&a); // d is nullptr
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Master Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the result of `i = i++` in C++?" icon="error">
+    **Undefined Behavior (pre-C++17)** or **10 (C++17+)**.
+    ```cpp
+    int i = 10;
+    i = i++; 
+    // Pre-C++17: UB (modifying i twice unsequenced)
+    // C++17+: i becomes 11, then assigned back to 10. Result: 10.
+    // ✅ Advice: Never write this code.
+    ```
+  </Card>
+  
+  <Card title="Q: Is `0.1 + 0.2 == 0.3` true?" icon="error">
+    **`false`** — IEEE 754 floating point precision issue (same as Java).  
+    ✅ Use integer arithmetic or specialized libraries for financial calc.
+  </Card>
+
+  <Card title="Q: Difference between `&&` and `&`?" icon="information">
+    - `&&`: **Short-circuit** logical AND.
+    - `&`: **Bitwise** AND (for integers) or **Non-short-circuit** logical AND (for bools, but promotes to int!).
+    ✅ Prefer `&&` for conditions.
+  </Card>
+
+  <Card title="Q: `==` vs `equals()` in C++?" icon="information">
+    - C++ doesn't have `equals()`. It uses **operator overloading**.
+    - `==` for primitives compares values.
+    - `==` for `std::string` compares content (overloaded).
+    - `==` for pointers compares addresses.
+    ✅ Use `std::string` for string comparison, not `char*`.
+  </Card>
+
+  <Card title="Q: How to check type at runtime?" icon="approve-check">
+    - Use `dynamic_cast<T*>(ptr)` for safe downcasting (returns nullptr if fail).
+    - Use `typeid(obj)` for type identification.
+    - Requires `virtual` functions in base class (RTTI).
+  </Card>
+
+  <Card title="Q: `new` vs `malloc`?" icon="information">
+    - `new`: Calls constructor, returns typed pointer, throws `bad_alloc`.
+    - `malloc`: Allocates raw memory, returns `void*`, returns `nullptr` on fail.
+    ✅ Always prefer `new` (or better, `std::make_unique`).
+  </Card>
+
+  <Card title="Q: Does C++ have Garbage Collection?" icon="error">
+    **No.** C++ uses **RAII** and **Smart Pointers** (`unique_ptr`, `shared_ptr`) for deterministic memory management. GC is optional/experimental in some implementations but not standard.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Assignment Operators
+| Operator | Example | Notes |
+|----------|---------|-------|
+| `=` | `x = 10` | Standard assignment |
+| `+=` | `x += 5` | Equivalent to `x = x + 5` |
+| `&=`, `|=`, `^=` | `x &= 1` | Bitwise assignment |
+| `<<=`, `>>=` | `x <<= 1` | Shift assignment |
+
+### Type Checking & Casting
+| Feature | C++ Mechanism | Java Equivalent |
+|---------|--------------|-----------------|
+| Safe Downcast | `dynamic_cast<T*>(ptr)` | `(T) obj` + `instanceof` |
+| Type ID | `typeid(obj).name()` | `obj.getClass().getName()` |
+| Static Cast | `static_cast<T>(expr)` | `(T) expr` (primitive/ref) |
+| Reinterpret | `reinterpret_cast<T>(p)` | Unsafe sun.misc.Unsafe |
+
+### Memory Management
+| Feature | C++ | Java |
+|---------|-----|------|
+| Allocation | `new` / `std::make_unique` | `new` |
+| Deallocation | `delete` / Smart Pointers | Garbage Collector |
+| Failure | Throws `std::bad_alloc` | Throws `OutOfMemoryError` |
+| Null Check | `if (ptr)` | `if (obj != null)` |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use **Smart Pointers** (`std::unique_ptr`, `std::shared_ptr`) instead of raw `new`/`delete`.
+2. ✅ Use `dynamic_cast` for safe polymorphic downcasting.
+3. ✅ Avoid modifying same variable multiple times in one expression (UB risk).
+4. ✅ C++17 guarantees left-to-right operand evaluation.
+5. ✅ `std::string` overloads `==` for content comparison.
+6. ✅ No built-in reflection — use Factory patterns or macros.
+7. ✅ Enable `-Wall -Wextra -Wconversion` for safety.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output (C++17)" code={`
+#include <iostream>
+#include <memory>
+#include <typeinfo>
+
+int m(int x) { std::cout << x; return x; }
+
+int main() {
+    // Q1: Evaluation Order
+    int res = m(1) + m(2) * m(3);
+    std::cout << " Res:" << res << '\\n';
+    
+    // Q2: Smart Pointer
+    {
+        auto p = std::make_unique<int>(42);
+        std::cout << *p << '\\n';
+    } // Deleted here
+    
+    // Q3: TypeID
+    int x = 10;
+    std::cout << (typeid(x) == typeid(int)) << '\\n';
+    
+    return 0;
+}
+
+/* Expected Output:
+123 Res:7
+42
+1 (true)
+*/
+`} />
+
+<Aside type="tip">
+**Pro Interview Strategy**: When asked about C++ operators:
+1. Emphasize **RAII** and **Smart Pointers** for memory safety.
+2. Distinguish **C++17 evaluation order** guarantees vs legacy UB.
+3. Explain **RTTI** (`dynamic_cast`) costs and alternatives (virtual funcs).
+4. Mention **Undefined Behavior** risks with side effects.
+5. Contrast **Stack vs Heap** allocation explicitly.
+
+This demonstrates modern C++ mastery! 🎯
+</Aside>
+
+---
+
+# 📝 C++ Assignment Operators — Complete Deep Dive
+
+---
+
+## 📌 What Is Assignment?
+
+```cpp
+int x = 5;    // ← this is INITIALIZATION, not assignment
+x = 10;       // ← this IS assignment — object already exists
+```
+
+```
+Initialization → object constructed WITH a value (constructor called)
+Assignment     → object EXISTS, value REPLACED (operator= called)
+```
+
+> 🔴 **This distinction is the #1 source of confusion.** `int x = 5` calls constructor. `x = 5` (after construction) calls `operator=`. Different code paths entirely.
+
+---
+
+## 🗺️ All Assignment Operators
+
+```
+Assignment Operators
+│
+├── Basic Assignment
+│   └── =          x = y
+│
+├── Compound Assignment (arithmetic)
+│   ├── +=         x += y   (x = x + y)
+│   ├── -=         x -= y   (x = x - y)
+│   ├── *=         x *= y   (x = x * y)
+│   ├── /=         x /= y   (x = x / y)
+│   └── %=         x %= y   (x = x % y)
+│
+├── Compound Assignment (bitwise)
+│   ├── &=         x &= y   (x = x & y)
+│   ├── |=         x |= y   (x = x | y)
+│   ├── ^=         x ^= y   (x = x ^ y)
+│   ├── <<=        x <<= y  (x = x << y)
+│   └── >>=        x >>= y  (x = x >> y)
+│
+└── Special (class types)
+    ├── Copy assignment   T& operator=(const T&)
+    └── Move assignment   T& operator=(T&&)      C++11
+```
+
+---
+
+## 🔢 Basic Assignment — Scalar Types
+
+```cpp
+int x;
+x = 5;          // assigns 5 to x — returns reference to x
+
+// Assignment is an EXPRESSION — has a value
+int a, b, c;
+a = b = c = 0;  // chained — right-to-left: c=0, b=0, a=0
+
+// Assignment returns lvalue reference to left operand
+int y = (x = 10);  // x assigned 10, y = 10
+if ((x = get_value()) != 0) { }   // assign and check in one line
+```
+
+### Chained Assignment — How It Works
+
+```
+a = b = c = 0;
+
+Parsed as: a = (b = (c = 0))  ← right-to-left associativity
+
+Step 1: c = 0  → c is 0, returns ref to c
+Step 2: b = c  → b is 0, returns ref to b
+Step 3: a = b  → a is 0, returns ref to a
+```
+
+---
+
+## ⚙️ Compound Assignment Operators
+
+```cpp
+int x = 10;
+
+x += 5;    // x = x + 5  → 15
+x -= 3;    // x = x - 3  → 12
+x *= 2;    // x = x * 2  → 24
+x /= 4;    // x = x / 4  → 6
+x %= 4;    // x = x % 4  → 2
+x &= 0xF;  // x = x & 0xF → 2
+x |= 0x8;  // x = x | 0x8 → 10
+x ^= 0x3;  // x = x ^ 0x3 → 9
+x <<= 1;   // x = x << 1  → 18
+x >>= 2;   // x = x >> 2  → 4
+```
+
+### Hidden Narrowing in Compound Assignment
+
+```cpp
+short s = 1000;
+s += 30000;       // s = s + 30000
+                  // s + 30000 computed as INT (31000)
+                  // then NARROWED back to short
+                  // 31000 fits in short (−32768→32767) → ✅
+
+short s = 30000;
+s += 30000;       // 60000 doesn't fit in short → overflow → UB
+                  // (signed short overflow = UB)
+                  // compiler silently does: s = (short)(60000)
+                  // → wraps to -5536 or similar
+```
+
+> 🔑 Compound assignment on small types (`short`, `char`) silently narrows back — no warning by default.
+
+---
+
+## 🏗️ Copy Assignment Operator
+
+### Compiler-Generated Version
+
+```cpp
+class Point {
+    int x, y;
+};
+
+// Compiler generates this automatically:
+Point& operator=(const Point& other) {
+    x = other.x;   // memberwise copy
+    y = other.y;
+    return *this;
+}
+
+Point a{1, 2};
+Point b{3, 4};
+b = a;             // calls operator=(const Point&)
+                   // b.x = 1, b.y = 2
+```
+
+### When Compiler Does NOT Generate It
+
+| Condition | Copy Assignment Generated? |
+|---|---|
+| Class has user-declared move constructor | ❌ deleted |
+| Class has user-declared move assignment | ❌ deleted |
+| Base class copy assignment is deleted | ❌ deleted |
+| Member has deleted copy assignment | ❌ deleted |
+| Otherwise | ✅ generated |
+
+---
+
+## ✍️ Writing Copy Assignment — Correct Form
+
+```cpp
+class Buffer {
+    char*  data;
+    size_t size;
+
+public:
+    // Copy assignment — must handle:
+    // 1. Self-assignment
+    // 2. Free old resource
+    // 3. Allocate new resource
+    // 4. Copy data
+    // 5. Return *this
+
+    Buffer& operator=(const Buffer& other) {
+        // Step 1: self-assignment guard — CRITICAL
+        if (this == &other) return *this;
+
+        // Step 2: free existing resource
+        delete[] data;
+
+        // Step 3: allocate new
+        size = other.size;
+        data = new char[size];
+
+        // Step 4: copy data
+        std::memcpy(data, other.data, size);
+
+        // Step 5: return reference to self
+        return *this;
+    }
+};
+```
+
+---
+
+## 🛡️ Self-Assignment — The Hidden Danger
+
+```cpp
+Buffer b;
+b = b;    // self-assignment — must handle safely
+
+// Without self-assignment guard:
+Buffer& operator=(const Buffer& other) {
+    delete[] data;          // ❌ deletes data
+    size = other.size;      // other IS this — other.size still ok
+    data = new char[size];
+    memcpy(data, other.data, size);  // ❌ other.data was deleted!
+    // reads freed memory → UB
+}
+```
+
+### Copy-and-Swap Idiom — Self-Assignment Safe + Exception Safe
+
+```cpp
+class Buffer {
+    char*  data;
+    size_t size;
+
+public:
+    // Copy constructor
+    Buffer(const Buffer& other)
+        : size(other.size), data(new char[other.size]) {
+        std::memcpy(data, other.data, size);
+    }
+
+    // Swap
+    friend void swap(Buffer& a, Buffer& b) noexcept {
+        using std::swap;
+        swap(a.data, b.data);
+        swap(a.size, b.size);
+    }
+
+    // Copy assignment — copy-and-swap idiom
+    Buffer& operator=(Buffer other) {   // takes BY VALUE → copy made
+        swap(*this, other);             // steal the copy's resources
+        return *this;
+        // other destroyed here → frees OLD data
+    }
+    // Self-assignment: b = b → copy of b made, swapped, copy destroyed
+    // Exception safe: if copy throws, *this unchanged
+};
+```
+
+```
+Copy-and-swap strengths:
+✅ Self-assignment safe automatically
+✅ Exception safe (strong guarantee)
+✅ Code reuse — copy ctor does the work
+⚠️ Always allocates (even if capacity sufficient) — minor perf cost
+```
+
+---
+
+## 🚀 Move Assignment Operator (C++11)
+
+```cpp
+class Buffer {
+    char*  data;
+    size_t size;
+
+public:
+    // Move assignment — STEAL resources from rvalue
+    Buffer& operator=(Buffer&& other) noexcept {
+        // Step 1: self-assignment guard
+        if (this == &other) return *this;
+
+        // Step 2: free existing resource
+        delete[] data;
+
+        // Step 3: STEAL other's resources
+        data = other.data;
+        size = other.size;
+
+        // Step 4: leave other in valid empty state
+        other.data = nullptr;
+        other.size = 0;
+
+        // Step 5: return *this
+        return *this;
+    }
+};
+
+Buffer a = make_buffer(1024);
+Buffer b;
+b = std::move(a);   // move assignment called
+                    // b gets a's memory — zero allocation
+                    // a is left in valid but empty state
+```
+
+### Copy vs Move Assignment Cost
+
+```
+Copy assignment:
+  1. Allocate new memory
+  2. Copy N bytes
+  Cost: O(N) — proportional to data size
+
+Move assignment:
+  1. Free old memory
+  2. Copy 3 pointers (data, size, capacity)
+  Cost: O(1) — constant time regardless of size
+```
+
+---
+
+## 🔬 Under the Hood — Assembly
+
+```cpp
+int x = 5;
+x = 10;          // basic scalar assignment
+```
+
+```asm
+mov DWORD PTR [rbp-4], 10    ; store 10 at x's address
+                              ; one instruction — no function call
+```
+
+```cpp
+std::string a = "hello";
+std::string b;
+b = a;           // copy assignment
+```
+
+```asm
+; Calls std::string::operator=(const std::string&)
+; Function call overhead
+; Inside: check SSO, maybe heap allocation, memcpy
+; Several instructions — real cost
+```
+
+```cpp
+b = std::move(a);   // move assignment
+```
+
+```asm
+; Calls std::string::operator=(std::string&&)
+; Function call overhead
+; Inside: pointer swap — 3 register moves
+; Much cheaper than copy
+```
+
+---
+
+## 📐 Return Type — Why `T&` and Not `void`
+
+```cpp
+// ❌ Returns void — breaks chaining
+void operator=(const T& other) { }
+a = b = c;   // b = c returns void → a = void → error
+
+// ✅ Returns T& — enables chaining
+T& operator=(const T& other) {
+    // ...
+    return *this;   // return reference to self
+}
+a = b = c;   // b = c returns T& → a = (T& to b) → works
+
+// ❌ Returns T (by value) — legal but wasteful
+T operator=(const T& other) {
+    // ...
+    return *this;   // copy of this returned — unnecessary
+}
+```
+
+---
+
+## 🧩 `= default` and `= delete`
+
+```cpp
+class Foo {
+public:
+    Foo& operator=(const Foo&) = default;   // explicitly use compiler version
+    Foo& operator=(Foo&&) = default;        // explicitly use compiler move
+};
+
+class NonCopyable {
+public:
+    NonCopyable& operator=(const NonCopyable&) = delete;   // disable copy
+    NonCopyable& operator=(NonCopyable&&) = default;       // allow move only
+};
+
+NonCopyable a, b;
+b = a;              // ❌ compile error — copy assignment deleted
+b = std::move(a);   // ✅ move assignment allowed
+```
+
+---
+
+## 🔗 Rule of Five Connection
+
+```
+If you define ANY of these — define ALL FIVE:
+┌─────────────────────────┬────────────────────────────────┐
+│  Destructor             │  ~T()                          │
+│  Copy constructor       │  T(const T&)                   │
+│  Copy assignment        │  T& operator=(const T&)        │
+│  Move constructor       │  T(T&&)                        │
+│  Move assignment        │  T& operator=(T&&)             │
+└─────────────────────────┴────────────────────────────────┘
+
+If class manages a resource (raw pointer, file handle, mutex):
+→ define all five
+→ or use Rule of Zero (wrap resource in smart pointer — no five needed)
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**String pool assignment — missing self-assignment guard:**
+
+```cpp
+// Production bug at a game studio (2019):
+class AnimationClip {
+    float* keyframes;
+    int    count;
+
+public:
+    AnimationClip& operator=(const AnimationClip& other) {
+        // ❌ No self-assignment check
+        delete[] keyframes;           // if other == *this → delete OWN data
+        count     = other.count;      // other.count still valid
+        keyframes = new float[count];
+        memcpy(keyframes, other.keyframes, count * sizeof(float));
+        // other.keyframes was deleted → UB
+        // random data copied → animation corruption
+        // bug appears only when animclip[i] = animclip[i] is called
+        // happens during array shuffle — rare, hard to reproduce
+        return *this;
+    }
+};
+
+// Fix:
+AnimationClip& operator=(const AnimationClip& other) {
+    if (this == &other) return *this;   // ← one line fixes it
+    // ...
+}
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+int x = 5;      // initialization or assignment?
+int y;
+y = 5;          // initialization or assignment?
+```
+> `int x = 5` → **initialization** (copy-init, constructor called). `y = 5` → **assignment** (`operator=` called on existing object). Looks similar, completely different mechanism.
+
+**Trap 2:**
+```cpp
+class Foo {
+    std::unique_ptr<int> p;
+};
+
+Foo a, b;
+b = a;    // compiles?
+```
+> ❌ **Compile error.** `unique_ptr` has deleted copy assignment. Compiler tries to generate `Foo::operator=(const Foo&)` which calls `unique_ptr::operator=(const unique_ptr&)` — deleted. `b = std::move(a)` works (move assignment).
+
+**Trap 3:**
+```cpp
+struct Foo {
+    int x;
+    Foo& operator=(const Foo& o) {
+        x = o.x;
+        // forgot return *this
+    }
+};
+Foo a, b;
+a = b;    // UB?
+```
+> **UB** — non-void function with no `return` statement. Returns garbage. Chained `a = b = c` would then use garbage reference.
+
+**Trap 4:**
+```cpp
+int a = 3, b = 5;
+a = b = a + b;    // a = ?, b = ?
+```
+> `a + b = 8`. `b = 8` (b assigned 8, returns ref to b). `a = b = 8` (a assigned 8). Both `a = 8`, `b = 8`. The original `a = 3` is read for `a + b` before any assignment happens (sequencing: right side fully evaluated before assignment).
+
+**Trap 5:**
+```cpp
+struct Foo {
+    Foo& operator=(Foo&& other) noexcept {
+        delete data;
+        data = other.data;
+        // forgot: other.data = nullptr
+        return *this;
+    }
+    ~Foo() { delete data; }
+    int* data;
+};
+Foo a, b;
+b = std::move(a);  // what happens when a and b are destroyed?
+```
+> **Double free** — `other.data` not nulled after steal. When `a` is destroyed, its destructor calls `delete data` on the same pointer `b` now owns. Heap corruption, SIGSEGV, or silent memory corruption.
+
+---
+

@@ -1,0 +1,407 @@
+---
+title: C++ Jump Statements
+slug: computer-languages/cpp/flow-control/jump-statements
+description: Complete guide to break, continue, return, goto — loop control, structured bindings, RAII implications, and the dangerous do-while + continue trap.
+sidebar:
+  label: "Jump Statements"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [cpp, break, continue, return, goto, loops, interview, control-flow, c++11, c++17]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🎯 Jump Statements Overview
+
+C++ provides four jump statements to alter normal program flow:
+
+| Statement | Purpose | Valid Locations | C++ Specifics |
+|-----------|---------|----------------|---------------|
+| `break` | Exit nearest enclosing `switch` or loop | `switch`, `for`, `while`, `do-while`, `range-for` | No labeled breaks (use `goto` or refactor) |
+| `continue` | Skip current iteration, proceed to next | `for`, `while`, `do-while`, `range-for` | Jumps to update/condition |
+| `return` | Exit function immediately, optionally return value | Anywhere inside a function | Triggers destructors (RAII) |
+| `goto` | Unconditional jump to a label | Anywhere in same function | ⚠️ Avoid! Skips constructors/initializers |
+
+<Aside type="caution">
+**Compile-Time Rule**: Using `break` or `continue` outside their valid locations → **Compile Error**: `"break/continue statement not within loop/switch"`.
+</Aside>
+
+---
+
+## `break`  — Exit Loop Immediately
+
+> **Exits the nearest enclosing `switch` or loop immediately**, transferring control to the statement following it.
+
+```cpp
+// Exits loop immediately — skips remaining iterations
+for (int i = 0; i < 10; i++) {
+    if (i == 5) break;
+    std::cout << i << " ";      // 0 1 2 3 4
+}
+
+
+// break only exits INNERMOST loop
+for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+        if (j == 1) break;      // exits inner loop only
+        // outer loop continues
+    }
+}
+
+// break in switch — exits switch (not loop)
+for (int i = 0; i < 3; i++) {
+    switch (i) {
+        case 1:
+            std::cout << "one" << std::endl;
+            break;              // exits switch — NOT the for loop
+    }
+    std::cout << "after switch: " << i << std::endl;
+}
+// Output:
+// after switch: 0
+// one
+// after switch: 1
+// after switch: 2
+```
+
+### ⚠️ Invalid Usage — Compile Error
+
+<Code lang="cpp" title="❌ break outside switch/loop" code={`
+int x = 10;
+if (x == 10)
+    break;  // ❌ Error: break statement not within loop or switch
+}
+`} />
+
+<Aside type="note">
+**Valid Locations Only**: `break` works **only** inside:
+1. `switch` statements
+2. Loop constructs (`for`, `while`, `do-while`, range-based `for`)
+
+Using it in `if`, `else`, or plain blocks → compile error.
+</Aside>
+
+---
+
+## 🔁 Labeled break? No. Use `goto` or Refactor.
+
+> **C++ does NOT have labeled breaks** like Java. To exit nested loops, you have three options:
+
+1. **Refactor**: Extract inner loop into a function and `return`. (✅ Best Practice)
+2. **Flag**: Use a boolean flag to check in outer loop. (✅ Safe)
+3. **`goto`**: Jump to a label after the loops. (⚠️ Controversial, but valid for breaking nested loops)
+
+<Card title="Option 1: Refactor (Recommended)" icon="approve-check">
+    ```cpp
+        bool found = false;
+        auto search = [&](const Matrix& m, int target) {
+            for (int i = 0; i < m.rows(); ++i) {
+                for (int j = 0; j < m.cols(); ++j) {
+                    if (m[i][j] == target) {
+                        found = true;
+                        return;  // Exit lambda immediately
+                    }
+                }
+            }
+        };
+        search(matrix, target);
+        if (found) { /* ... */ }
+    ```
+</Card>
+
+<Card title="Option 2: Boolean Flag" icon="shield">
+    ```cpp
+        bool found = false;
+        for (int i = 0; i < rows && !found; ++i) {
+            for (int j = 0; j < cols && !found; ++j) {
+                if (matrix[i][j] == target) {
+                    found = true;
+                }
+            }
+        }
+        // Clean, no goto, easy to understand
+    ```
+</Card>
+
+<Card title="Option 3: goto (Use with Caution)" icon="caution">
+    ```cpp
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                if (matrix[i][j] == target) {
+                    goto found_target;  // Jump out of both loops
+                }
+            }
+        }
+        found_target:  // Label must be in same function scope
+        if (i < rows && j < cols) {
+            // Handle found
+        }
+        // ⚠️ Warning: goto skips destructors of local variables in skipped scopes!
+        // Only safe if jumping forward over trivial types or empty scopes.
+    ```
+</Card>
+
+<Aside type="danger">
+**`goto` and RAII**: In C++, jumping over variable initialization with `goto` is **illegal** if the variable has a non-trivial destructor or constructor.
+```cpp
+    goto label;
+    std::string s = "hello";  // ❌ Error: jump bypasses initialization of 's'
+    label:
+```
+✅ **Rule**: Prefer refactoring or flags over `goto`. If you must use `goto`, ensure it doesn't skip resource-managing objects.
+</Aside>
+
+---
+
+## `continue` Statement
+
+> **Skips the current iteration** of the nearest enclosing loop and proceeds to the next iteration.
+
+```java
+// Skips rest of current iteration — jumps to update/condition
+for (int i = 0; i < 10; i++) {
+    if (i % 2 == 0) continue;  // skip even numbers
+    System.out.print(i + " "); // 1 3 5 7 9
+}
+
+// In while — continue jumps to condition check
+int i = 0;
+while (i < 10) {
+    i++;
+    if (i % 2 == 0) continue;  // jumps to condition check (i<10)
+    System.out.print(i + " "); // 1 3 5 7 9
+}
+
+// In do-while — continue jumps to condition check
+int j = 0;
+do {
+    j++;
+    if (j % 2 == 0) continue;  // jumps to while(j<10) check
+    System.out.print(j + " ");
+} while (j < 10);              // 1 3 5 7 9
+```
+
+---
+
+### 🔁 Labeled continue? No. Use Nested Logic.
+
+C++ does **not** have labeled `continue`. To skip an outer loop iteration from an inner loop:
+
+1. **Refactor**: Extract inner loop to a function.
+2. **Flag**: Set a flag and `break` inner, then `continue` outer if flag is set.
+
+<Code lang="cpp" title="Simulating labeled continue with flag" code={`
+for (int i = 0; i < 3; ++i) {
+    bool skip_outer = false;
+    for (int j = 0; j < 3; ++j) {
+        if (j == 1) {
+            skip_outer = true;
+            break;  // Break inner loop
+        }
+        std::cout << i << "," << j << "\\n";
+    }
+    if (skip_outer) continue;  // Skip to next i
+}
+// Output:
+// 0,0
+// 1,0
+// 2,0
+`} />
+
+---
+
+### ⚠️ Invalid Usage — Same as break
+
+<Code lang="cpp" title="❌ continue outside loop" code={`
+if (x > 0) {
+    continue;  // ❌ Error: continue statement not within loop
+}
+// continue only valid inside: for, while, do-while, range-for
+`} />
+
+---
+
+## `return` Statement
+
+> **Exits the current function immediately**, optionally returning a value to the caller.
+> **Crucial C++ Difference**: `return` triggers **destructors** for all local objects (RAII). This is why C++ doesn't need `finally` blocks.
+
+---
+
+### 🔑 Syntax Patterns
+
+<Code lang="cpp" title="return with value (non-void function)" code={`
+int max(int a, int b) {
+    if (a > b) return a;  // ✅ Exit function, return a
+    return b;             // ✅ Exit function, return b
+    // Code here would be unreachable (compiler warning)
+}
+`} />
+
+<Code lang="cpp" title="return without value (void function)" code={`
+void process(int x) {
+    if (x < 0) return;    // ✅ Early exit — guard clause pattern
+    // Continue processing only if x >= 0
+    std::cout << "Processing: " << x << "\\n";
+}
+`} />
+
+---
+
+### 🛡️ Guard Clause Pattern — Early return for Validation
+
+<Code lang="cpp" title="Prefer early returns over nested if" code={`
+// ❌ Nested if (harder to read)
+void process(User* user) {
+    if (user != nullptr) {
+        if (user->isActive()) {
+            if (user->hasPermission()) {
+                // Actual logic here...
+            }
+        }
+    }
+}
+
+// ✅ Guard clauses with early return (cleaner)
+void process(User* user) {
+    if (!user) return;                  // Guard 1
+    if (!user->isActive()) return;      // Guard 2
+    if (!user->hasPermission()) return; // Guard 3
+    
+    // Actual logic — no nesting!
+    performAction(user);
+}
+`} />
+
+<Aside type="tip">
+**RAII & Return**: When `return` is called, destructors for all local stack objects are called in reverse order of construction. This ensures resources (files, locks, memory) are cleaned up automatically.
+```cpp
+void func() {
+    std::lock_guard<std::mutex> lock(mtx); // Lock acquired
+    if (error) return;                     // Lock released automatically here!
+    // ...
+} // Lock released here if no early return
+```
+</Aside>
+
+---
+
+## ⚠️ The Dangerous Combination: do-while + continue
+
+> This pattern is notoriously tricky — `continue` in `do-while` skips to the **while condition**, not the loop start.
+
+---
+
+### 🔬 Step-by-Step Execution Trace
+
+<Code lang="cpp" title="Complex do-while + continue example" code={`
+#include <iostream>
+
+int main() {
+    int x = 0;
+    do {
+        ++x;                          // Step 1: x becomes 1
+        std::cout << x << " ";        // Step 2: Print 1
+        
+        if (++x < 5) continue;        // Step 3: x becomes 2; 2<5=true → continue
+                                      // Jumps to while condition!
+        
+        ++x;                          // ❌ SKIPPED due to continue!
+        std::cout << x << " ";        // ❌ SKIPPED due to continue!
+    } while (++x < 10);               // Step 4: x becomes 3; 3<10=true → next iteration
+    
+    // Output so far: 1 
+    
+    // Iteration 2 starts with x=3:
+    // ++x → x=4; print 4; 
+    // if (++x < 5) → x=5; 5<5=false → DON'T continue
+    // ++x → x=6; print 6;
+    // while (++x < 10) → x=7; 7<10=true → next iteration
+    // Output: 1 4 6
+    
+    // Iteration 3 starts with x=7:
+    // ++x → x=8; print 8;
+    // if (++x < 5) → x=9; 9<5=false → DON'T continue
+    // ++x → x=10; print 10;
+    // while (++x < 10) → x=11; 11<10=false → exit
+    // Final Output: 1 4 6 8 10
+    
+    return 0;
+}
+`} />
+
+```text
+Full Output:
+1 4 6 8 10 
+```
+
+---
+
+### 🧠 Why This Is Dangerous
+
+<Card title="Trap 1: continue skips to condition, not loop start" icon="error">
+In `do-while`, `continue` jumps directly to the `while (condition)` check — **not** to the top of the loop body.  
+This can skip critical initialization or update code unexpectedly.
+</Card>
+
+<Card title="Trap 2: Multiple increments + continue = hard to trace" icon="error">
+When loop variable is modified in multiple places (`++x` in body, condition, and after `continue`), tracking its value becomes extremely difficult.  
+✅ Prefer: single update location, clear loop structure.
+</Card>
+
+<Card title="✅ Safer Alternative: Use for loop with clear structure" icon="approve-check">
+    ```cpp
+        for (int x = 1; x < 10; ++x) {
+            std::cout << x << " ";
+            if (x < 5) continue;  // Clear: skip to x++ update
+            ++x;  // Explicit second increment
+            std::cout << x << " ";
+        }
+        // Same logic, but for-loop structure makes flow more predictable
+    ```
+</Card>
+
+<Aside type="danger">
+**Rule of Thumb**: Avoid `continue` in `do-while` loops unless the flow is trivial.  
+Prefer `if` guards with early `continue` in `for`/`while` loops, or refactor complex logic into helper methods.
+</Aside>
+
+---
+
+### Breaking Out of Nested Loops
+
+```cpp
+// ❌ break only exits one level
+bool found = false;
+for (int i = 0; i < n && !found; i++) {
+    for (int j = 0; j < m; j++) {
+        if (arr[i][j] == target) {
+            found = true;
+            break;              // exits inner — flag stops outer
+        }
+    }
+}
+
+// ✅ Wrap in lambda + return
+auto search = [&]() {
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < m; j++)
+            if (arr[i][j] == target)
+                return std::make_pair(i, j);   // exits both loops
+    return std::make_pair(-1, -1);
+};
+auto [row, col] = search();
+
+// ✅ goto — only legitimate use (breaking nested loops)
+for (int i = 0; i < n; i++) {
+    for (int j = 0; j < m; j++) {
+        if (arr[i][j] == target)
+            goto found;
+    }
+}
+found:
+// continue here
+```
+
+---

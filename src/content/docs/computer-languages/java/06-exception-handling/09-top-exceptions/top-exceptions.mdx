@@ -1,0 +1,1347 @@
+---
+title: Java Exception Handling — All Compile Errors Explained
+slug: computer-languages/java/exception-handling/compile-errors
+description: Master Java's 12 compile errors related to exception handling. From "try without catch" to "throw non-Throwable", understand each error with code examples and fixes.
+tags: [java, exceptions, compile-errors, interview]
+---
+
+## 🔴 All Possible Exception Handling Compile Errors
+
+---
+
+### 🧠 What It Is
+
+Every compile error the Java compiler can produce specifically from exception handling code. These are not runtime failures — the compiler rejects the code before it runs. Knowing all of them means you can read any compile error in exception handling and immediately know the rule being violated.
+
+---
+
+### 🔬 Complete Catalog — All 12 Categories
+
+```
+Exception Handling Compile Errors
+│
+├── 01. try without catch or finally
+├── 02. catch without try
+├── 03. finally without try
+├── 04. catch after finally
+├── 05. Unreachable catch block (checked)
+├── 06. Unhandled checked exception
+├── 07. throws broadening in override
+├── 08. Multi-catch with related types
+├── 09. Multi-catch variable reassignment
+├── 10. throw non-Throwable
+├── 11. Unreachable statement after throw
+└── 12. final field not definitely assigned
+```
+
+---
+
+### 🔬 01 — try Without catch or finally
+
+```java
+// ❌
+void method() {
+    try {
+        riskyOp();
+    }
+}
+// Error: 'catch' or 'finally' expected
+
+// ✅ Fix option 1
+try { riskyOp(); } catch (Exception e) { handle(e); }
+
+// ✅ Fix option 2
+try { riskyOp(); } finally { cleanup(); }
+```
+
+---
+
+### 🔬 02 — catch Without try
+
+```java
+// ❌
+void method() {
+    System.out.println("before");
+    catch (Exception e) {           // Error: 'catch' without 'try'
+        handle(e);
+    }
+}
+
+// ❌ catch block after another catch's closing brace
+try {
+    op();
+} catch (IOException e) {
+    handle(e);
+}
+catch (SQLException e) {            // ✅ actually valid — catch blocks can span lines
+    handle(e);
+}
+
+// ❌ genuine orphan catch
+catch (Exception e) { }             // Error: 'catch' without 'try'
+```
+
+---
+
+### 🔬 03 — finally Without try
+
+```java
+// ❌
+void method() {
+    finally {                       // Error: 'finally' without 'try'
+        cleanup();
+    }
+}
+
+// ❌ finally after catch without try
+catch (Exception e) { }
+finally { cleanup(); }              // Error: 'finally' without 'try'
+```
+
+---
+
+### 🔬 04 — catch After finally
+
+```java
+// ❌
+try {
+    riskyOp();
+} finally {
+    cleanup();
+} catch (Exception e) {             // Error: 'catch' without 'try'
+    handle(e);
+}
+
+// ❌ Multiple finally
+try {
+    riskyOp();
+} finally {
+    cleanup1();
+} finally {                         // Error: 'finally' without 'try'
+    cleanup2();
+}
+```
+
+---
+
+### 🔬 05 — Unreachable catch Block (Checked Only)
+
+```java
+// ❌ Subclass after superclass — already caught
+try {
+    new FileInputStream("f.txt");
+} catch (IOException e) {
+    handle(e);
+} catch (FileNotFoundException e) {     // Error: exception already caught
+    handleSpecific(e);
+}
+
+// ❌ Exception type not thrown by any code in try
+void method() {
+    try {
+        int x = 1 + 1;                  // cannot throw anything checked
+    } catch (IOException e) {           // Error: exception never thrown in try
+        handle(e);
+    }
+}
+
+// ❌ Method doesn't declare the checked exception
+void safeMethod() { }                   // throws nothing
+
+void caller() {
+    try {
+        safeMethod();
+    } catch (IOException e) {           // Error: exception never thrown in try
+        handle(e);
+    }
+}
+
+// ✅ Unchecked — NEVER an unreachable catch error
+void method() {
+    try {
+        int x = 1 + 1;
+    } catch (RuntimeException e) {      // ✅ compiles — unchecked always allowed
+        handle(e);
+    }
+}
+```
+
+```
+Unreachable catch rules:
+  ONLY applies to checked exceptions
+  Compiler proves: no code in try block can throw this checked type
+  → catch block is dead code → compile error
+
+  Never applies to:
+    RuntimeException or subclasses
+    Error or subclasses
+    (compiler doesn't track unchecked propagation)
+```
+
+---
+
+### 🔬 06 — Unhandled Checked Exception
+
+```java
+// ❌ Checked exception not caught or declared
+void method() {
+    Files.readAllBytes(Path.of("f.txt")); // throws IOException (checked)
+}
+// Error: unreported exception IOException; must be caught or declared
+
+// ❌ Checked exception from explicit throw not declared
+void method() {
+    throw new IOException("fail");        // throws IOException
+}
+// Error: unreported exception IOException; must be caught or declared
+
+// ✅ Fix option 1 — declare
+void method() throws IOException {
+    Files.readAllBytes(Path.of("f.txt"));
+}
+
+// ✅ Fix option 2 — catch
+void method() {
+    try {
+        Files.readAllBytes(Path.of("f.txt"));
+    } catch (IOException e) {
+        handle(e);
+    }
+}
+
+// ✅ Fix option 3 — wrap in unchecked
+void method() {
+    try {
+        Files.readAllBytes(Path.of("f.txt"));
+    } catch (IOException e) {
+        throw new RuntimeException(e);    // unchecked — no declaration needed
+    }
+}
+```
+
+---
+
+### 🔬 07 — throws Broadening in Override
+
+```java
+class Base {
+    void process() throws IOException { }
+}
+
+class Child extends Base {
+
+    // ❌ Broader checked exception
+    @Override
+    void process() throws Exception { }     // Error: overridden method does not throw Exception
+
+    // ❌ Unrelated checked exception
+    @Override
+    void process() throws SQLException { }  // Error: overridden method does not throw SQLException
+
+    // ✅ Same exception
+    @Override
+    void process() throws IOException { }
+
+    // ✅ Narrower — subclass
+    @Override
+    void process() throws FileNotFoundException { }
+
+    // ✅ No checked exception
+    @Override
+    void process() { }
+
+    // ✅ Unchecked — always allowed regardless
+    @Override
+    void process() throws RuntimeException { }
+
+    // ✅ Unchecked — even unrelated unchecked
+    @Override
+    void process() throws NullPointerException { }
+}
+```
+
+```
+Override throws rule:
+  thrown checked exceptions in override ⊆ thrown checked exceptions in parent
+  Unchecked exceptions: no restriction — add/remove freely
+```
+
+---
+
+### 🔬 08 — Multi-catch With Related Types
+
+```java
+// ❌ Parent-child relationship
+try {
+    riskyOp();
+} catch (IOException | FileNotFoundException e) {   // Error: Alternatives in a
+    handle(e);                                       // multi-catch statement cannot
+}                                                    // be related by subclassing
+
+// ❌ Either direction — child before parent also fails
+try {
+    riskyOp();
+} catch (FileNotFoundException | IOException e) {   // Error: same
+    handle(e);
+}
+
+// ❌ Same type twice
+try {
+    riskyOp();
+} catch (IOException | IOException e) {             // Error: duplicate type
+    handle(e);
+}
+
+// ✅ Siblings — no inheritance between them
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {            // ✅
+    handle(e);
+}
+
+// ✅ Both extend same parent but neither extends the other
+try {
+    riskyOp();
+} catch (FileNotFoundException | SocketException e) { // ✅ both extend IOException
+    handle(e);                                          // but siblings — ok
+}
+```
+
+---
+
+### 🔬 09 — Multi-catch Variable Reassignment
+
+```java
+// ❌ Reassigning multi-catch variable
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {
+    e = new IOException("replaced");    // Error: multi-catch parameter e
+    handle(e);                          // may not be assigned
+}
+
+// ✅ Single catch — mutable (bad practice but compiles)
+try {
+    riskyOp();
+} catch (IOException e) {
+    e = new IOException("replaced");    // ✅ compiles — single catch variable mutable
+}
+
+// ❌ Also fails: shadowing outer local variable
+IOException e = new IOException("outer");
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {    // Error: variable e already defined
+    handle(e);
+}
+```
+
+---
+
+### 🔬 10 — throw Non-Throwable
+
+```java
+// ❌ String
+throw "error message";                  // Error: incompatible types: String cannot be converted to Throwable
+
+// ❌ int
+throw 404;                              // Error: incompatible types: int cannot be converted to Throwable
+
+// ❌ Object
+throw new Object();                     // Error: incompatible types: Object cannot be converted to Throwable
+
+// ❌ null literal (special case — compiles but NPE at runtime)
+throw null;                             // ✅ COMPILES — runtime NPE instead
+
+// ✅ Any Throwable subclass
+throw new RuntimeException("x");
+throw new Error("x");
+throw new Exception("x");
+
+// ✅ Variable of Throwable type
+Throwable t = new RuntimeException();
+throw t;
+```
+
+```
+throw null:
+  Compiles — null is assignable to any reference type including Throwable
+  Runtime: NullPointerException thrown instead
+  Stack trace points to throw null line — confusing
+  NEVER do this intentionally
+```
+
+---
+
+### 🔬 11 — Unreachable Statement After throw
+
+```java
+// ❌ Statement directly after unconditional throw
+void method() {
+    throw new RuntimeException("x");
+    System.out.println("after");        // Error: unreachable statement
+}
+
+// ❌ In try block
+try {
+    throw new IOException("x");
+    int x = 1;                          // Error: unreachable statement
+} catch (IOException e) { }
+
+// ✅ Conditional throw — next statement reachable
+void method(boolean fail) {
+    if (fail) throw new RuntimeException("x");
+    System.out.println("after");        // ✅ reachable — throw was conditional
+}
+
+// ✅ throw in catch — code after try-catch is reachable
+try {
+    riskyOp();
+} catch (IOException e) {
+    throw new RuntimeException(e);
+    // unreachable inside catch — but next line after try-catch:
+}
+System.out.println("after");            // ✅ reachable — exception may not have thrown
+```
+
+---
+
+### 🔬 12 — final Field Not Definitely Assigned
+
+```java
+// ❌ final field may not be assigned in all paths
+class Config {
+    final int port;
+
+    Config(boolean useDefault) {
+        if (useDefault) {
+            port = 8080;
+        }
+        // Error: variable port might not have been initialized
+        // if useDefault=false: port never assigned
+    }
+}
+
+// ✅ Fix — assign in all paths
+Config(boolean useDefault) {
+    if (useDefault) {
+        port = 8080;
+    } else {
+        port = 9090;
+    }
+}
+
+// ✅ Fix — assign unconditionally
+Config(boolean useDefault) {
+    port = useDefault ? 8080 : 9090;
+}
+
+// ❌ final field assigned in try — may not reach assignment
+class Service {
+    final String host;
+
+    Service() {
+        try {
+            host = loadHost();      // may throw — host may not be assigned
+        } catch (IOException e) {
+            // host not assigned in this path
+        }
+        // Error: variable host might not have been initialized
+    }
+}
+
+// ✅ Fix — assign in both paths
+Service() {
+    String resolvedHost;
+    try {
+        resolvedHost = loadHost();
+    } catch (IOException e) {
+        resolvedHost = "localhost";     // default
+    }
+    host = resolvedHost;                // assigned exactly once — all paths covered
+}
+```
+
+---
+
+### 💻 Real-World Code — All 12 in One File
+
+```java
+public class AllCompileErrors {
+
+    final int port;
+
+    // Error 12: final field not definitely assigned
+    AllCompileErrors(boolean flag) {
+        if (flag) port = 8080;
+        // port might not be initialized
+    }
+
+    // Error 6: unhandled checked exception
+    void unhandled() {
+        Files.readAllBytes(Path.of("f"));   // IOException unhandled
+    }
+
+    // Error 7: throws broadening
+    // (assume parent declares throws IOException)
+    void process() throws Exception { }     // broader than parent's IOException
+
+    void method() {
+        // Error 1: try alone
+        try { int x = 1; }
+
+        // Error 2: catch alone
+        catch (Exception e) { }
+
+        // Error 3: finally alone
+        finally { }
+
+        // Error 4: catch after finally
+        try { op(); }
+        finally { }
+        catch (Exception e) { }
+
+        // Error 5: unreachable catch (checked)
+        try { int x = 1; }
+        catch (IOException e) { }          // IOException never thrown
+
+        // Error 8: multi-catch related types
+        try { op(); }
+        catch (IOException | FileNotFoundException e) { }
+
+        // Error 9: multi-catch reassignment
+        try { op(); }
+        catch (IOException | SQLException e) {
+            e = new IOException();
+        }
+
+        // Error 10: throw non-Throwable
+        throw "message";
+
+        // Error 11: unreachable after throw
+        throw new RuntimeException();
+        System.out.println("dead");
+    }
+}
+```
+
+---
+
+## 🔥 Top 10 Exceptions In The Wild
+
+---
+
+### 🧠 What This Is
+
+The 10 exceptions that appear most frequently in production Java systems. Not textbook examples — real triggers, real prod scenarios, real silent failures that take down services.
+
+---
+
+## 01 — NullPointerException
+
+### What Triggers It
+```java
+String s = null;
+s.length();                     // NPE — method call on null
+
+null.toString();                // NPE
+int[] arr = null;
+arr[0] = 1;                    // NPE — array access on null
+
+null instanceof String;         // ✅ never NPE — always false
+```
+
+### Java 14+ Helpful NPE Messages
+```java
+// Pre Java 14:
+// NullPointerException (no message)
+
+// Java 14+:
+user.getAddress().getCity().toUpperCase();
+// NullPointerException: Cannot invoke "String.toUpperCase()"
+// because the return value of "Address.getCity()" is null
+// ← tells you EXACTLY which part was null
+```
+
+### Prod Scenario
+```java
+// API response deserialization — optional field absent
+User user = objectMapper.readValue(json, User.class);
+String city = user.getAddress().getCity();  // address is null — API didn't send it
+// NPE — not obvious from stack trace which field was null pre-Java 14
+```
+
+### Silent Failure
+```java
+// Autoboxing NPE — looks like arithmetic, not null
+Map<String, Integer> counts = new HashMap<>();
+int count = counts.get("missing");  // get() returns null → unboxing NPE
+// Error says NPE, not "key not found" — misleads debugging
+```
+
+### Fix Pattern
+```java
+// Defensive: Objects.requireNonNull at method boundary
+void process(String input) {
+    Objects.requireNonNull(input, "input required");
+}
+
+// Modern: Optional for genuinely optional values
+Optional.ofNullable(user.getAddress())
+        .map(Address::getCity)
+        .orElse("unknown");
+```
+
+---
+
+## 02 — ClassCastException
+
+### What Triggers It
+```java
+Object obj = "hello";
+Integer i = (Integer) obj;      // CCE — String is not Integer
+
+List list = new ArrayList();
+list.add("string");
+Integer x = (Integer) list.get(0);  // CCE at runtime — raw type, no compile check
+```
+
+### Prod Scenario
+```java
+// Cache stores mixed types under Object
+Cache cache = getCache();
+cache.put("user:1", new User());
+cache.put("user:2", "corrupted-entry");     // wrong type stored
+
+User u = (User) cache.get("user:2");        // CCE — String in cache
+// Happens when: cache populated by different service version
+// or serialization mismatch across deploys
+```
+
+### Silent Failure — Generic Type Erasure
+```java
+// Heap pollution — raw type bypasses generics
+List<Integer> ints = new ArrayList<>();
+List raw = ints;                            // raw type — unchecked warning
+raw.add("string");                          // compiles, runs — pollutes list
+
+int x = ints.get(0);                       // CCE HERE — not at add()
+// Stack trace points to get() — not where "string" was inserted
+// Root cause far from exception site
+```
+
+### Fix Pattern
+```java
+// instanceof check before cast
+if (obj instanceof String s) {              // Java 16+ pattern matching
+    System.out.println(s.length());         // s is String — no cast needed
+}
+
+// Safe cast utility
+@SuppressWarnings("unchecked")
+<T> Optional<T> safeCast(Object obj, Class<T> type) {
+    return type.isInstance(obj)
+        ? Optional.of(type.cast(obj))
+        : Optional.empty();
+}
+```
+
+---
+
+## 03 — StackOverflowError
+
+### What Triggers It
+```java
+// Unbounded recursion
+int factorial(int n) {
+    return n * factorial(n - 1);    // no base case — infinite frames
+}
+
+// Mutual recursion
+boolean isEven(int n) { return isOdd(n - 1); }
+boolean isOdd(int n)  { return isEven(n - 1); }
+```
+
+### Prod Scenario
+```java
+// Circular object reference + serialization
+class Order {
+    Customer customer;
+}
+class Customer {
+    Order lastOrder;    // circular — Order → Customer → Order → ...
+}
+
+// Jackson serialization:
+objectMapper.writeValueAsString(order);     // StackOverflowError
+// Stack trace: getCustomer/getLastOrder repeated 500+ times
+// Fix: @JsonManagedReference / @JsonBackReference or @JsonIgnore
+```
+
+### Silent Failure — toString() Loop
+```java
+class Node {
+    Node next;
+
+    @Override
+    public String toString() {
+        return "Node(" + next + ")";    // if circular list: infinite toString chain
+    }
+}
+// log.debug("node: {}", node);  ← triggers SOE in logger
+// Logger crashes — log line never written — debugging made impossible
+```
+
+### Fix Pattern
+```java
+// Always define base case
+int factorial(int n) {
+    if (n <= 1) return 1;           // base case — recursion stops
+    return n * factorial(n - 1);
+}
+
+// Or convert to iteration
+int factorial(int n) {
+    int result = 1;
+    while (n > 1) result *= n--;
+    return result;
+}
+
+// JVM flag: increase stack size
+// java -Xss4m MyApp   ← 4MB per thread (default 512KB–1MB)
+```
+
+---
+
+## 04 — OutOfMemoryError
+
+### Variants — Each Has Different Cause
+```
+OutOfMemoryError: Java heap space
+  → Heap exhausted — objects accumulate faster than GC collects
+
+OutOfMemoryError: GC overhead limit exceeded
+  → GC running >98% of time, recovering <2% heap — effectively infinite GC loop
+
+OutOfMemoryError: Metaspace
+  → Class metadata area exhausted — too many loaded classes
+
+OutOfMemoryError: unable to create native thread
+  → OS thread limit reached — too many Thread objects created
+
+OutOfMemoryError: Direct buffer memory
+  → NIO direct buffers exhausted — ByteBuffer.allocateDirect() overuse
+```
+
+### Prod Scenario — Unbounded Cache
+```java
+// No eviction — cache grows forever
+static final Map<String, byte[]> cache = new HashMap<>();
+
+void handleRequest(String sessionId) {
+    cache.put(sessionId, new byte[1024 * 1024]);  // 1MB per session
+    // 1000 concurrent users = 1GB — heap exhausted
+}
+// Fix: Use Caffeine/Guava cache with size limit + TTL eviction
+```
+
+### Silent Failure — GC Overhead
+```java
+// Symptom: app slows to crawl before dying
+// GC log: GC events every few ms, recovering tiny amounts
+// -XX:+GCDetails shows: GC overhead limit exceeded
+// Root cause: large number of short-lived objects in loop
+for (String line : lines) {
+    String processed = line + suffix;   // new String every iteration
+    results.add(processed);             // retained — never GC'd
+}
+// Fix: StringBuilder + preallocate results list
+```
+
+### Fix Pattern
+```java
+// Heap dump analysis
+// -XX:+HeapDumpOnOutOfMemoryError
+// -XX:HeapDumpPath=/dumps/oom.hprof
+// Analyze with: Eclipse MAT, VisualVM
+
+// Metaspace fix:
+// -XX:MaxMetaspaceSize=256m
+
+// Direct buffer fix:
+// -XX:MaxDirectMemorySize=512m
+```
+
+---
+
+## 05 — ArrayIndexOutOfBoundsException
+
+### What Triggers It
+```java
+int[] arr = new int[5];
+arr[5]  = 1;        // AIOOBE — valid indices: 0–4
+arr[-1] = 1;        // AIOOBE — negative index
+
+// Empty array
+int[] empty = new int[0];
+int x = empty[0];   // AIOOBE
+```
+
+### Prod Scenario
+```java
+// Off-by-one in pagination
+List<Order> orders = getOrders();           // size = 10
+int pageSize = 10;
+int page = 2;
+int start = page * pageSize;               // start = 20 — beyond list size
+Order first = orders.get(start);           // IndexOutOfBoundsException
+// Happens when: page number not validated against total count
+```
+
+### Silent Failure — String Split Edge Case
+```java
+// split() behavior — empty trailing strings removed by default
+String csv = "a,b,c,";
+String[] parts = csv.split(",");
+System.out.println(parts.length);   // 3 — NOT 4
+// Trailing empty string removed — parts[3] doesn't exist
+// Code assuming parts[3] exists → AIOOBE silently on specific inputs
+
+// Fix:
+String[] parts = csv.split(",", -1);  // -1 = keep trailing empty strings
+// Now parts.length = 4
+```
+
+### Fix Pattern
+```java
+// Always bounds-check
+if (index >= 0 && index < arr.length) {
+    int val = arr[index];
+}
+
+// Use List instead of array when size is dynamic
+List<Integer> list = new ArrayList<>();
+// list.get(i) → IndexOutOfBoundsException with better message
+```
+
+---
+
+## 06 — ConcurrentModificationException
+
+### What Triggers It
+```java
+List<String> list = new ArrayList<>(List.of("a", "b", "c"));
+
+// Modifying list while iterating it
+for (String s : list) {
+    if (s.equals("b")) list.remove(s);  // CME — structural modification during iteration
+}
+
+// Iterator directly
+Iterator<String> it = list.iterator();
+while (it.hasNext()) {
+    String s = it.next();
+    list.remove(s);                     // CME
+}
+```
+
+### How It Works — `modCount`
+```java
+// ArrayList maintains modCount — incremented on structural change
+// Iterator captures expectedModCount at creation
+// it.next() checks: if modCount != expectedModCount → throw CME
+// Detects modification — does NOT guarantee thread safety (best-effort)
+```
+
+### Prod Scenario
+```java
+// Multi-threaded — one thread reads, another modifies
+List<User> sessions = new ArrayList<>();    // not thread-safe
+
+// Thread 1: iterating
+for (User u : sessions) {
+    sendHeartbeat(u);
+}
+
+// Thread 2: modifying simultaneously
+sessions.add(newUser);                      // CME on Thread 1's next()
+// Fix: CopyOnWriteArrayList or synchronized block or ConcurrentHashMap
+```
+
+### Silent Failure — HashMap Iteration
+```java
+Map<String, Integer> map = new HashMap<>();
+for (Map.Entry<String, Integer> entry : map.entrySet()) {
+    if (entry.getValue() == 0) {
+        map.remove(entry.getKey());         // CME
+    }
+}
+
+// ✅ Fix 1 — iterator remove
+Iterator<Map.Entry<String, Integer>> it = map.entrySet().iterator();
+while (it.hasNext()) {
+    if (it.next().getValue() == 0) it.remove();   // safe — iterator's own remove
+}
+
+// ✅ Fix 2 — Java 8+
+map.entrySet().removeIf(e -> e.getValue() == 0);
+
+// ✅ Fix 3 — collect then remove
+Set<String> toRemove = map.entrySet().stream()
+    .filter(e -> e.getValue() == 0)
+    .map(Map.Entry::getKey)
+    .collect(Collectors.toSet());
+toRemove.forEach(map::remove);
+```
+
+---
+
+## 07 — IllegalArgumentException
+
+### What Triggers It
+```java
+// Method receives argument that violates its precondition
+Thread t = new Thread(runnable);
+t.setPriority(11);              // IAE — valid range: 1–10
+
+int[] arr = new int[-1];        // NegativeArraySizeException (subtype)
+
+// Explicit validation
+void setAge(int age) {
+    if (age < 0 || age > 150)
+        throw new IllegalArgumentException("invalid age: " + age);
+}
+```
+
+### Prod Scenario
+```java
+// External input not validated before passing to library
+String userInput = request.getParam("timeout");
+int timeout = Integer.parseInt(userInput);          // NumberFormatException if "abc"
+executor.awaitTermination(timeout, TimeUnit.SECONDS); // IAE if timeout < 0
+
+// Fix: validate at boundary — fail with meaningful message
+int timeout = parsePositiveInt(userInput, "timeout");
+```
+
+### NumberFormatException — Subclass of IAE
+```java
+// Most common IAE subtype in prod
+Integer.parseInt("12.5");       // NFE — decimal not allowed
+Integer.parseInt("");           // NFE — empty string
+Integer.parseInt(null);         // NFE — null (not NPE — surprising)
+Integer.parseInt("2147483648"); // NFE — exceeds Integer.MAX_VALUE
+
+// Silent trap: null input
+String val = request.getHeader("X-Timeout");    // header absent = null
+int timeout = Integer.parseInt(val);            // NFE with message "null"
+// Looks like NPE — is NFE
+```
+
+### Fix Pattern
+```java
+// Guard clause pattern — validate early, fail specifically
+void transfer(String fromId, BigDecimal amount) {
+    Objects.requireNonNull(fromId, "fromId required");
+    Objects.requireNonNull(amount, "amount required");
+    if (amount.compareTo(BigDecimal.ZERO) <= 0)
+        throw new IllegalArgumentException("amount must be positive: " + amount);
+    // ... proceed with valid args
+}
+```
+
+---
+
+## 08 — IllegalStateException
+
+### What Triggers It
+```java
+// Object in wrong state for operation
+Iterator<String> it = list.iterator();
+it.remove();                    // ISE — must call next() before remove()
+
+Scanner sc = new Scanner(System.in);
+sc.close();
+sc.nextLine();                  // ISE — scanner closed
+
+// Builder used after build()
+StringBuilder sb = new StringBuilder("hello");
+// some builders prevent use after terminal operation
+```
+
+### Prod Scenario
+```java
+// Spring bean used before context fully initialized
+@Component
+class ReportService {
+    @Autowired
+    private UserRepository repo;
+
+    // Called from static context or too early — repo not yet injected
+    static ReportService INSTANCE;
+
+    @PostConstruct
+    void init() {
+        INSTANCE = this;        // leaks half-initialized bean
+    }
+}
+
+ReportService.INSTANCE.generateReport();  // ISE or NPE — repo not injected yet
+```
+
+### Silent Failure — Transaction State
+```java
+// EntityManager used outside transaction
+@Service
+class OrderService {
+    @PersistenceContext
+    EntityManager em;
+
+    void processOrder(Order order) {    // no @Transactional
+        em.persist(order);              // ISE: no transaction active
+        // TransactionRequiredException extends ISE
+    }
+}
+```
+
+### Fix Pattern
+```java
+// State machine pattern — enforce valid transitions
+class Connection {
+    enum State { CLOSED, OPEN, FAILED }
+    private State state = State.CLOSED;
+
+    void send(byte[] data) {
+        if (state != State.OPEN)
+            throw new IllegalStateException(
+                "Cannot send in state: " + state
+            );
+        // ... send
+    }
+}
+```
+
+---
+
+## 09 — UnsupportedOperationException
+
+### What Triggers It
+```java
+// Unmodifiable collections
+List<String> fixed = List.of("a", "b");
+fixed.add("c");                     // UOE
+
+List<String> unmod = Collections.unmodifiableList(list);
+unmod.remove(0);                    // UOE
+
+// Arrays.asList — fixed size
+List<String> fromArray = Arrays.asList("a", "b");
+fromArray.add("c");                 // UOE — fixed size (no structural modification)
+fromArray.set(0, "x");             // ✅ element replacement allowed
+```
+
+### Prod Scenario — The Most Common Silent Bug
+```java
+// Arrays.asList() returned as List — caller assumes full mutability
+String[] arr = {"a", "b", "c"};
+List<String> list = Arrays.asList(arr);     // fixed-size list backed by array
+
+// Works fine:
+list.set(0, "x");                           // ✅ replacement ok
+Collections.sort(list);                     // ✅ sort ok — doesn't change size
+
+// Fails at runtime:
+list.add("d");                              // UOE — not obvious from type signature
+list.remove(0);                             // UOE
+
+// Happens in: service returns Arrays.asList(), caller adds to it
+// Fix:
+List<String> mutable = new ArrayList<>(Arrays.asList(arr));
+```
+
+### Silent Failure — Collector + UnmodifiableList
+```java
+// Java 10+ List.copyOf() returns unmodifiable
+List<String> source = List.of("a", "b");
+List<String> copy   = List.copyOf(source);
+copy.add("c");                              // UOE
+
+// Streams: Collectors.toUnmodifiableList() (Java 10+)
+List<String> result = stream.collect(Collectors.toUnmodifiableList());
+result.add("x");                            // UOE — not obvious from stream chain
+```
+
+### Fix Pattern
+```java
+// Defensive copy when mutability needed
+List<String> safe = new ArrayList<>(potentiallyUnmodifiable);
+safe.add("new item");                       // ✅
+
+// Check before modify (rare — usually just use defensive copy)
+if (list instanceof ArrayList) {
+    list.add("item");
+} else {
+    list = new ArrayList<>(list);
+    list.add("item");
+}
+```
+
+---
+
+## 10 — NoClassDefFoundError
+
+### What Triggers It
+```java
+// Class present at compile time — missing at runtime
+import com.vendor.PaymentSDK;       // in compile classpath
+
+PaymentSDK sdk = new PaymentSDK(); // NCDFE at runtime if JAR missing
+```
+
+### vs ClassNotFoundException
+```
+NoClassDefFoundError                ClassNotFoundException
+────────────────────────────────────────────────────────
+Error (unchecked)                   Checked Exception
+Class present at compile time       Dynamic load attempt
+Missing at runtime                  Class never existed in classpath
+Deployment broken                   Code asked for nonexistent class
+Cannot catch meaningfully           catch and handle gracefully
+```
+
+### Prod Scenario — JAR Version Conflict
+```java
+// Service depends on commons-lang3:3.12
+// Another dependency brings commons-lang3:3.9
+// Maven picks 3.9 — method added in 3.10 missing at runtime
+
+StringUtils.isBlank(input);     // NCDFE or NoSuchMethodError
+// Class exists but method doesn't — different error
+// Both caused by dependency conflict — same root cause
+```
+
+### Silent Failure — Static Initializer Chain
+```java
+// Class A's static block throws RuntimeException
+class A {
+    static {
+        throw new RuntimeException("env var missing");  // ①
+    }
+}
+
+// First access to A:
+// ExceptionInInitializerError — wraps RuntimeException ①
+// Caught somewhere, logged, forgotten
+
+// Every subsequent access to A:
+// NoClassDefFoundError: Could not initialize class A
+// Original RuntimeException ①: GONE
+// Stack trace: points to caller, not root cause
+// Debugging: looks like missing JAR — is actually config error
+```
+
+### Fix Pattern
+```java
+// Diagnosis: always check full cause chain
+try {
+    new SomeClass();
+} catch (NoClassDefFoundError e) {
+    // Check: is this a static init failure?
+    log.error("NCDFE — check if ExceptionInInitializerError preceded this", e);
+    // Check: mvn dependency:tree — find conflicting versions
+    // Check: jar tf app.jar | grep ClassName — verify class in JAR
+}
+```
+
+---
+
+### 📊 Top 10 — Quick Reference Table
+
+| Exception | Package | Checked | Most Common Cause | Prod Fix |
+|-----------|---------|---------|-------------------|----------|
+| `NullPointerException` | `java.lang` | ❌ | null dereference, unboxing | `requireNonNull`, Optional |
+| `ClassCastException` | `java.lang` | ❌ | raw types, cache type mismatch | `instanceof` check, generics |
+| `StackOverflowError` | `java.lang` | ❌ | unbounded recursion, circular refs | base case, `-Xss`, iteration |
+| `OutOfMemoryError` | `java.lang` | ❌ | unbounded cache, leak | bounded cache, heap dump |
+| `ArrayIndexOutOfBoundsException` | `java.lang` | ❌ | off-by-one, bad split | bounds check, List |
+| `ConcurrentModificationException` | `java.util` | ❌ | modify during iteration | `iterator.remove()`, `removeIf` |
+| `IllegalArgumentException` | `java.lang` | ❌ | invalid input, NFE | guard clauses, validate early |
+| `IllegalStateException` | `java.lang` | ❌ | wrong object state, TX missing | state machine, `@Transactional` |
+| `UnsupportedOperationException` | `java.lang` | ❌ | unmodifiable collection | defensive copy, `new ArrayList<>()` |
+| `NoClassDefFoundError` | `java.lang` | ❌ | JAR missing, static init failure | dependency:tree, check init chain |
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — Unreachable catch for checked is an error, unchecked is not**
+
+```java
+void method() {
+    try {
+        int x = 1 + 1;
+    } catch (IOException e) {       // ❌ compile error — checked, provably unreachable
+    } catch (RuntimeException e) {  // ✅ compiles — unchecked, always allowed
+    } catch (Error e) {             // ✅ compiles — unchecked, always allowed
+    }
+}
+```
+
+The asymmetry trips devs: `catch(IOException)` on code that can't throw = error. `catch(RuntimeException)` on same code = fine. Unchecked exceptions are never tracked by compiler.
+
+---
+
+**🪤 Trap 2 — `throw null` compiles, fails at runtime with confusing trace**
+
+```java
+RuntimeException e = null;
+if (someCondition) e = new RuntimeException("fail");
+throw e;        // ✅ compiles
+                // if someCondition=false: NullPointerException at this line
+                // trace says: NullPointerException at throw e
+                // not: "you tried to throw null"
+                // confusing — looks like NPE from throw expression, not the null itself
+```
+
+---
+
+**🪤 Trap 3 — Interface with no throws — implementation cannot add checked**
+
+```java
+interface Processor {
+    void process(Data d);           // no throws declared
+}
+
+class SlowProcessor implements Processor {
+    @Override
+    void process(Data d) throws IOException {   // ❌ Error: overridden method
+    }                                           // does not throw IOException
+}
+
+// Even though IOException is checked and "reasonable":
+// Interface contract: no checked exception
+// Implementation: cannot add one — broadening
+// Fix: declare in interface, OR use unchecked wrapper
+```
+
+---
+
+**🪤 Trap 4 — Definitely assigned analysis fails with try-catch-finally**
+
+```java
+class Service {
+    final String host;
+
+    Service() {
+        try {
+            host = loadHost();          // may throw
+            // if throws: host not assigned
+        } catch (IOException e) {
+            host = "localhost";         // assigned in catch
+        } finally {
+            // host assigned in try OR catch — but compiler doesn't prove this
+            // for final field: compiler requires CERTAIN assignment
+            // try+catch paths both assign → compiler IS satisfied here ✅
+        }
+    }
+}
+// Actually compiles — try assigns in one path, catch in another
+// Both paths covered — compiler's definite assignment analysis satisfied
+
+// But:
+Service() {
+    try {
+        host = loadHost();
+    } finally {
+        // catch missing — if loadHost() throws: host not assigned
+        // finally runs but host still unassigned
+    }
+}
+// ❌ Error: variable host might not have been initialized
+// try without catch: exception path has no assignment
+```
+
+---
+
+**🪤 Trap 5 — Checked exception from lambda — different error message**
+
+```java
+Runnable r = () -> {
+    throw new IOException("fail");      // ❌ Error: unhandled exception: IOException
+};
+// Error message says "unhandled exception" not "unreported exception"
+// Same root cause: checked exception not declared by functional interface
+// Runnable.run() declares no checked exceptions
+// Fix: wrap in RuntimeException, or use different functional interface
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Compiler dataflow analysis — definite assignment + exception flow graph**
+
+```
+Compiler builds control flow graph (CFG) for each method:
+  Nodes = statements
+  Edges = possible execution paths
+
+Exception flow analysis:
+  For each method call: what checked exceptions can it throw?
+    → reads exceptions attribute from .class file
+  For each throw stmt: what type is thrown?
+    → reads static type of throw expression
+  For each catch: is the type reachable given above?
+    → if no path produces that checked type → compile error
+
+Definite assignment analysis (for final fields):
+  At each program point: is variable DEFINITELY assigned?
+  "Definitely assigned" = assigned on ALL paths to this point
+
+  try {
+    x = 1;          // path A: x assigned
+  } catch (E e) {
+    x = 2;          // path B: x assigned
+  }
+  // After try-catch: x definitely assigned (A and B both assign)
+
+  try {
+    x = 1;          // path A: x assigned
+  } catch (E e) {
+                    // path B: x NOT assigned
+  }
+  // After try-catch: x NOT definitely assigned → compile error for final
+```
+
+---
+
+### 📊 All 12 Compile Errors — Quick Reference
+
+| # | Error | Rule Violated |
+|---|-------|--------------|
+| 1 | `try` alone | Must have `catch` or `finally` |
+| 2 | `catch` alone | Must follow `try` |
+| 3 | `finally` alone | Must follow `try` |
+| 4 | `catch` after `finally` | `finally` must be last |
+| 5 | Unreachable `catch` | Checked type not thrown by try body |
+| 6 | Unhandled checked | Must catch or declare in `throws` |
+| 7 | `throws` broadening | Override can only narrow checked throws |
+| 8 | Multi-catch related types | No subtype relationship allowed in `\|` list |
+| 9 | Multi-catch reassignment | Multi-catch variable is effectively final |
+| 10 | `throw` non-Throwable | Only `Throwable` instances throwable |
+| 11 | Unreachable after `throw` | Statement after unconditional throw is dead |
+| 12 | `final` field unassigned | Must be definitely assigned on all paths |
+
+---
+
+### 🏭 SDE/SRE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| Unreachable catch — checked only, not unchecked | 🔴 MUST KNOW |
+| `throw null` compiles — runtime NPE | 🔴 MUST KNOW |
+| Interface no-throws — impl cannot add checked | 🔴 MUST KNOW |
+| Definite assignment — try+catch both paths cover final field | 🔴 MUST KNOW |
+| Override broadening — unchecked always free | 🔴 MUST KNOW |
+| Multi-catch effectively final — reassignment blocked | 🔴 MUST KNOW |
+| Compiler CFG + dataflow = static, zero runtime cost | 🟡 GOOD TO KNOW |

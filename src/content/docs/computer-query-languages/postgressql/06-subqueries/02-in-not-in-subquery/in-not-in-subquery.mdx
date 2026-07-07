@@ -1,0 +1,756 @@
+---
+title: PostgreSQL IN / NOT IN Subqueries
+slug: computer-query-languages/postgresql/subqueries/in-not-in-subqueries
+description: Master IN and NOT IN subqueries in PostgreSQL — internal Semi-Joins, Anti-Joins, the deadly NULL trap, performance optimization, and real-world patterns.
+sidebar:
+  label: "IN / NOT IN"
+  badge:
+    text: Subqueries
+    variant: tip
+tags: [postgresql, subqueries, in, not-in, semi-join, anti-join, null-trap, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 IN / NOT IN Subqueries — Complete Guide
+
+> **`IN` checks if a value exists in a set returned by another query — Postgres rewrites it as a semi-join internally. `NOT IN` is its mirror but carries a lethal `NULL` trap that silently returns zero rows the moment any value in the subquery result is `NULL`.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `IN` as a **HashSet membership check**.  
+Postgres builds a hash set from the subquery, then probes it for each outer row. It stops at the first match (short-circuit) and never produces duplicate rows.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+```
+FROM
+WHERE    ← IN / NOT IN subquery live here ✅
+GROUP BY
+HAVING   ← IN / NOT IN work here too ✅
+SELECT
+ORDER BY
+```
+
+```sql
+-- IN subquery = "does this value appear in that query's result?"
+SELECT * FROM users
+WHERE  id IN (SELECT user_id FROM orders WHERE status = 'delivered');
+--            ↑ subquery returns a SET of values, not a scalar
+--              1, 1, 2, 3, 3, 3... (may have duplicates — doesn't matter)
+```
+
+## 1️⃣ IN Subquery — How It Works
+
+<Code lang="sql" title="Basic syntax patterns" code={`
+-- IN subquery = "does this value appear in that query's result?"
+SELECT id, name, email
+FROM   users
+WHERE  id IN (
+    SELECT user_id
+    FROM   orders
+    WHERE  status = 'delivered'
+      AND  created_at >= '2024-01-01'
+);
+
+-- NOT IN with subquery
+SELECT id, name
+FROM   users
+WHERE  id NOT IN (
+    SELECT user_id FROM orders
+);
+
+-- IN in HAVING
+SELECT department, COUNT(*) AS headcount
+FROM   employees
+GROUP BY department
+HAVING department IN (
+    SELECT dept_name FROM active_departments
+    WHERE  budget > 1000000
+);`} />
+
+### IN vs Literal List — Same Syntax, Different Source
+```sql
+-- Literal list (static — you know the values)
+WHERE status IN ('pending', 'shipped', 'delivered')
+
+-- Subquery list (dynamic — values come from another table)
+WHERE user_id IN (SELECT id FROM premium_users WHERE tier = 'gold')
+
+-- Key difference:
+-- Literal list  → values known at write time, simple hashing
+-- Subquery list → values computed at run time, full query execution
+```
+
+<Aside type="note">
+**Literal vs Subquery**:  
+- `WHERE status IN ('pending', 'shipped')` → Static list, hashed at plan time.  
+- `WHERE user_id IN (SELECT id FROM ...)` → Dynamic list, computed at execution time.
+</Aside>
+
+---
+
+## 2️⃣ The NULL Trap — Most Dangerous SQL Bug
+
+**If a subquery used with `NOT IN` returns even a single `NULL`, the entire query silently returns zero rows.**
+
+<Code lang="sql" title="❌ The Silent Failure" code={`-- Setup: orders table has a NULL user_id (orphaned record)
+CREATE TEMP TABLE t_users  (id INT, name TEXT);
+CREATE TEMP TABLE t_orders (id INT, user_id INT, amount INT);
+
+INSERT INTO t_users  VALUES (1,'Raj'),(2,'Priya'),(3,'Sam'),(4,'Ankit');
+INSERT INTO t_orders VALUES (1,1,500),(2,2,300),(3,NULL,700); -- ← NULL!
+
+-- Find users who NEVER ordered
+SELECT id, name FROM t_users
+WHERE  id NOT IN (SELECT user_id FROM t_orders);
+
+-- Expected: Sam(3), Ankit(4)
+-- Actual:   ZERO ROWS 😱💀`} />
+
+### 🔍 Why This Happens — Step by Step
+
+```text
+Subquery result: {1, 2, NULL}
+
+NOT IN (1, 2, NULL) expands to:
+  id != 1   AND   id != 2   AND   id != NULL
+
+For Sam (id=3):
+  3 != 1     → TRUE
+  3 != 2     → TRUE
+  3 != NULL  → NULL   ← three-value logic!
+  TRUE AND TRUE AND NULL = NULL
+  NULL ≠ TRUE → row excluded 💀
+
+For Ankit (id=4):
+  4 != 1     → TRUE
+  4 != 2     → TRUE
+  4 != NULL  → NULL   ← same problem
+  NULL → excluded 💀
+
+For Raj (id=1):
+  1 != 1     → FALSE   ← short-circuits here
+  FALSE → excluded (correct, but for wrong reason)
+
+Result: EVERY row excluded when subquery has ANY NULL
+```
+
+<Aside type="danger">
+**🚨 Production Rule**:  
+`NOT IN (set containing even ONE NULL)` always returns zero rows. No warning, no error. The most dangerous behavior in SQL.  
+✅ **Fix**: Always use `NOT EXISTS` or add `WHERE col IS NOT NULL` in the subquery.
+</Aside>
+
+### 🛡️ The Three Fixes
+
+<CardGrid>
+  <Card title="Fix 1: NOT EXISTS (Recommended)" icon="shield">
+    ```sql
+    SELECT id, name FROM t_users u
+    WHERE  NOT EXISTS (
+      SELECT 1 FROM t_orders o
+      WHERE  o.user_id = u.id   -- NULL != u.id → NULL → EXISTS = FALSE → ✅
+    );
+    ```
+  </Card>
+  
+  <Card title="Fix 2: Explicit NULL Guard" icon="caution">
+    ```sql
+    SELECT id, name FROM t_users
+    WHERE  id NOT IN (
+      SELECT user_id FROM t_orders
+      WHERE  user_id IS NOT NULL   -- ← manually exclude NULLs
+    );
+    ```
+  </Card>
+
+  <Card title="Fix 3: LEFT JOIN Anti-Join" icon="rocket">
+    ```sql
+    SELECT u.id, u.name
+    FROM   t_users u
+    LEFT JOIN t_orders o ON u.id = o.user_id
+    WHERE  o.id IS NULL;
+    ```
+  </Card>
+</CardGrid>
+
+```text
+Decision tree for NOT IN:
+
+Using NOT IN with subquery?
+│
+├── Can subquery column have NULLs?
+│   ├── YES (almost always) → use NOT EXISTS ✅
+│   └── Guaranteed no NULLs? (NOT NULL constraint exists)
+│         → NOT IN is safe (but still prefer NOT EXISTS for clarity)
+│
+└── Using NOT IN with literal list?
+      → Safe (you control the values) ✅
+      WHERE status NOT IN ('cancelled', 'refunded')
+```
+
+> 🎯 **Interview Q:** *"You wrote `WHERE id NOT IN (SELECT user_id FROM orders)` and it returned zero rows unexpectedly. What happened?"*
+> **A:** The orders table has at least one NULL in user_id. NOT IN expands to `!= val1 AND != val2 AND != NULL`. Any comparison with NULL returns NULL. TRUE AND NULL = NULL — every row excluded. Fix: use `NOT EXISTS` or add `WHERE user_id IS NOT NULL` in the subquery.
+
+---
+
+## 3️⃣ Internals — Semi-Join & Anti-Join
+
+Postgres does **not** execute `IN` subqueries naively. It rewrites them into optimized join algorithms.
+
+### How `IN` → Hash Semi Join
+
+```sql
+-- What you write:
+SELECT * FROM users
+WHERE id IN (SELECT user_id FROM orders WHERE status = 'delivered');
+
+-- What Postgres actually runs (conceptually):
+SELECT DISTINCT u.*           -- ← no duplicates
+FROM   users u
+SEMI JOIN orders o            -- ← stops at first match per user
+  ON u.id = o.user_id
+  AND o.status = 'delivered';
+```
+
+| Algorithm | When Used | Cost | EXPLAIN Output |
+|-----------|-----------|------|----------------|
+| **Hash Semi Join** | Large tables, no sorted index | O(M + N) | `Hash Semi Join` |
+| **Nested Loop Semi Join** | Small subquery or indexed lookup | O(M × log N) | `Nested Loop Semi Join` |
+| **Merge Semi Join** | Both sides pre-sorted/indexed | O(M + N) | `Merge Semi Join` |
+
+<Code lang="sql" title="EXPLAIN output" code={`EXPLAIN SELECT * FROM users
+WHERE id IN (SELECT user_id FROM orders WHERE status = 'delivered');
+
+-- Typical output:
+-- Hash Semi Join
+--   Hash Cond: (users.id = orders.user_id)
+--   -> Seq Scan on users              ← outer (probe)
+--   -> Hash                           ← build phase
+--        -> Seq Scan on orders        ← inner (subquery result)
+--             Filter: (status = 'delivered')`} />
+
+### How `NOT IN` → Hash Anti Join (The NULL Bug Explained)
+
+```text
+Anti-Join NULL handling (algorithm level):
+
+Hash Anti Join for NOT IN:
+  If hash table contains NULL:
+    For each outer row: NULL comparison = uncertain
+    → Postgres conservatively excludes the outer row
+    → Result: zero rows (the NULL trap at algorithmic level)
+
+NOT EXISTS → Nested Loop Anti Join:
+  For each outer row: run inner query with specific value
+  NULL in inner table: NULL = outer.id → NULL → no match found
+  → outer row passes (correct!) ✅
+```
+
+<Aside type="note">
+**🎯 DSA Connection**: Semi-Join = `HashSet.contains()` (O(1) probe). Anti-Join = `!HashSet.contains()`. The `NULL` trap is equivalent to Java's `HashSet` containing `null` — `!set.contains(x)` becomes unreliable when `null` is present in the set.
+</Aside>
+
+
+**This is where IN subquery becomes truly interesting.**
+
+```
+Postgres does NOT execute IN subquery naively.
+It rewrites IN → Semi-Join
+It rewrites NOT IN → Anti-Join
+
+Semi-Join: return left row if ANY matching right row exists
+           Stop at FIRST match (short-circuit) ✅
+           Never produce duplicate left rows ✅
+
+Anti-Join: return left row if NO matching right row exists
+           NULL-safe (NOT EXISTS behavior) when done via Anti-Join ✅
+```
+
+```sql
+-- What you write:
+SELECT * FROM users
+WHERE id IN (SELECT user_id FROM orders WHERE status = 'delivered');
+
+-- What Postgres actually runs (conceptually):
+SELECT DISTINCT u.*           -- ← no duplicates
+FROM   users u
+SEMI JOIN orders o            -- ← stops at first match per user
+  ON u.id = o.user_id
+  AND o.status = 'delivered';
+```
+
+```
+Semi-Join execution:
+
+For user id=1:
+  Scan orders WHERE user_id=1 AND status='delivered'
+  Find first match → return user row, STOP scanning orders ✅
+  Never returns user 1 twice even if 5 matching orders exist
+
+For user id=3:
+  Scan orders WHERE user_id=3 AND status='delivered'
+  No match found → skip user 3 ✅
+
+Key properties:
+  ✅ No duplicate output rows (unlike INNER JOIN)
+  ✅ Short-circuits on first match (efficient)
+  ✅ No need for DISTINCT after (unlike JOIN approach)
+```
+
+### Three Physical Algorithms for Semi-Join
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  1. HASH SEMI JOIN (most common for large tables)            │
+│                                                              │
+│  Phase 1 — Build:                                            │
+│    Execute subquery → collect all user_ids                   │
+│    Build hash table: {1, 2, 3, ...}                         │
+│                                                              │
+│  Phase 2 — Probe:                                            │
+│    For each outer row (user):                                │
+│      hash(user.id) → check if in hash table                 │
+│      Found → emit user row ✅                                │
+│      Not found → skip ✅                                     │
+│                                                              │
+│  Cost: O(subquery_rows + outer_rows)                         │
+│  EXPLAIN: Hash Semi Join                                     │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  2. NESTED LOOP SEMI JOIN (small subquery or indexed)        │
+│                                                              │
+│  For each outer row:                                         │
+│    Execute inner lookup (with index)                         │
+│    First match found → return outer row, stop inner          │
+│    No match → skip                                           │
+│                                                              │
+│  Cost: O(outer × log(inner)) with index                      │
+│  EXPLAIN: Nested Loop Semi Join                              │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  3. MERGE SEMI JOIN (both sides sorted/indexed)              │
+│                                                              │
+│  Two-pointer on sorted inputs                                │
+│  Advance inner past duplicates automatically                 │
+│                                                              │
+│  Cost: O(outer + inner) if sorted                            │
+│  EXPLAIN: Merge Semi Join                                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+```sql
+-- See it in EXPLAIN
+EXPLAIN SELECT * FROM users
+WHERE id IN (SELECT user_id FROM orders WHERE status = 'delivered');
+
+-- Typical output:
+-- Hash Semi Join
+--   Hash Cond: (users.id = orders.user_id)
+--   -> Seq Scan on users              ← outer (probe)
+--   -> Hash                           ← build phase
+--        -> Seq Scan on orders        ← inner (subquery result)
+--             Filter: (status = 'delivered')
+```
+
+### NOT IN → Hash Anti Join
+
+```sql
+EXPLAIN SELECT * FROM users
+WHERE id NOT IN (SELECT user_id FROM orders);
+
+-- Output:
+-- Hash Anti Join
+--   Hash Cond: (users.id = orders.user_id)
+--   -> Seq Scan on users
+--   -> Hash
+--        -> Seq Scan on orders
+
+-- Anti Join = "return left row if NO match found in hash table"
+-- BUT: NULL in hash table → Anti Join's NULL handling = complex
+-- This is why NOT IN with NULLs behaves differently from NOT EXISTS
+```
+
+```
+Anti-Join NULL handling (the bug explained at algorithm level):
+
+Hash Anti Join for NOT IN:
+  If hash table contains NULL:
+    For each outer row: NULL comparison = uncertain
+    → Postgres conservatively excludes the outer row
+    → Result: zero rows (the NULL trap at algorithmic level)
+
+NOT EXISTS → Nested Loop Anti Join:
+  For each outer row: run inner query with specific value
+  NULL in inner table: NULL = outer.id → NULL → no match found
+  → outer row passes (correct!) ✅
+
+This is why NOT EXISTS is NULL-safe and NOT IN is not.
+```
+
+> 🎯 **DSA connection:** Semi-Join = HashSet membership check O(1) per probe. Anti-Join = HashSet non-membership check. The NULL trap in Anti-Join is equivalent to: your HashSet contains `null`, and `HashSet.contains(3)` returns false, but `!HashSet.contains(3)` returns false too because null comparison is uncertain. This is Java's actual behavior with null in HashSet!
+
+---
+
+## 4️⃣ Performance Battle: `IN` vs `EXISTS` vs `JOIN`
+
+<Code lang="sql" title="Three ways to solve the same problem" code={`-- Method 1: IN subquery
+SELECT u.id, u.name FROM users u
+WHERE  u.id IN (SELECT o.user_id FROM orders o WHERE o.status = 'delivered');
+
+-- Method 2: EXISTS (correlated)
+SELECT u.id, u.name FROM users u
+WHERE  EXISTS (
+    SELECT 1 FROM orders o
+    WHERE  o.user_id = u.id AND o.status = 'delivered'
+);
+
+-- Method 3: INNER JOIN + DISTINCT (worst)
+SELECT DISTINCT u.id, u.name
+FROM   users u
+JOIN   orders o ON u.id = o.user_id
+WHERE  o.status = 'delivered';`} />
+
+| Approach | Execution Plan | Duplicates? | Performance |
+|----------|----------------|-------------|-------------|
+| `IN` subquery | Hash Semi Join | ❌ None | ✅ Fast |
+| `EXISTS` | Hash Semi Join | ❌ None | ✅ Fast (Identical to `IN`) |
+| `JOIN` + `DISTINCT` | Hash Join + Sort/HashAgg | ✅ Yes (before dedup) | ⚠️ Slow (extra pass) |
+
+<Aside type="tip">
+**Interview Answer**: In modern Postgres (v12+), `IN` and `EXISTS` produce **identical execution plans** — both rewritten to `Hash Semi Join` or `Nested Loop Semi Join`. The real difference is **NULL safety**: `EXISTS`/`NOT EXISTS` are always safe, `NOT IN` is dangerous with nullable columns.
+</Aside>
+
+---
+
+## 5️⃣ Multi-Column `IN` — Row Constructors
+
+<Code lang="sql" title="Row constructor syntax" code={`-- IN with multiple columns
+SELECT * FROM order_items
+WHERE (order_id, product_id) IN (
+    SELECT order_id, product_id
+    FROM   returns
+    WHERE  reason = 'defective'
+);
+
+-- Equivalent to:
+WHERE EXISTS (
+    SELECT 1 FROM returns r
+    WHERE  r.order_id   = order_items.order_id
+      AND  r.product_id = order_items.product_id
+      AND  r.reason     = 'defective'
+);
+
+-- Find (user, month) pairs with no activity
+SELECT u.id, m.month
+FROM   users u
+CROSS JOIN generate_series('2024-01-01'::DATE, '2024-12-01', '1 month') m(month)
+WHERE  (u.id, m.month::DATE) NOT IN (
+    SELECT user_id, DATE_TRUNC('month', created_at)::DATE
+    FROM   logins
+    WHERE  DATE_TRUNC('month', created_at) >= '2024-01-01'
+)
+-- ⚠️ Multi-column NOT IN still has NULL trap! Use NOT EXISTS.
+`} />
+
+---
+
+## 6️⃣ `IN` vs `ANY` / `ALL` — Subtle Difference
+
+| Operator | Equivalent | Behavior | NULL Trap? |
+|----------|------------|----------|------------|
+| `col IN (sub)` | `col = ANY(sub)` | True if **any** match | ✅ Safe |
+| `col NOT IN (sub)` | `col != ALL(sub)` | True if **no** match | ❌ Dangerous |
+| `col > ANY(sub)` | N/A | True if > at least one | ✅ Safe |
+| `col > ALL(sub)` | N/A | True if > every value | ✅ Safe |
+
+<Code lang="sql" title="ANY/ALL examples" code={`-- ANY: cheaper than at least one competitor
+SELECT name FROM our_products p
+WHERE price < ANY(
+    SELECT price FROM competitor_products cp
+    WHERE cp.category = p.category
+);
+
+-- ALL: earn more than every manager
+SELECT name FROM employees
+WHERE salary > ALL(
+    SELECT salary FROM employees WHERE title = 'Manager'
+);
+
+-- IN cannot do this:
+WHERE salary > IN (SELECT ...)   -- ❌ Syntax Error!
+-- IN only works with equality. ANY/ALL work with any operator.`} />
+
+---
+
+## 8️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Feature Flag Targeting" icon="search">
+    ```sql
+    SELECT u.id, u.email
+    FROM   users u
+    WHERE  u.id IN (
+        SELECT user_id FROM user_segments
+        WHERE segment_name IN ('power_users', 'at_risk')
+          AND is_active = true
+    )
+    AND u.id NOT IN (
+        SELECT user_id FROM notification_log
+        WHERE campaign_id = :cid AND user_id IS NOT NULL  -- ✅ Guard
+    );
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Data Sync / Diff Detection" icon="database">
+    ```sql
+    -- Find records missing from target (safe NOT IN with guard)
+    SELECT s.id FROM source s
+    WHERE s.id NOT IN (
+        SELECT t.source_id FROM target t WHERE t.source_id IS NOT NULL
+    );
+    
+    -- Better: NOT EXISTS (always safe)
+    WHERE NOT EXISTS (SELECT 1 FROM target t WHERE t.source_id = s.id)
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Permission-Based Access" icon="shield">
+    ```sql
+    SELECT r.id, r.title FROM resources r
+    WHERE r.visibility = 'public'
+       OR r.owner_id = :user_id
+       OR r.id IN (
+         SELECT rp.resource_id
+         FROM resource_permissions rp
+         JOIN user_roles ur ON rp.role_id = ur.role_id
+         WHERE ur.user_id = :user_id AND rp.permission = 'read'
+       );
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Job Queue (Claim Items)" icon="rocket">
+    ```sql
+    UPDATE queue_items SET status = 'processing', worker_id = :wid
+    WHERE id IN (
+      SELECT id FROM queue_items
+      WHERE status = 'pending'
+        AND NOT EXISTS (SELECT 1 FROM queue_locks ql WHERE ql.item_id = id AND ql.expires > NOW())
+      ORDER BY priority DESC LIMIT 10 FOR UPDATE SKIP LOCKED
+    ) RETURNING id, payload;
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Multi-Tenant Isolation" icon="globe">
+    ```sql
+    SELECT p.id, p.name FROM products p
+    WHERE p.id IN (
+      SELECT pa.product_id FROM product_availability pa
+      WHERE pa.country_code = :user_country AND pa.is_active = true
+        AND (pa.available_until IS NULL OR pa.available_until > NOW())
+    ) AND p.is_published = true;
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Category Exclusion (Safe NOT IN)" icon="check">
+    ```sql
+    -- Safe because category_id is PRIMARY KEY (NOT NULL)
+    SELECT p.id FROM products p
+    WHERE p.category_id NOT IN (SELECT id FROM categories WHERE is_restricted = true)
+    AND p.is_active = true;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`-- Setup
+CREATE TEMP TABLE t_users  (id INT, name TEXT);
+CREATE TEMP TABLE t_orders (id INT, user_id INT, amount INT, status TEXT);
+INSERT INTO t_users  VALUES (1,'Raj'),(2,'Priya'),(3,'Sam'),(4,'Ankit');
+INSERT INTO t_orders VALUES (1,1,500,'delivered'),(2,1,900,'pending'),(3,2,300,'delivered'),(4,NULL,700,'delivered');
+
+-- 1. Basic IN
+SELECT name FROM t_users WHERE id IN (SELECT user_id FROM t_orders WHERE status='delivered');
+-- Raj, Priya ✅
+
+-- 2. NOT IN NULL trap
+SELECT name FROM t_users WHERE id NOT IN (SELECT user_id FROM t_orders);
+-- ZERO ROWS 💀
+
+-- 3. Fix: NOT EXISTS
+SELECT name FROM t_users u WHERE NOT EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id);
+-- Sam, Ankit ✅
+
+-- 4. IN vs EXISTS plan
+EXPLAIN SELECT * FROM t_users WHERE id IN (SELECT user_id FROM t_orders);
+EXPLAIN SELECT * FROM t_users u WHERE EXISTS (SELECT 1 FROM t_orders WHERE user_id = u.id);
+-- Both → Hash Semi Join ✅
+
+-- 5. ANY equivalent
+SELECT name FROM t_users WHERE id = ANY(SELECT user_id FROM t_orders WHERE status='delivered');
+-- Same result as IN ✅
+
+-- 6. Multi-column IN
+SELECT * FROM t_orders WHERE (user_id, status) IN (SELECT 1, 'delivered' UNION ALL SELECT 2, 'pending');
+-- ✅ Returns matching combinations`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: IN subquery rewrites to?
+    A: Semi-Join — returns each left row at most once, stops at first match.
+
+    Q: IN vs EXISTS performance?
+    A: Identical in modern Postgres. Both become Hash/Nested Loop Semi Join.
+
+    Q: NOT IN NULL trap?
+    A: Any NULL in subquery result → entire NOT IN returns zero rows silently.
+
+    Q: Fix for NOT IN trap?
+    A: Use NOT EXISTS (always safe) or add WHERE col IS NOT NULL in subquery.
+    ```
+  </Card>
+  
+  <Card title="Algorithms & Plans" icon="rocket">
+    ```text
+    Q: NOT IN vs NOT EXISTS plan?
+    A: Both use Hash Anti Join — difference is NULL handling at probe step.
+
+    Q: IN vs JOIN+DISTINCT?
+    A: IN → Semi-Join (no duplicates). JOIN needs DISTINCT (extra sort/hash pass).
+
+    Q: EXPLAIN: Semi Join appears?
+    A: Postgres rewrote your IN to Semi-Join — efficient, no duplicate output rows ✅
+    ```
+  </Card>
+
+  <Card title="Syntax & Safety" icon="shield">
+    ```text
+    Q: = ANY vs IN?
+    A: Identical for subqueries. ANY is more flexible (works with >, <, etc.)
+
+    Q: != ALL NULL trap?
+    A: Same as NOT IN — both have the trap. Use NOT EXISTS instead.
+
+    Q: When is NOT IN safe?
+    A: Literal lists, or columns with strict NOT NULL / PRIMARY KEY constraints.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+IN / NOT IN SUBQUERY — Complete Picture
+
+IN subquery:
+  col IN (SELECT val FROM ...)
+  → Postgres rewrites → Hash Semi Join
+  → Build hash set from subquery result
+  → For each outer row: check membership O(1)
+  → Return outer row if FOUND, skip if not
+  → Never duplicates (unlike INNER JOIN) ✅
+  → NULL in subquery: NULL ∈ {1,2,NULL}? → uncertain → skip
+    (doesn't affect IN — only NOT IN is dangerous)
+
+NOT IN subquery:
+  col NOT IN (SELECT val FROM ...)
+  → Postgres rewrites → Hash Anti Join
+  → NULL in hash set → probe uncertain → outer row excluded
+  → ONE NULL anywhere = ZERO ROWS everywhere 💀
+  → Fix: NOT EXISTS (always) or IS NOT NULL guard
+
+NULL safety matrix:
+  ┌───────────┬──────────────────────────────┐
+  │ Operator  │ NULL in subquery result      │
+  ├───────────┼──────────────────────────────┤
+  │ IN        │ ✅ Safe (NULL just not found)│
+  │ NOT IN    │ ❌ DANGEROUS — zero rows     │
+  │ EXISTS    │ ✅ Safe always               │
+  │ NOT EXISTS│ ✅ Safe always               │
+  │ = ANY     │ ✅ Safe (same as IN)         │
+  │ != ALL    │ ❌ DANGEROUS (same as NOT IN)│
+  └───────────┴──────────────────────────────┘
+
+Golden rule:
+  Never use NOT IN with a nullable subquery column.
+  Always use NOT EXISTS instead.
+  Document explicitly when NOT IN IS safe (literal list / NOT NULL col).
+```
+
+<Aside type="caution">
+**Final Checklist for `IN` / `NOT IN`**:
+1. ✅ Prefer `IN`/`EXISTS` over `JOIN` + `DISTINCT` for membership checks
+2. ✅ Always use `NOT EXISTS` instead of `NOT IN` with subqueries
+3. ✅ Verify `EXPLAIN` shows `Semi Join` or `Anti Join` (not `Nested Loop` without index)
+4. ✅ Use `= ANY` for flexible operators (`>`, `<`, `!=`)
+5. ✅ Guard `NOT IN` with `IS NOT NULL` if you must use it
+6. ✅ Remember: Multi-column `IN` uses row constructors `(a, b) IN (SELECT c, d)`
+7. ✅ Test edge cases with `NULL` data before deploying subquery filters
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What does this return if t_orders contains (id=5, user_id=NULL)?
+SELECT * FROM t_users WHERE id NOT IN (SELECT user_id FROM t_orders);
+
+Q2: Are these two queries guaranteed to produce the same execution plan in modern Postgres?
+SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);
+SELECT * FROM users u WHERE EXISTS (SELECT 1 FROM orders WHERE user_id = u.id);
+
+Q3: What's the fix for this query returning zero rows unexpectedly?
+SELECT * FROM products WHERE category_id NOT IN (SELECT parent_id FROM categories);
+
+Q4: How does = ANY differ from IN?
+A) ANY allows >, <, != operators; IN only allows =
+B) ANY is slower
+C) IN handles NULLs better
+
+Q5: Why does Postgres rewrite IN to a Semi-Join?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: ZERO ROWS. The NULL in user_id poisons the Anti-Join probe.
+   Fix: NOT EXISTS or WHERE user_id IS NOT NULL.
+
+Q2: YES. Both are rewritten to Hash Semi Join (or Nested Loop Semi Join) by the planner.
+
+Q3: Add a NULL guard: WHERE parent_id IS NOT NULL.
+   Or better: rewrite to NOT EXISTS.
+
+Q4: A) ANY allows >, <, != operators; IN only allows equality.
+   Example: salary > ANY(SELECT manager_salary)
+
+Q5: To avoid duplicate output rows and short-circuit on the first match.
+   Semi-Join stops scanning the right table once a match is found per outer row.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your codebase for `NOT IN` with nullable columns → replace with `NOT EXISTS`
+2. ✅ Use `EXPLAIN (ANALYZE)` to verify `Semi Join` vs `Hash Join` plans
+3. ✅ Leverage `= ANY` for range-based membership checks
+4. ✅ Remember: `IN` is syntactic sugar for optimized set membership, not a loop
+
+Mastering `IN`/`NOT IN` internals turns silent data bugs into predictable, highly performant queries. 🐘✨
+</Aside>

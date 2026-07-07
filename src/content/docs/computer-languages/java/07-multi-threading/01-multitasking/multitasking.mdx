@@ -1,0 +1,516 @@
+---
+title: Java Multithreading
+slug: computer-languages/java/multithreading/multitasking
+description: Understand Java's multitasking fundamentals. Learn how OS achieves multitasking, the difference between process-based and thread-based multitasking, and common pitfalls like race conditions and deadlocks.
+sidebar:
+  label: "Multitasking"
+  badge:
+    text: Multithreading
+    variant: tip
+tags: [java, multithreading, multitasking, os, concurrency, interview]
+---
+
+## 🔄 Multitasking
+
+---
+
+## 🗺️ The Full Map
+
+```
+Multitasking
+│
+├── Definition
+│   └── Multiple tasks executing in overlapping time periods
+│
+├── Types
+│   ├── Process-Based Multitasking
+│   │   └── Multiple processes run concurrently
+│   └── Thread-Based Multitasking
+│       └── Multiple threads within one process
+│
+├── How OS Achieves It
+│   ├── Time-slicing      → CPU time divided into quanta
+│   ├── Context switching → save/restore thread state
+│   └── Scheduling        → which thread runs next
+│
+└── Java's Role
+    ├── JVM maps Java threads → OS threads
+    ├── OS scheduler controls actual execution
+    └── Java cannot control exact scheduling
+```
+
+---
+
+## 🔬 What Multitasking Is
+
+```
+Single tasking (old DOS era):
+  One program runs at a time
+  Must finish before next starts
+  CPU idle during IO → wasted
+
+Multitasking:
+  Multiple tasks progress in overlapping time periods
+  Single core: rapid switching creates illusion of simultaneous
+  Multi-core:  true simultaneous execution possible
+```
+
+```
+Time →
+Core: [Task A][Task B][Task A][Task C][Task B][Task A]
+         ↑       ↑
+      context  context
+      switch   switch
+
+Each task gets a time quantum (slice)
+Quantum expires → OS saves state → runs next task
+Tasks appear to run simultaneously
+```
+
+---
+
+## 🔬 Process-Based vs Thread-Based
+
+```
+Process based multitasking:
+Executing several tasks simultaneously where each task is a separate independent process such type of multitasking is called process based multitasking.
+Example:
+1. While typing a java program in the editor we can able to listen mp3 audio songs at the same time we can download a file from the net all these tasks are independent of each other and executing simultaneously and hence it is Process based multitasking.
+2. This type of multitasking is best suitable at "os level".
+
+Thread based multitasking:
+Executing several tasks simultaneously where each task is a separate independent part of the same program, is called Thread based multitasking. And each independent part is called a "Thread".
+1. This type of multitasking is best suitable for "programatic level".
+2. When compared with "C++", developing multithreading examples is very easy in java because java provides in built support for multithreading through a rich API (Thread, Runnable, ThreadGroup, ThreadLocal...etc).
+3. In multithreading on 10% of the work the programmer is required to do and 90% of the work will be down by java API.
+4. The main important application areas of multithreading are:
+    1. To implement multimedia graphics.
+    2. To develop animations.
+    3. To develop video games etc.
+    4. To develop web and application servers
+5. Whether it is process based or Thread based the main objective of multitasking is to improve performance of the system by reducing response time.
+
+
+┌──────────────────────┬──────────────────────────────────────────┐
+│ Process-Based        │ Thread-Based                             │
+├──────────────────────┼──────────────────────────────────────────┤
+│ Unit: Process        │ Unit: Thread                             │
+│ Own memory space     │ Shared memory (heap)                     │
+│ Isolated             │ Not isolated — share data                │
+│ Context switch: heavy│ Context switch: lighter                  │
+│ Communication: IPC   │ Communication: shared heap               │
+│ Crash isolated       │ Crash can affect whole process           │
+│ Example: Chrome tabs │ Example: HTTP server request handlers    │
+└──────────────────────┴──────────────────────────────────────────┘
+```
+
+```java
+// Process-based — each JVM instance is a separate process
+// java Server  ← process 1 (own heap, own memory)
+// java Client  ← process 2 (own heap, own memory)
+// They communicate via: sockets, files, shared memory (IPC)
+
+// Thread-based — multiple threads in one JVM process
+public class ThreadBasedServer {
+    public static void main(String[] args) {
+        // All threads share the SAME heap
+        // Communication via shared objects — fast but needs sync
+
+        SharedQueue queue = new SharedQueue();  // shared object
+
+        Thread producer = new Thread(() -> produce(queue), "producer");
+        Thread consumer = new Thread(() -> consume(queue), "consumer");
+
+        producer.start();
+        consumer.start();
+        // Both threads in same JVM process
+        // queue object visible to both — no IPC needed
+    }
+}
+```
+
+---
+
+## 🔬 How OS Implements Multitasking
+
+### Time-Slicing
+
+```
+Time quantum (slice): ~10–20ms typically (OS-dependent)
+
+Thread 1: ████░░░░████░░░░████
+Thread 2: ░░░░████░░░░████░░░░
+Thread 3: ░░░░░░░░░░░░░░░░████
+
+█ = thread running
+░ = thread waiting for its turn
+
+Each thread gets fair share of CPU time
+```
+
+### Context Switch
+
+```
+Running: Thread A
+  │
+Timer interrupt fires (quantum expired)
+  │
+  ▼
+OS saves Thread A's state:
+  ├── Program counter (current instruction)
+  ├── Register values
+  └── Stack pointer
+
+OS picks Thread B (from ready queue)
+
+OS restores Thread B's state:
+  ├── Program counter
+  ├── Register values
+  └── Stack pointer
+  │
+  ▼
+Thread B runs
+```
+
+### Scheduling Algorithms
+
+```
+FIFO (First In First Out):
+  Threads run in order they became ready
+  Simple — but long tasks starve short ones
+
+Round Robin:
+  Each thread gets equal time quantum
+  Fair — prevents starvation
+  Most OS use this as base
+
+Priority Scheduling:
+  Higher priority → runs first
+  Risk: low priority threads starve
+  Java: Thread.setPriority(1–10)
+
+Preemptive:
+  OS can interrupt running thread at any time
+  Used by modern OS (Windows, Linux)
+  Java threads: preemptive (OS decides)
+```
+
+---
+
+## 🔬 Java and Multitasking
+
+```java
+public class MultitaskingDemo {
+
+    public static void main(String[] args) {
+
+        // Task 1: Download data
+        Thread downloader = new Thread(() -> {
+            for (int i = 1; i <= 5; i++) {
+                System.out.println("[" + Thread.currentThread().getName()
+                    + "] Downloading chunk " + i);
+                sleep(200);     // simulates IO wait
+            }
+        }, "downloader");
+
+        // Task 2: Process data
+        Thread processor = new Thread(() -> {
+            for (int i = 1; i <= 5; i++) {
+                System.out.println("[" + Thread.currentThread().getName()
+                    + "] Processing chunk " + i);
+                sleep(300);     // simulates CPU work
+            }
+        }, "processor");
+
+        // Task 3: Log metrics
+        Thread logger = new Thread(() -> {
+            for (int i = 1; i <= 5; i++) {
+                System.out.println("[" + Thread.currentThread().getName()
+                    + "] Logging metric " + i);
+                sleep(150);
+            }
+        }, "logger");
+
+        long start = System.currentTimeMillis();
+
+        downloader.start();
+        processor.start();
+        logger.start();
+
+        try {
+            downloader.join();
+            processor.join();
+            logger.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        System.out.println("All tasks done in: "
+            + (System.currentTimeMillis() - start) + "ms");
+        // ~1500ms sequential → ~500ms concurrent (longest task)
+    }
+
+    private static void sleep(long ms) {
+        try { Thread.sleep(ms); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    }
+}
+```
+
+---
+
+## 🔬 Multitasking Problems
+
+```
+Race Condition:
+  Two threads read-modify-write same variable
+  Result depends on timing — non-deterministic
+
+  Thread A: read count(0) → add 1 → write count(1)
+  Thread B: read count(0) → add 1 → write count(1)
+  Expected: count = 2
+  Actual:   count = 1 ← one increment lost
+
+Deadlock:
+  Thread A holds Lock1, waits for Lock2
+  Thread B holds Lock2, waits for Lock1
+  Both wait forever — neither proceeds
+
+Starvation:
+  Low priority thread never gets CPU time
+  High priority threads always preempt it
+
+Livelock:
+  Threads keep responding to each other
+  Both active but neither makes progress
+  Like two people in a hallway stepping same direction
+```
+
+---
+
+## 💻 Real-World Code — Order Processing Pipeline
+
+```java
+// Real-world multitasking — pipeline with multiple stages
+public class OrderPipeline {
+
+    private final BlockingQueue<Order>          incomingOrders;
+    private final BlockingQueue<ValidatedOrder>  validatedOrders;
+    private final BlockingQueue<ProcessedOrder>  processedOrders;
+
+    private final ExecutorService executors;
+
+    public OrderPipeline() {
+        this.incomingOrders  = new LinkedBlockingQueue<>(1000);
+        this.validatedOrders = new LinkedBlockingQueue<>(1000);
+        this.processedOrders = new LinkedBlockingQueue<>(1000);
+        this.executors       = Executors.newFixedThreadPool(6);
+    }
+
+    public void start() {
+        // Stage 1: Validator threads (2)
+        for (int i = 0; i < 2; i++) {
+            executors.submit(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Order order = incomingOrders.take();    // blocks if empty
+                        ValidatedOrder validated = validate(order);
+                        validatedOrders.put(validated);         // blocks if full
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            });
+        }
+
+        // Stage 2: Processor threads (3)
+        for (int i = 0; i < 3; i++) {
+            executors.submit(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        ValidatedOrder order = validatedOrders.take();
+                        ProcessedOrder processed = process(order);
+                        processedOrders.put(processed);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            });
+        }
+
+        // Stage 3: Dispatcher thread (1)
+        executors.submit(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    ProcessedOrder order = processedOrders.take();
+                    dispatch(order);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+    }
+
+    public void submit(Order order) throws InterruptedException {
+        incomingOrders.put(order);   // blocks if pipeline full — backpressure
+    }
+
+    public void shutdown() {
+        executors.shutdownNow();    // interrupt all threads
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Single-threaded pipeline → validation blocks processing → processing blocks dispatch → throughput = slowest stage speed → system bottleneck → orders queue up → timeout → customer failures.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — Java cannot guarantee thread scheduling order**
+
+```java
+Thread t1 = new Thread(() -> System.out.println("T1"), "T1");
+Thread t2 = new Thread(() -> System.out.println("T2"), "T2");
+Thread t3 = new Thread(() -> System.out.println("T3"), "T3");
+
+t1.start();
+t2.start();
+t3.start();
+
+// Output order: COMPLETELY UNPREDICTABLE
+// May be: T1 T2 T3
+// May be: T3 T1 T2
+// May be: T2 T3 T1
+// Changes every run — OS scheduler decides
+// Java provides ZERO guarantee on thread execution order
+```
+
+---
+
+**🪤 Trap 2 — `Thread.sleep()` does not release locks**
+
+```java
+synchronized (lock) {
+    Thread.sleep(1000);     // Thread sleeps BUT holds the lock
+    // Other threads wanting this lock: BLOCKED for 1000ms
+    // sleep() does NOT release synchronization lock
+    // Use wait() instead — releases lock during wait
+}
+```
+
+---
+
+**🪤 Trap 3 — More threads ≠ faster for CPU-bound tasks**
+
+```java
+// CPU-bound task: prime number computation
+// 4-core machine:
+
+// 4 threads → ~4x speedup (each core works)
+// 8 threads → ~4x speedup (no more cores — context switching overhead)
+// 100 threads → SLOWER than 4 threads (context switch dominates)
+
+// Rule: CPU-bound → threads ≈ number of CPU cores
+//       IO-bound  → threads >> number of CPU cores (threads wait during IO)
+
+int cores = Runtime.getRuntime().availableProcessors();
+ExecutorService pool = Executors.newFixedThreadPool(cores);   // CPU-bound
+ExecutorService ioPool = Executors.newFixedThreadPool(cores * 10); // IO-bound
+```
+
+---
+
+**🪤 Trap 4 — Multitasking ≠ thread safety**
+
+```java
+// Multitasking enabled — but NOT thread-safe
+class SharedCounter {
+    int count = 0;              // shared mutable state
+
+    void increment() {
+        count++;                // read-modify-write — NOT atomic
+    }
+}
+
+SharedCounter counter = new SharedCounter();
+
+// 1000 threads each increment once
+List<Thread> threads = new ArrayList<>();
+for (int i = 0; i < 1000; i++) {
+    threads.add(new Thread(counter::increment));
+}
+threads.forEach(Thread::start);
+threads.forEach(t -> {
+    try { t.join(); } catch (InterruptedException e) { }
+});
+
+System.out.println(counter.count);
+// Expected: 1000
+// Actual:   anywhere from 1 to 1000 — race condition
+// Multitasking made it WORSE — more threads = more races
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Ready queue (priority queue) + context switch overhead**
+
+```
+OS scheduling — data structures:
+
+Ready Queue: priority queue of runnable threads
+  Thread A (priority 5) ──┐
+  Thread B (priority 7) ──┤→ [B, C, A] → CPU
+  Thread C (priority 6) ──┘
+
+Scheduler picks: highest priority from ready queue
+Time quantum expires: current thread → back of queue
+
+Context switch cost breakdown:
+  Direct cost:
+    Save registers: ~10-20 ns
+    Load registers: ~10-20 ns
+    TLB flush (process switch): ~100-1000 ns
+  Indirect cost:
+    CPU cache cold: next thread's data not in L1/L2
+    Branch predictor state lost
+    Total effective: 1-10 microseconds
+
+Java threads × context switch:
+  100 threads on 4 cores = 25 threads per core
+  Each gets ~0.5ms before switch (10ms quantum / 25)
+  25 switches per core per 10ms = 2500 switches/sec
+  At 10μs per switch: 2.5% overhead (acceptable)
+
+  10,000 threads on 4 cores = 2500 per core
+  250,000 switches/sec = 25% overhead (significant)
+  → Use thread pools — bound thread count
+```
+
+---
+
+## 📊 Summary
+
+```
+Aspect              │ Process-Based        │ Thread-Based
+────────────────────┼──────────────────────┼─────────────────────
+Memory              │ Isolated             │ Shared heap
+Communication       │ IPC (slow)           │ Shared objects (fast)
+Context switch cost │ Heavy                │ Lighter
+Crash impact        │ Isolated to process  │ Can crash whole JVM
+Creation cost       │ High                 │ Lower
+Use case            │ Different apps       │ Within one app
+Java example        │ Multiple JVM runs    │ Multiple threads
+
+Multitasking types  │ Time-slicing, Preemptive, Priority scheduling
+Java control        │ Priority hints only — OS makes final decision
+Key problems        │ Race condition, Deadlock, Starvation, Livelock
+```
+
+---
+

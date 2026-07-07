@@ -119,34 +119,124 @@ Beyond type, variables are classified by where they are declared, which determin
 
 ```java
 Java Variables
-├── 1️⃣ Local Variable      (Inside method/block/constructor)
-├── 2️⃣ Instance Variable   (Inside class, non-static)
-├── 3️⃣ Static Variable     (Inside class, static)
-└── 4️⃣ Parameter Variable  (In method signature)
+│
+├── By Scope / Location
+│   ├── Local Variable
+│   │   └── declared inside method / block / constructor
+│   ├── Instance Variable (Field)
+│   │   └── declared inside class, outside method with non-static
+│   ├── Static Variable (Class Variable)
+│   │   └── declared Inside class with static keyword
+│   └── Parameter Variable
+│       └── declared in method/constructor signature
+│
+├── By Mutability
+│   ├── var (mutable)         ← default
+│   └── final (immutable ref) ← cannot reassign
+│
+├── By Type Inference (Java 10+)
+│   └── var                   ← local variable type inference
+│
+└── Special Categories
+    ├── Blank final           ← final declared, assigned later
+    ├── Effectively final     ← not declared final, never reassigned
+    └── Static final (Constant) ← compile-time constant
+```
+#### 🔤 Four Kinds of Variables
+```
+┌──────────────────┬────────────────────────┬────────────┬──────────────┬────────────────┐
+│ Kind             │ Where Declared         │ Default?   │ Lives On     │ Lifetime       │
+├──────────────────┼────────────────────────┼────────────┼──────────────┼────────────────┤
+│ Local            │ method / block         │ ❌ None    │ Stack        │ method call    │
+│ Instance (field) │ class body             │ ✅ Yes     │ Heap (obj)   │ object alive   │
+│ Static (field)   │ class body + static    │ ✅ Yes     │ Heap (meta)  │ class loaded   │
+│ Parameter        │ method signature       │ ❌ None    │ Stack        │ method call    │
+└──────────────────┴────────────────────────┴────────────┴──────────────┴────────────────┘
+```
+
+```java
+public class OrderService {
+
+    // Instance variable — one per object
+    private int retryCount = 3;
+
+    // Static variable — one per class
+    private static int totalOrders = 0;
+
+    // Parameter — lives only during method call
+    public Order createOrder(String customerId) {   // ← customerId is parameter
+
+        // Local variable — must initialize before use
+        String status = "PENDING";
+
+        return new Order(customerId, status);
+    }
+}
+
+> 🔑 Local variables have NO default value. Reading an uninitialized local = compile error. Instance/static variables always get defaults. This asymmetry causes constant confusion.
 ```
 
 ### 1️⃣ Local Variables
 
 Declared **inside a method, block, or constructor**. Also called: *automatic / temporary / stack variable*.
 
-- **Lifespan:** Exists only while the method executes (Stack).
-- **Initialization:** ⚠️ **No default value.** Must be initialized before use, otherwise → Compile Error.
+- **Lifespan:** Exists only while the block executes (Stack).
+- **Initialization:** ⚠️ JVM won't provide **any default value.** Must be initialized before use, otherwise → Compile Error.
 - **Modifiers:** Only `final` is allowed.
+- **Stored:** stack.
 
-<Code lang="java" title="Local variable — scoped to the method" code={`void greet() {
-    String message = "Hello!"; // local variable
-    System.out.println(message);
+<Code lang="java" title="Local variable — scoped to the method" code={`
+void process() {
+    int x;
+    System.out.println(x);     // ❌ COMPILE ERROR — variable x might not have been initialized
+
+    //It is highly recommended to perform initialization for the local variables at the time of declaration at least with default values.
+
+    int y = 10;
+    System.out.println(y);     // ✅
+
+    // Scope — block-scoped
+    //It is never recommended to perform initialization for the local variables inside logical blocks because there is no guarantee of executing that block always at runtime
+    if (true) {
+        int z = 5;             // z lives only in this block
+    }
+    // 'z' is dead after if block execution
+
+    System.out.println(z);     // ❌ COMPILE ERROR — z out of scope
 }
-// 'message' is DEAD after method ends`} />
+// 'x', 'y', 'z' is DEAD after method ends`} />
 
 <Aside type="danger">
   **No default value.** Must initialize before use — the compiler will not let you read an uninitialized local.
 
   ```java
   void calculate() {
-      int result;
-      System.out.println(result); // ❌ C.E: variable result might not have been initialized
+int x;
+
+    if (flag) {
+        x = 10;
+    }
+    System.out.println(x);     // ❌ COMPILE ERROR
+    // compiler: x assigned only in ONE path (flag=true)
+    // flag=false path: x never assigned → not definitely assigned
+
+    // Fix:
+    if (flag) {
+        x = 10;
+    } else {
+        x = 20;                // both paths assign
+    }
+    System.out.println(x);     // ✅ definitely assigned
   }
+
+  Definite assignment rules:
+  ├── ALL paths to read must assign first
+  ├── try block alone does not guarantee assignment
+  │     (exception path may skip assignment)
+  ├── try + catch covering all paths → definitely assigned
+  └── Compiler proves this statically — no runtime check
+
+  > 🔑 Compiler tracks assignment flow through if/else, try/catch, loops. It's conservative — if it can't prove assignment on all paths, it rejects
   ```
 </Aside>
 
@@ -191,8 +281,17 @@ Declared **inside the class, outside any method**. Also called: *object-level va
 - **Lifespan:** Lives as long as the object lives (Heap).
 - **Initialization:** Gets default values automatically (`0`, `false`, `null`).
 - **Access:** Can use `public`, `private`, etc.
+- **Stored:** Instance variables will be stored on the heap as the part of object.
+- If the value of a variable is varied from object to object such type of variables are called instance variables.
+- For every object a separate copy of instance variables will be created.
+- Instance variables will be created at the time of object creation and destroyed at
+the time of object destruction hence the scope of instance variables is exactly same as scope of objects.
+- Instance variables can be accessed directly from Instance area. But cannot be accessed directly from static area.
+- But by using object reference we can access instance variables from static area.
+- Instance initializer blocks + field assignments run (top to bottom)
 
-<Code lang="java" title="Each object gets its OWN independent copy" code={`class Student {
+<Code lang="java" title="Each object gets its OWN independent copy" code={`
+class Student {
     String name;   // instance variable
     int    marks;  // instance variable
 
@@ -204,8 +303,42 @@ Declared **inside the class, outside any method**. Also called: *object-level va
 Student s1 = new Student();
 Student s2 = new Student();
 s1.name = "Alice";  // s1's copy
-s2.name = "Bob";    // s2's copy — completely independent!`} />
+s2.name = "Bob";    // s2's copy — completely independent!
+`} />
 
+```Java
+class Test
+{
+int i=10;
+public static void main(String[] args)
+{
+//System.out.println(i);
+//C.E:non-static variable i cannot be referenced from a static
+context(invalid)
+Test t=new Test();
+System.out.println(t.i);//10(valid)
+t.methodOne();
+}
+public void methodOne()
+{
+System.out.println(i);//10(valid)
+}
+}
+
+// For the instance variables it is not required to perform initialization JVM will always
+// provide default values.
+// Example:
+class Test
+{
+boolean b;
+public static void main(String[] args)
+{
+Test t=new Test();
+System.out.println(t.b);//false
+}
+}
+// Instance variables also known as object level variables or attributes
+```
 <Aside type="note">
   JVM always provides **default values** for instance variables — explicit initialization is not required.
 
@@ -239,8 +372,12 @@ Declared with the `static` keyword **inside the class, outside any method**. Als
 - **Lifespan:** Lives as long as the class is loaded (Method Area/Metaspace).
 - **Creation:** Only **one copy** exists per class, regardless of how many objects are created.
 - **Access:** `ClassName.variableName` is recommended.
+- Static variables can be accessed from both instance and static areas directly.
+- We can access static variables either by class name or by object reference but usage of class name is recommended.
 
-<Code lang="java" title="Static variables are shared" code={`class Counter {
+
+<Code lang="java" title="Static variables are shared" code={`
+class Counter {
     static int count = 0; // Shared across ALL objects
 
     Counter() { count++; }
@@ -256,7 +393,8 @@ System.out.println(Counter.count); // 2 (c1 and c2 share this variable)`} />
 
 Declared with the `static` keyword **inside the class, outside any method**. Also called: *class-level variable / field*.
 
-<Code lang="java" title="One shared copy across ALL objects" code={`class Student {
+<Code lang="java" title="One shared copy across ALL objects" code={`
+class Student {
     String name;           // instance — each object has own copy
     static int count = 0;  // static  — ONE copy, shared by all
 
@@ -283,7 +421,8 @@ System.out.println(Student.count); // 2 ✅ — access via class name`} />
 // └─────────────┘     └─────────────┘
 //       ↑ both share the static variable — no copy per object`} />
 
-<Code lang="java" title="Classic static mutation example" code={`class Test {
+<Code lang="java" title="Classic static mutation example" code={`
+class Test {
     int x = 10;          // instance
     static int y = 20;   // static
 
@@ -298,6 +437,18 @@ System.out.println(Student.count); // 2 ✅ — access via class name`} />
         // t2.y = 999 (same shared static, already mutated by t1)
     }
 }`} />
+
+```java
+java TEST
+1. Start JVM.
+2. Create and start Main Thread by JVM.
+3. Locate(find) Test.class by main Thread.
+4. Load Test.class by main Thread. // static variable creation
+5. Execution of main() method.
+6. Unload Test.class // static variable destruction
+7. Terminate main Thread.
+8. Shutdown JVM.
+```
 
 <Aside type="note">
   - Static variables are created when the **class is loaded** by the JVM.

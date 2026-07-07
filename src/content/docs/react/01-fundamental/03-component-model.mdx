@@ -1,0 +1,765 @@
+---
+title: The Component Model
+slug: react/fundamental/component-model
+description: "Understanding React's component model: encapsulation, composition, identity, props vs state, and re-render isolation."
+tags: ["react", "javascript", "frontend", "components", "react-architecture"]
+---
+
+# 🧩 The Component Model
+
+---
+
+## 🔥 The Problem Before Components
+
+Before understanding components, understand what existed before them.
+
+The old way of organizing a web app — **separation by file type:**
+
+```text
+project/
+  ├── index.html      ← structure
+  ├── styles.css      ← appearance
+  └── app.js          ← behavior
+```
+
+Sounds clean. Falls apart immediately at scale:
+
+```text
+You're building a "User Card" feature.
+
+Its HTML  → lives in index.html (line 847)
+Its CSS   → lives in styles.css (line 1203)
+Its JS    → lives in app.js     (line 2341)
+
+To understand ONE feature, you open THREE files,
+navigate to three different locations,
+and mentally stitch them together.
+
+Now multiply by 50 features.
+With 10 developers.
+For 2 years.
+```
+
+This is **separation by technology** — not by concern.  
+You separated *what type of file* it is, not *what feature it belongs to.*
+
+Before components, UI code was a monolithic script. If you wanted a "User Profile" on the home page and the settings page, you copy-pasted the HTML/CSS/JS.
+The problems:
+Zero Reusability: Copy-pasting leads to divergence. Fix a bug in one place, forget the other.
+No Encapsulation: Global CSS and global JS variables meant changing a style for the "Home" profile broke the "Settings" profile.
+Impossible to Test: You couldn't test a "button" without spinning up the entire page.
+The Component Model solves this by treating UI as a collection of isolated, composable, and reusable building blocks.
+
+---
+
+## Why was it introduced? ⏳
+React didn't invent the idea of components (COM, CORBA, and Web Components existed), but it popularized them for the View Layer.
+It was introduced to map the visual hierarchy of a UI directly to a logical hierarchy in code. It allows large teams to work on isolated features without stepping on each other's toes (Ownership Boundaries).
+
+---
+
+## 💡 What Components Actually Are
+
+A component is a **self-contained unit** that bundles three things that always belong together:
+
+```text
+┌─────────────────────────────────────────────┐
+│              COMPONENT                       │
+│                                             │
+│   Structure   +   Appearance  +  Behavior   │
+│    (JSX)          (CSS/styles)   (JS/state) │
+│                                             │
+│   Everything about THIS feature, together   │
+└─────────────────────────────────────────────┘
+```
+
+This is **separation by feature** — not by file type.
+
+```text
+project/
+  └── components/
+        ├── UserCard/
+        │     ├── UserCard.jsx   ← structure + behavior together
+        │     └── UserCard.css   ← appearance (or inside .jsx)
+        │
+        ├── CartBadge/
+        │     └── CartBadge.jsx
+        │
+        └── ProductList/
+              └── ProductList.jsx
+```
+
+To understand "User Card" — open ONE folder.  
+Everything about it lives there.
+
+---
+
+## 🏗️ What a Component Actually IS — Technically
+
+At its core, a React component is **a function** with a specific contract:
+
+```text
+INPUT  → OUTPUT
+props  → UI description (JSX)
+```
+
+Before React, UI code often looked like this:
+```text
+titleEl.textContent = product.title;
+priceEl.textContent = product.price;
+button.disabled = !product.inStock;
+image.src = product.imageUrl;
+```
+
+That approach works, but as features grow, it becomes fragile:
+
+same data may need to appear in multiple places
+one state change must update many DOM nodes
+logic gets scattered
+bugs appear when one place is missed
+
+Components solve this by grouping related UI + behavior together.
+
+Example
+
+```jsx
+// This is a complete component.
+// Input: props object
+// Output: UI description
+
+function ProductCard({ product }) {
+  return (
+    <article>
+      <img src={product.imageUrl} alt={product.title} />
+      <h2>{product.title}</h2>
+      <p>{product.price}</p>
+      <button disabled={!product.inStock}>Add to cart</button>
+    </article>
+  );
+}
+
+// Now one component owns one UI idea.
+```
+
+But this definition hides something critical.  
+A component is **not just a function.**
+
+A component is a function that React **knows about** and **manages.**
+
+```text
+Regular JS function:          React Component:
+  - You call it               - React calls it
+  - Returns a value           - Returns UI description
+  - Executes and done         - React tracks its lifecycle
+  - No identity               - Has identity in the tree
+  - No state                  - Can own state
+  - No cleanup                - Can register cleanup
+```
+
+When you write `<ProductCard />`, React does not call `ProductCard()` immediately.  
+It creates a **fiber node** — a unit of work — with `ProductCard` as its type.  
+Then React decides **when** to call it, **if** to call it again, and how to reconcile its output.
+
+---
+
+## What problem does the component model solve?
+
+A real UI is not one screen. It is many small concerns mixed together:
+
+- layout
+- data display
+- user interaction
+- validation
+- loading states
+- error states
+- permissions
+- reusable patterns
+
+Without components, these concerns get tangled in one large file and one large DOM structure.
+
+The component model solves:
+| Problem         | How components help                           |
+| --------------- | --------------------------------------------- |
+| UI complexity   | Break UI into smaller pieces                  |
+| Reuse           | Use the same UI piece multiple times          |
+| Maintainability | Change one piece without rewriting everything |
+| Team scaling    | Different people can own different components |
+| Testability     | Test a small unit in isolation                |
+| Predictability  | Each component has a clearer job              |
+
+
+---
+
+## How does it work? ⚙️
+A component is simply a function (or class) that takes inputs (Props) and returns a description of the UI (JSX/VDOM).
+But architecturally, a component is a Boundary. It defines:
+A Rendering Boundary: Where the VDOM tree branches.
+A State Boundary: Where local data lives and is owned.
+An Error Boundary: Where crashes are caught (via ErrorBoundary components).
+
+```
+[ React Component Tree (Logical) ]      [ Real DOM Tree (Physical) ]
+            <App>                                 <div id="root">
+           /     \                                   /       \
+     <Header>   <Main>                     <header>           <main>
+      /    \       |                         |                  |
+  <Logo> <Nav>  <Article>                 <img>             <article>
+                      |                                        / \
+                  <CommentList>                             <h2>  <ul>
+                   /      \                                     /  \
+             <Comment>  <Comment>                             <li> <li>
+Notice: The DOM tree is larger. React components abstract away the wrapper divs and map multiple components to single DOM nodes.
+```
+
+---
+
+## 🔑 The Three Things a Component Owns
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                   COMPONENT                          │
+│                                                      │
+│  1. 🖼️  UI Description   → what it renders          │
+│         (JSX output)                                 │
+│                                                      │
+│  2. 📦  Local State       → private data it owns    │
+│         (useState, useReducer)                       │
+│                                                      │
+│  3. ⏱️  Lifecycle         → mount, update, unmount  │
+│         (useEffect, cleanup)                         │
+│                                                      │
+│  All three are ENCAPSULATED. Nothing outside can    │
+│  touch the state or lifecycle directly.             │
+└─────────────────────────────────────────────────────┘
+```
+
+This is why components replaced classes, modules, and jQuery plugins.  
+None of those gave you all three in one unit with React's contract.
+
+---
+
+## 🌳 The Composition Model
+
+Components compose. This is the fundamental building pattern:
+
+### Small → Large
+
+```text
+┌─────────────────────────────────────────────────┐
+│                    <App>                         │
+│                                                  │
+│   ┌────────────────────────────────────────┐    │
+│   │              <Layout>                   │    │
+│   │                                        │    │
+│   │  ┌──────────────┐  ┌───────────────┐   │    │
+│   │  │   <Sidebar>  │  │    <Main>     │   │    │
+│   │  │              │  │               │   │    │
+│   │  │ <NavItem/>   │  │ <ProductList> │   │    │
+│   │  │ <NavItem/>   │  │               │   │    │
+│   │  │ <NavItem/>   │  │  <Product/>   │   │    │
+│   │  │              │  │  <Product/>   │   │    │
+│   │  └──────────────┘  │  <Product/>   │   │    │
+│   │                    │               │   │    │
+│   │                    └───────────────┘   │    │
+│   └────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────┘
+```
+
+Each node in this tree is a **component instance** — its own state, lifecycle, UI.
+
+### Composition in Code
+
+```jsx
+// Small, focused components
+function Avatar({ url, alt }) {
+  return <img className="avatar" src={url} alt={alt} />;
+}
+
+function UserName({ name, verified }) {
+  return (
+    <span>
+      {name}
+      {verified && <VerifiedBadge />}
+    </span>
+  );
+}
+
+function UserCard({ user }) {
+  return (
+    <div className="card">
+      <Avatar url={user.avatarUrl} alt={user.name} />
+      <UserName name={user.name} verified={user.isVerified} />
+    </div>
+  );
+}
+
+// UserCard composes Avatar + UserName
+// No component knows about the others' internals
+```
+
+---
+
+## 🪪 Component Identity — The Critical Concept
+
+This is what **0.1 never covered** and what causes real bugs.
+
+React identifies a component by **two things**:
+
+```text
+Component Identity = TYPE + POSITION in tree
+```
+
+### Type Identity
+
+```jsx
+// These are DIFFERENT component types
+function CardA() { return <div>A</div>; }
+function CardB() { return <div>B</div>; }
+
+// React sees them as completely different
+// Switching between them → full unmount + remount
+// State is DESTROYED
+```
+
+```jsx
+// These are the SAME component type
+function Card() { return <div>Card</div>; }
+
+// Rendering <Card /> twice → two INSTANCES
+// Each has its own state
+// Switching order → state follows position, not data
+```
+
+### Position Identity
+
+```jsx
+function App({ isLoggedIn }) {
+  return (
+    <div>
+      {isLoggedIn
+        ? <UserDashboard />   // position 0, type UserDashboard
+        : <LoginForm />       // position 0, type LoginForm
+      }
+    </div>
+  );
+}
+```
+
+When `isLoggedIn` flips:
+- Position 0 had `UserDashboard` → now has `LoginForm`
+- **Different type at same position** → React unmounts `UserDashboard`, mounts `LoginForm`
+- All `UserDashboard` state is **destroyed**
+
+```text
+┌─────────────────────────────────────────────────┐
+│           COMPONENT IDENTITY RULES               │
+│                                                  │
+│  Same type + same position → UPDATE (keep state) │
+│  Different type, same pos  → REMOUNT (lose state)│
+│  Same type, removed        → UNMOUNT (lose state)│
+│  Same type, `key` changed  → REMOUNT (lose state)│
+└─────────────────────────────────────────────────┘
+```
+
+This powers a real pattern — **resetting state intentionally:**
+
+```jsx
+// Force a fresh component instance when userId changes
+// Without key: React reuses the instance, state persists across users
+// With key: React remounts, state resets — correct behavior
+
+<UserProfile key={userId} userId={userId} />
+```
+
+---
+
+## 📡 Props — The Component Contract
+
+Props are **the API of a component.** They define what a component needs from the outside world.
+
+```text
+┌─────────────────────────────────────────────────┐
+│                                                  │
+│   PARENT                           CHILD         │
+│                                                  │
+│  owns data  ──── props ────→  receives data      │
+│                                                  │
+│  <Card name="Alice" age={25} />                  │
+│         ↑                                        │
+│         └── This is the contract                 │
+│             Child can't change this              │
+│             Parent controls it entirely          │
+└─────────────────────────────────────────────────┘
+```
+
+### Critical Props Rules
+
+```jsx
+// ✅ Props flow DOWN only
+function Parent() {
+  return <Child name="Alice" />;
+}
+
+function Child({ name }) {
+  // name is READ-ONLY here
+  // Child cannot modify what Parent gave it
+  return <p>{name}</p>;
+}
+
+// ❌ This is WRONG — props are immutable
+function Child({ name }) {
+  name = 'Bob'; // silent bug — reassigning doesn't update parent
+  return <p>{name}</p>;
+}
+```
+
+### Props vs State — The Fundamental Split
+
+```text
+┌──────────────────┬──────────────────────────────┐
+│      PROPS       │            STATE              │
+├──────────────────┼──────────────────────────────┤
+│ Passed from      │ Owned by the component        │
+│ parent           │ itself                        │
+├──────────────────┼──────────────────────────────┤
+│ Read-only        │ Mutable via setState          │
+├──────────────────┼──────────────────────────────┤
+│ External data    │ Internal data                 │
+├──────────────────┼──────────────────────────────┤
+│ Parent controls  │ Component controls            │
+├──────────────────┼──────────────────────────────┤
+│ Like function    │ Like instance variables       │
+│ arguments        │                               │
+└──────────────────┴──────────────────────────────┘
+```
+
+---
+
+## 🔄 Re-render Isolation — Why Components Scale
+
+This is what **0.1 mentioned in one line** but never explained.
+
+When state changes in one component, only **that component and its children** re-render.  
+Siblings and parents are untouched.
+
+```text
+┌──────────────────────────────────────────────┐
+│                   <App>                       │  ← does NOT re-render
+│                                              │
+│  ┌─────────────┐      ┌──────────────────┐  │
+│  │  <Sidebar>  │      │     <Main>        │  │  ← does NOT re-render
+│  │             │      │                  │  │
+│  │ <NavItem/>  │      │  ┌────────────┐  │  │
+│  │ <NavItem/>  │      │  │  <Cart>   🔄│  │  ← STATE CHANGED HERE
+│  │             │      │  │            │  │  │
+│  └─────────────┘      │  │  <Item/>   │  │  │  ← re-renders (child)
+│                       │  │  <Item/>   │  │  │  ← re-renders (child)
+│                       │  └────────────┘  │  │
+│                       │                  │  │
+│                       │  <ProductList/>  │  │  ← does NOT re-render
+│                       └──────────────────┘  │
+└──────────────────────────────────────────────┘
+
+🔄 = state changed
+Only Cart and its children re-render
+Everything else is untouched
+```
+
+This is why React scales. Without component boundaries, **any state change would force the entire app to re-render.**
+
+---
+
+## 🪓 When to Split a Component
+
+This is a judgment call senior engineers make daily.
+
+### Split when:
+
+```text
+1. SINGLE RESPONSIBILITY VIOLATED
+   One component does too many unrelated things
+   → split by concern
+
+2. REUSE NEEDED
+   Same UI appears in multiple places
+   → extract into shared component
+
+3. STATE ISOLATION NEEDED
+   Only part of the UI needs to re-render
+   → extract that part so re-renders are scoped
+
+4. COMPLEXITY THRESHOLD
+   Component is hard to read in one glance
+   → split for readability
+
+5. TESTING BOUNDARY
+   You want to test a piece of UI independently
+   → it should be its own component
+```
+
+### Don't split when:
+
+```text
+1. TOO GRANULAR
+   <Text /> wrapping a single <p> → no value added
+
+2. PREMATURE EXTRACTION
+   "I might reuse this" → extract when you actually need it
+   Premature extraction creates wrong abstractions
+
+3. PROP DRILLING CREATED
+   Splitting causes you to pass 10 props through
+   multiple layers → reconsider the split
+```
+
+---
+
+## 🔗 DSA / Internals Connection
+
+The component tree is literally a **tree data structure** in memory:
+
+```text
+Component Tree = N-ary Tree
+
+Each node contains:
+  - type    (function reference)
+  - props   (data for this node)
+  - state   (local to this node)
+  - child   (pointer to first child)
+  - sibling (pointer to next sibling)
+  - return  (pointer to parent)
+
+This is React's Fiber tree — a left-child right-sibling tree
+traversed with DFS during reconciliation
+```
+
+```text
+         App
+        / | \
+    Nav  Main  Footer
+    /   / | \
+  Logo Sidebar Content
+              |
+           ProductList
+           / | \ \
+          P  P  P  P
+```
+
+React traverses this tree:
+- **Render phase** → DFS, calling each component function
+- **Commit phase** → applying DOM mutations from the traversal
+
+Understanding trees (Phase 10) makes the entire reconciler obvious.
+
+---
+
+## 🏭 Production Relevance — MUST KNOW
+
+### What breaks without good component design:
+
+**Performance:**
+```jsx
+// ❌ Everything in one component
+function Dashboard() {
+  const [filter, setFilter] = useState('');
+  // 500 lines of JSX
+  // Changing filter re-renders EVERYTHING
+  // Slow charts, lists, everything re-paints
+}
+
+// ✅ Split by re-render boundary
+function Dashboard() {
+  return (
+    <>
+      <FilterBar />      {/* owns filter state */}
+      <Charts />         {/* doesn't re-render on filter change */}
+      <ProductTable />   {/* re-renders only when its data changes */}
+    </>
+  );
+}
+```
+
+**Debugging:**
+```text
+Monolith component:  "Something in Dashboard is broken"
+                     → Read 500 lines to find it
+
+Split components:    "CartBadge shows wrong count"
+                     → Open CartBadge.jsx
+                     → Read 30 lines
+                     → Fix it
+```
+
+**Onboarding:**
+```text
+New engineer on day 1:
+  Monolith: "Here's app.js, it's 8000 lines, good luck"
+  Components: "Here's the component tree, find the feature by name"
+```
+
+---
+
+## ⚠️ Silent Bugs & Failure Cases
+
+### Bug 1: Component defined inside another component
+
+```jsx
+// ❌ SILENT BUG — new function reference every render
+function Parent() {
+  // This creates a NEW component type on every Parent render
+  function Child() {
+    return <div>child</div>;
+  }
+
+  return <Child />;
+  // React sees: "different type than last render" every time
+  // → unmounts and remounts Child EVERY render
+  // → Child state resets EVERY render
+  // → massively expensive, hard to notice
+}
+
+// ✅ Define outside
+function Child() {
+  return <div>child</div>;
+}
+
+function Parent() {
+  return <Child />;
+}
+```
+
+### Bug 2: Using index as key (component identity issue)
+
+```jsx
+// ❌ Wrong — index as key destroys component identity on reorder
+{items.map((item, index) => (
+  <ProductCard key={index} product={item} />
+))}
+// If items reorder → keys stay the same
+// React thinks same components in same positions → keeps state
+// State belongs to wrong items now
+
+// ✅ Correct — stable unique ID
+{items.map(item => (
+  <ProductCard key={item.id} product={item} />
+))}
+```
+
+### Bug 3: Conditional component type swap
+
+```jsx
+// ❌ State lost when condition flips
+function Form({ isAdmin }) {
+  return isAdmin
+    ? <AdminForm />
+    : <UserForm />;
+  // Switching isAdmin → full remount → form values lost
+}
+
+// ✅ If you want to preserve state, keep same type
+// and pass a prop instead
+function Form({ isAdmin }) {
+  return <BaseForm isAdmin={isAdmin} />;
+}
+```
+
+---
+
+## 🎤 Interview Section
+
+### Common Questions
+
+**Q: What is a React component?**
+> *"A component is a self-contained unit that encapsulates UI structure, local state, and lifecycle behavior. It's a function that takes props and returns a UI description. React manages its identity, knows when to call it, and tracks its position in the component tree."*
+
+---
+
+**Q: What's the difference between props and state?**
+> *"Props are external — passed from parent, read-only inside the component. State is internal — owned and mutated by the component itself. Props are the component's public API. State is its private memory."*
+
+---
+
+**Q: Why do we break UI into components?**
+> Three reasons engineers care about:
+> 1. **Re-render isolation** — state changes re-render only the owning component's subtree
+> 2. **Encapsulation** — feature's structure, state, and behavior in one place
+> 3. **Reusability** — same component, different props, different contexts
+
+---
+
+### Senior-Level Questions
+
+**Q: How does React determine whether to update or remount a component?**
+> *"By type and position in the fiber tree. If the component type at a given tree position is the same as the previous render, React updates it — state is preserved. If the type changes, React unmounts the old instance and mounts a new one — state is destroyed. The `key` prop can force a remount even when the type is the same, by artificially changing identity."*
+
+---
+
+**Q: What are the performance implications of component granularity?**
+> Too coarse → large components, wide re-render blast radius, slow updates.  
+> Too fine → too many fiber nodes, reconciler overhead, prop drilling.  
+> Sweet spot: split at re-render boundaries — wherever state changes should be isolated.
+
+---
+
+### ⚠️ Interview Traps
+
+**Trap 1:**  
+*"Does splitting a component into smaller ones always improve performance?"*
+
+Wrong answer: *"Yes, smaller components are always better."*
+
+Correct answer:
+> *"Not necessarily. Every component is a fiber node React must reconcile. Too many tiny components increase reconciler overhead. The right split is at state boundaries — isolate re-renders where they happen. Splitting purely for 'cleanliness' without a performance reason can actually hurt."*
+
+---
+
+**Trap 2:**  
+*"If I render `<Card />` and `<Card />` twice, do they share state?"*
+
+Wrong answer: *"Yes, they're the same component."*
+
+Correct answer:
+> *"No. Each JSX element creates a separate component instance. They share the same type (the function), but each has its own state, its own fiber node, and its own lifecycle. They are completely isolated."*
+
+---
+
+**Trap 3:**  
+*"What happens to state when a component is hidden with CSS `display: none`?"*
+
+This trips people up:
+> *"State is preserved. The component stays mounted in the fiber tree — React doesn't unmount it just because CSS hides it visually. This is different from conditional rendering (`{show && <Component />}`) which actually unmounts and destroys state. This matters for performance: CSS hiding keeps the fiber node alive and costs memory; conditional rendering destroys and recreates it."*
+
+---
+
+## 📊 SDE Relevance Rating
+
+| Topic | Rating |
+|---|---|
+| Component as function + React's contract | 🔴 MUST KNOW |
+| Props vs state | 🔴 MUST KNOW |
+| Composition model | 🔴 MUST KNOW |
+| Component identity (type + position) | 🔴 MUST KNOW |
+| Re-render isolation | 🔴 MUST KNOW |
+| When to split components | 🔴 MUST KNOW |
+| Defining components inside components bug | 🔴 MUST KNOW |
+| Fiber tree = N-ary linked list | 🟡 GOOD TO KNOW (senior interviews) |
+
+---
+
+## 🗺️ Where This Leads
+
+```text
+Component model (Phase 0.3 — now)
+         │
+         ↓
+How is a component written in JSX?      ← Phase 0.4
+         │
+         ↓
+How does React track component state?   ← Phase 3.1 (useState internals)
+         │
+         ↓
+How does React build the component tree?← Phase 10 (Fiber architecture)
+         │
+         ↓
+How are re-renders scoped per component?← Phase 7 (Performance hooks)
+```

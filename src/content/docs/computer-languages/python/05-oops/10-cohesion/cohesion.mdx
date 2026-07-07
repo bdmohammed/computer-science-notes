@@ -1,0 +1,1128 @@
+---
+title: Python Cohesion & Single Responsibility
+slug: computer-languages/python/design/cohesion
+description: Master cohesion in Python. Learn to identify "God Classes," apply the Single Responsibility Principle (SRP), and use Modules/Packages to organize code effectively.
+sidebar:
+  label: "Cohesion"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [python, cohesion, srp, clean-code, architecture, interview, modules]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🧲 Cohesion in Python
+
+> **Cohesion** measures how closely related the responsibilities of a single module (Class, Function, or Module) are.  
+> **High Cohesion**: A module does one thing well.  
+> **Low Cohesion**: A module does many unrelated things (a "God Object").
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of cohesion as **focus**.  
+- **High Cohesion**: A Scalpel. Precise, specialized.  
+- **Low Cohesion**: A Swiss Army Knife. Tries to do everything, master of none.  
+**Goal**: "High Cohesion, Low Coupling."
+</Aside>
+
+---
+
+## 📋 The Cohesion Spectrum in Python
+
+| Type | Description | Verdict | Python Example |
+|------|-------------|---------|----------------|
+| **Coincidental** | Random grouping | 🔴 Worst | `utils.py` with `send_email`, `calc_tax`, `resize_img` |
+| **Logical** | Grouped by category | 🟠 Bad | `input_handler.py` handling Mouse, Network, File |
+| **Temporal** | Grouped by timing | 🟠 Moderate | `startup.py` loading config, DB, Cache |
+| **Functional** | One single task | 🟢 Best | `password_hasher.py` (hash, verify, rehash) |
+
+<CardGrid>
+  <Card title="Low Cohesion (God Class)" icon="error">
+    ```python
+    class UserManager:
+        def save_user(self): ...
+        def send_email(self): ...
+        def generate_pdf(self): ...
+        def connect_db(self): ...
+        
+    # ❌ Problems:
+    # • Does everything
+    # • Hard to test (needs DB, Email, PDF mocks)
+    # • Merge conflicts
+    ```
+  </Card>
+  
+  <Card title="High Cohesion (Focused)" icon="approve-check">
+    ```python
+    class AuthService: ...      # Handles login
+    class NotificationSvc: ...  # Handles emails
+    class PdfGenerator: ...     # Handles PDFs
+    
+    # ✅ Benefits:
+    # • Single Responsibility
+    # • Easy to test
+    # • Reusable
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Real Python Examples
+
+### 🔴 Coincidental Cohesion: The "Utils" Trap
+
+In Python, it's tempting to dump unrelated functions into a `utils.py` file. This creates a module with no clear purpose.
+
+<Code lang="python" title="❌ Low Cohesion Module" code={`
+# utils.py
+import smtplib
+import hashlib
+from PIL import Image
+
+def send_email(to, msg): ...      # Networking
+def hash_password(pwd): ...       # Security
+def resize_image(path): ...       # Image Processing
+def format_date(dt): ...          # String Manipulation
+`} />
+
+### 🟢 Functional Cohesion: Focused Modules
+
+Split the utilities into domain-specific modules.
+
+<Code lang="python" title="✅ High Cohesion Modules" code={`
+# email_service.py
+def send_welcome_email(user): ...
+def send_reset_email(user): ...
+
+# security.py
+def hash_password(pwd): ...
+def verify_password(pwd, hash): ...
+
+# image_processor.py
+def resize_image(path, size): ...
+`} />
+
+<Aside type="caution">
+**Python Tip**: In Python, **Modules** (`.py` files) are the first line of defense for cohesion. If a module grows too large or handles unrelated tasks, split it into a **Package** (folder with `__init__.py`).
+</Aside>
+
+---
+
+## 💻 Real-World Code: Refactoring a God Class
+
+### ❌ Low Cohesion: The "Manager" Anti-Pattern
+
+<Code lang="python" title="❌ The God Class" code={`
+class OrderManager:
+    def __init__(self):
+        self.db = Database()
+        self.emailer = EmailService()
+        self.pdf_gen = PdfGenerator()
+
+    def process_order(self, order):
+        # 1. Validation
+        if not order.items:
+            raise ValueError("Empty")
+            
+        # 2. Persistence
+        self.db.save(order)
+        
+        # 3. Notification
+        self.emailer.send(order.customer_email, "Order Confirmed")
+        
+        # 4. Reporting
+        pdf = self.pdf_gen.create_invoice(order)
+        self.emailer.attach(pdf)
+`} />
+
+### ✅ High Cohesion: Separation of Concerns
+
+<Code lang="python" title="✅ Refactored Services" code={`
+class OrderValidator:
+    def validate(self, order):
+        if not order.items:
+            raise ValueError("Empty")
+
+class OrderRepository:
+    def save(self, order):
+        # DB logic only
+        pass
+
+class NotificationService:
+    def send_confirmation(self, order):
+        # Email logic only
+        pass
+
+class InvoiceService:
+    def generate_and_send(self, order):
+        # PDF + Email attachment logic
+        pass
+
+# Orchestrator (High Cohesion: Coordination only)
+class OrderProcessor:
+    def __init__(self, validator, repo, notifier, invoice_svc):
+        self.validator = validator
+        self.repo = repo
+        self.notifier = notifier
+        self.invoice_svc = invoice_svc
+
+    def process(self, order):
+        self.validator.validate(order)
+        self.repo.save(order)
+        self.notifier.send_confirmation(order)
+        self.invoice_svc.generate_and_send(order)
+`} />
+
+---
+
+## 📊 Detecting Low Cohesion in Python
+
+| Symptom | What It Signals |
+|---------|----------------|
+| Class has 20+ methods | God Class |
+| Module named `utils.py` or `helpers.py` | Dumping ground |
+| Methods don't use `self` | Function belongs elsewhere (or should be `@staticmethod`) |
+| Changing Feature A breaks Feature B | Mixed Responsibilities |
+| Hard to name the class/module | Low Cohesion |
+
+---
+
+## 🔁 Cohesion & Single Responsibility Principle (SRP)
+
+**SRP**: A class/module should have **one, and only one, reason to change**.
+
+```text
+❌ OrderManager changes when:
+   ├── DB schema changes
+   ├── Email template changes
+   ├── PDF layout changes
+   └── Validation rules change
+   → 4 Reasons to Change = Low Cohesion
+
+✅ OrderRepository changes when:
+   └── DB schema changes
+   → 1 Reason to Change = High Cohesion
+```
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Small Class ≠ High Cohesion" icon="error">
+    ```python
+    # ❌ Low Cohesion: Unrelated methods
+    class MathAndEmail:
+        def sqrt(self, n): ...
+        def send_email(self, to): ...
+
+    # ✅ High Cohesion: Related methods
+    class JwtService:
+        def generate(self): ...
+        def verify(self): ...
+        def refresh(self): ...
+    ```
+  </Card>
+  
+  <Card title='Trap 2: The "Utils" Module' icon="warning">
+    ```python
+    # ❌ Low Cohesion
+    # utils.py
+    def calc_tax(): ...
+    def resize_img(): ...
+
+    # ✅ High Cohesion
+    # tax_utils.py
+    def calc_tax(): ...
+    def get_rate(): ...
+    ```
+  </Card>
+
+  <Card title="Trap 3: Over-Splitting (Anemic Domain)" icon="caution">
+    ```python
+    # ❌ Too much splitting destroys context
+    class OrderValidator: ...
+    class OrderSaver: ...
+    class OrderNotifier: ...
+
+    # ✅ Better: Keep behavior with data
+    class Order:
+        def validate(self): ...
+        
+    class OrderRepository:
+        def save(self, order): ...
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+In Python, we don't typically calculate **LCOM** (Lack of Cohesion in Methods) manually, but static analysis tools like `pylint` or `sonarqube` do.
+
+- **High LCOM**: Methods in a class don't share instance variables.
+- **Fix**: Split the class. If methods don't share `self.data`, they probably shouldn't be in the same class.
+
+<Code lang="python" title="Example of High LCOM" code={`
+class DataProcessor:
+    def __init__(self):
+        self.db_url = "..."  # Used by connect
+        self.api_key = "..." # Used by fetch
+
+    def connect(self):
+        # Uses self.db_url
+        pass
+
+    def fetch_data(self):
+        # Uses self.api_key
+        pass
+        
+    def calculate_stats(self, data):
+        # Uses NEITHER self.db_url NOR self.api_key
+        # 🚩 High LCOM signal! This method doesn't belong here.
+        pass
+`} />
+
+---
+
+## 🏭 SDE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| `utils.py` is a code smell | 🔴 MUST KNOW |
+| SRP = One reason to change | 🔴 MUST KNOW |
+| Modules > Classes for cohesion | 🔴 MUST KNOW (Pythonic) |
+| Anemic Domain Model | 🔴 MUST KNOW |
+| Static Analysis (Pylint/Sonar) | 🟡 GOOD TO KNOW |
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your `utils.py` files. Split them by domain.
+2. ✅ Check for classes where methods don't use `self`.
+3. ✅ Ensure each module has a clear, single purpose.
+4. ✅ Use Packages (`folder/__init__.py`) to group related modules.
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is Cohesion?
+    A: How related the responsibilities of a module are.
+    
+    Q: High vs Low Cohesion?
+    A: High = Focused (One job). Low = God Class (Many jobs).
+    
+    Q: How does Python handle cohesion differently?
+    A: Python uses Modules (.py files) as primary cohesion units, not just Classes.
+    ```
+  </Card>
+  
+  <Card title="Patterns & Fixes" icon="rocket">
+    ```text
+    Q: How to fix a God Class?
+    A: Extract responsibilities into separate Services/Modules.
+    
+    Q: Is a "Utils" class bad?
+    A: Only if it's a dumping ground. Domain-specific utils (e.g., DateUtils) are fine.
+    
+    Q: What is SRP?
+    A: Single Responsibility Principle. One reason to change.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Cohesion Decision Tree
+
+```text
+Is this module/class doing too much?
+│
+├─ Are methods unrelated?
+│  └─ Yes → Split into separate Modules/Classes ✅
+│
+├─ Do methods share no state (self)?
+│  └─ Yes → Move to utility module or make static ✅
+│
+├─ Is it named "Manager" or "Utils"?
+│  └─ Yes → Check for multiple responsibilities ✅
+│
+└─ Does it change for multiple reasons?
+   └─ Yes → Apply SRP. Split by Actor/Responsibility ✅
+```
+
+### Anti-Patterns & Fixes
+
+| Anti-Pattern | Symptom | Fix |
+|-------------|---------|-----|
+| `utils.py` | Random functions | Split into `email_utils.py`, `math_utils.py` |
+| God Class | 500+ lines, many imports | Extract Services |
+| Anemic Domain | Logic in `Service`, Data in `Class` | Move logic to `Class` methods |
+| Temporal Cohesion | `init()` does 10 things | Delegate to specific init services |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Keep modules focused on one domain.
+2. ✅ Avoid `utils.py` dumping grounds.
+3. ✅ Ensure class methods share state (`self`).
+4. ✅ Apply SRP: One reason to change.
+5. ✅ Use Packages to group related modules.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict Cohesion Severity" code={`
+# Q1: What type of cohesion is this?
+# math_helpers.py
+def add(a, b): ...
+def send_sms(to, msg): ...
+
+# Q2: How to fix this God Class?
+class App:
+    def start_db(self): ...
+    def start_web_server(self): ...
+    def load_config(self): ...
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Coincidental Cohesion (Worst). 
+Fix: Split into math.py and sms_service.py.
+
+Q2: Temporal Cohesion (Bad). 
+Fix: Create DbService, WebServer, ConfigLoader. 
+App should just orchestrate them.
+```
+</details>
+
+> 🚀 **Final Wisdom**: In Python, **modules** are your best friend for cohesion. Keep files small, focused, and named clearly. If a file does too much, split it. Simple is better than complex. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🎯 Python Cohesion
+
+---
+
+## 🧠 Mental Model First
+
+```
+COHESION = how FOCUSED and RELATED the responsibilities
+           of a single unit (function/class/module) are.
+
+HIGH COHESION:  everything in here belongs together.
+                One job. One reason to exist.
+
+LOW COHESION:   a grab-bag of unrelated things.
+                Many jobs. Many reasons to change.
+
+COHESION vs COUPLING (people confuse these):
+  Coupling  = relationship BETWEEN units  (external)
+  Cohesion  = relationship WITHIN a unit  (internal)
+
+GOAL:
+  HIGH cohesion + LOW coupling = maintainable, testable, readable code
+  LOW cohesion  + HIGH coupling = spaghetti code
+```
+
+```
+COHESION SPECTRUM (high → low):
+┌─────────────────────────────────────────────────────────────────┐
+│  Functional    → does ONE thing, all parts serve that one thing │
+│  Sequential    → output of one step feeds next step            │
+│  Communicational → all parts operate on SAME data             │
+│  Procedural    → steps must execute in order                   │
+│  Temporal      → things done at same TIME (init/cleanup)       │
+│  Logical       → similar logic but unrelated purpose           │
+│  Coincidental  → random collection — worst                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Coincidental Cohesion — Worst
+
+```python
+# 💀 LOW: "utils.py" — unrelated things bundled together:
+class Utils:
+    def send_email(self, to, subject, body): ...
+    def calculate_tax(self, income, rate): ...
+    def parse_csv(self, filepath): ...
+    def resize_image(self, img, width, height): ...
+    def generate_invoice_number(self): ...
+    def validate_credit_card(self, number): ...
+    def log_to_file(self, message, filepath): ...
+    def compress_zip(self, files, output): ...
+```
+
+```
+Why it's bad:
+  ├── No clear responsibility — what IS Utils?
+  ├── Every feature change touches this file
+  ├── Impossible to test in isolation
+  ├── Name tells you nothing about content
+  └── Every team member adds their "misc" code here
+```
+
+---
+
+## 2️⃣ Functional Cohesion — Best
+
+```python
+# ✅ HIGH: every method serves ONE clear purpose
+
+class PasswordHasher:
+    """Single responsibility: hash and verify passwords."""
+
+    ALGORITHM    = "sha256"
+    ITERATIONS   = 100_000
+    SALT_BYTES   = 32
+    KEY_LENGTH   = 32
+
+    def hash(self, password: str) -> str:
+        import hashlib, os, base64
+        salt   = os.urandom(self.SALT_BYTES)
+        key    = hashlib.pbkdf2_hmac(
+                     self.ALGORITHM,
+                     password.encode(),
+                     salt,
+                     self.ITERATIONS,
+                     dklen=self.KEY_LENGTH
+                 )
+        return base64.b64encode(salt + key).decode()
+
+    def verify(self, password: str, hashed: str) -> bool:
+        import hashlib, base64
+        raw    = base64.b64decode(hashed.encode())
+        salt   = raw[:self.SALT_BYTES]
+        stored = raw[self.SALT_BYTES:]
+        key    = hashlib.pbkdf2_hmac(
+                     self.ALGORITHM,
+                     password.encode(),
+                     salt,
+                     self.ITERATIONS,
+                     dklen=self.KEY_LENGTH
+                 )
+        return key == stored
+
+    def needs_rehash(self, hashed: str) -> bool:
+        """Check if hash was created with current settings."""
+        import base64
+        raw = base64.b64decode(hashed.encode())
+        return len(raw) != self.SALT_BYTES + self.KEY_LENGTH
+```
+
+```
+Everything in PasswordHasher:
+  ✅ hash()         → serves password hashing
+  ✅ verify()       → serves password verification
+  ✅ needs_rehash() → serves password hash management
+  ✅ ALGORITHM      → config for hashing
+  ✅ ITERATIONS     → config for hashing
+
+Zero unrelated code. One cohesive unit.
+```
+
+---
+
+## 3️⃣ Single Responsibility Principle — Cohesion in Practice
+
+```python
+# 💀 LOW COHESION — one class doing too many jobs:
+class User:
+    def __init__(self, name: str, email: str):
+        self.name  = name
+        self.email = email
+
+    # Job 1: user data
+    def full_name(self) -> str:
+        return self.name.title()
+
+    # Job 2: database persistence — NOT user's job
+    def save_to_db(self) -> None:
+        db.execute("INSERT INTO users ...", (self.name, self.email))
+
+    def load_from_db(self, user_id: int) -> None:
+        row = db.query("SELECT ...", (user_id,))
+        self.name, self.email = row
+
+    # Job 3: email sending — NOT user's job
+    def send_welcome_email(self) -> None:
+        smtp.send(self.email, "Welcome!", "Hello " + self.name)
+
+    # Job 4: validation — arguably not user's job
+    def validate_email_format(self) -> bool:
+        import re
+        return bool(re.match(r"[^@]+@[^@]+\.[^@]+", self.email))
+
+    # Job 5: serialization — NOT user's job
+    def to_json(self) -> str:
+        import json
+        return json.dumps({"name": self.name, "email": self.email})
+
+    # Job 6: logging — NOT user's job
+    def log_activity(self, action: str) -> None:
+        logger.info(f"User {self.email}: {action}")
+```
+
+```python
+# ✅ HIGH COHESION — each class has ONE clear job:
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    """Job: represent user data."""
+    name:  str
+    email: str
+
+    def full_name(self) -> str:
+        return self.name.title()
+
+
+class UserRepository:
+    """Job: persist and retrieve users."""
+    def __init__(self, db):
+        self._db = db
+
+    def save(self, user: User) -> int:
+        return self._db.execute(
+            "INSERT INTO users (name, email) VALUES (%s, %s)",
+            (user.name, user.email)
+        )
+
+    def find_by_id(self, user_id: int) -> User | None:
+        row = self._db.query(
+            "SELECT name, email FROM users WHERE id=%s", (user_id,)
+        )
+        return User(*row) if row else None
+
+
+class UserNotifier:
+    """Job: send notifications to users."""
+    def __init__(self, mailer):
+        self._mailer = mailer
+
+    def send_welcome(self, user: User) -> None:
+        self._mailer.send(
+            to      = user.email,
+            subject = "Welcome!",
+            body    = f"Hello {user.full_name()}"
+        )
+
+
+class EmailValidator:
+    """Job: validate email format and deliverability."""
+    import re
+    _PATTERN = re.compile(r"[^@]+@[^@]+\.[^@]+")
+
+    def is_valid_format(self, email: str) -> bool:
+        return bool(self._PATTERN.match(email))
+
+    def is_deliverable(self, email: str) -> bool:
+        domain = email.split("@")[1]
+        return self._check_mx(domain)
+
+    def _check_mx(self, domain: str) -> bool:
+        ...
+```
+
+---
+
+## 4️⃣ Function-Level Cohesion
+
+```python
+# 💀 LOW COHESION — function does too many things:
+def process_user_registration(name, email, password, plan):
+    # Step 1: validate
+    if not name: raise ValueError("Name required")
+    import re
+    if not re.match(r"[^@]+@[^@]+", email):
+        raise ValueError("Invalid email")
+    if len(password) < 8: raise ValueError("Password too short")
+
+    # Step 2: hash password
+    import hashlib
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+
+    # Step 3: create user in DB
+    user_id = db.execute(
+        "INSERT INTO users (name, email, password) VALUES (%s,%s,%s)",
+        (name, email, hashed)
+    )
+
+    # Step 4: set up subscription
+    plan_id = db.query("SELECT id FROM plans WHERE name=%s", (plan,))
+    db.execute("INSERT INTO subscriptions ...", (user_id, plan_id))
+
+    # Step 5: send email
+    smtp.send(email, "Welcome!", f"Hello {name}")
+
+    # Step 6: log
+    logger.info(f"New user registered: {email}")
+
+    return user_id
+```
+
+```python
+# ✅ HIGH COHESION — each function does ONE thing:
+def validate_registration(name: str, email: str, password: str) -> None:
+    """Single job: validate registration fields."""
+    import re
+    if not name.strip():
+        raise ValueError("Name required")
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        raise ValueError("Invalid email")
+    if len(password) < 8:
+        raise ValueError("Password too short (min 8 chars)")
+
+
+def hash_password(password: str) -> str:
+    """Single job: hash a password."""
+    import hashlib, os, base64
+    salt = os.urandom(32)
+    key  = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
+    return base64.b64encode(salt + key).decode()
+
+
+def create_user(name: str, email: str, hashed_pw: str) -> int:
+    """Single job: persist a new user."""
+    return db.execute(
+        "INSERT INTO users (name, email, password) VALUES (%s,%s,%s)",
+        (name, email, hashed_pw)
+    )
+
+
+def assign_plan(user_id: int, plan: str) -> None:
+    """Single job: assign subscription plan."""
+    plan_id = db.query("SELECT id FROM plans WHERE name=%s", (plan,))
+    db.execute("INSERT INTO subscriptions ...", (user_id, plan_id))
+
+
+def register_user(name: str, email: str, password: str, plan: str) -> int:
+    """Orchestrates registration — delegates to cohesive functions."""
+    validate_registration(name, email, password)
+    hashed  = hash_password(password)
+    user_id = create_user(name, email, hashed)
+    assign_plan(user_id, plan)
+    notifier.send_welcome(email, name)
+    logger.info(f"Registered: {email}")
+    return user_id
+```
+
+---
+
+## 5️⃣ Module-Level Cohesion
+
+```python
+# 💀 LOW COHESION — module does everything:
+# app/utils.py
+def hash_password(pw): ...
+def validate_email(email): ...
+def send_email(to, subj, body): ...
+def parse_csv(path): ...
+def resize_image(img, w, h): ...
+def calculate_vat(amount, rate): ...
+def generate_slug(title): ...
+def paginate(items, page, size): ...
+```
+
+```python
+# ✅ HIGH COHESION — module has single focus:
+
+# app/security/hashing.py
+def hash_password(pw: str) -> str: ...
+def verify_password(pw: str, hashed: str) -> bool: ...
+def needs_rehash(hashed: str) -> bool: ...
+
+# app/security/tokens.py
+def generate_token(user_id: int) -> str: ...
+def verify_token(token: str) -> dict | None: ...
+def revoke_token(token: str) -> None: ...
+
+# app/communication/email.py
+def send_email(to: str, subject: str, body: str) -> bool: ...
+def send_bulk(recipients: list, template: str) -> dict: ...
+def validate_deliverability(email: str) -> bool: ...
+
+# app/media/images.py
+def resize(img, width: int, height: int): ...
+def compress(img, quality: int): ...
+def convert_format(img, target_format: str): ...
+
+# app/utils/pagination.py
+def paginate(items: list, page: int, size: int) -> dict: ...
+def page_range(total: int, size: int) -> range: ...
+```
+
+---
+
+## 6️⃣ Package Structure — Cohesion at Scale
+
+```
+HIGH COHESION package structure:
+
+myapp/
+├── auth/               ← authentication domain
+│   ├── __init__.py
+│   ├── models.py       ← User, Session, Token (auth data)
+│   ├── service.py      ← AuthService (auth logic)
+│   ├── repository.py   ← UserRepository (auth persistence)
+│   └── validators.py   ← email, password validation
+│
+├── orders/             ← orders domain
+│   ├── __init__.py
+│   ├── models.py       ← Order, OrderItem, OrderStatus
+│   ├── service.py      ← OrderService (order logic)
+│   ├── repository.py   ← OrderRepository
+│   └── pricing.py      ← tax, discount, total calculation
+│
+├── payments/           ← payments domain
+│   ├── __init__.py
+│   ├── gateway.py      ← payment gateway abstraction
+│   ├── service.py      ← PaymentService
+│   └── validators.py   ← card, amount validation
+│
+├── notifications/      ← notification domain
+│   ├── __init__.py
+│   ├── email.py        ← email sending
+│   ├── sms.py          ← SMS sending
+│   └── templates.py    ← message templates
+│
+└── shared/             ← truly cross-cutting concerns
+    ├── exceptions.py   ← base exceptions
+    ├── pagination.py   ← pagination logic
+    └── logging.py      ← structured logging
+```
+
+---
+
+## 7️⃣ Measuring Cohesion — LCOM (Lack of Cohesion in Methods)
+
+```python
+# LCOM = how many methods share the same instance variables?
+# Low LCOM = high cohesion (methods share variables)
+# High LCOM = low cohesion (methods independent — split the class!)
+
+class LowCohesion:            # HIGH LCOM — low cohesion:
+    def __init__(self):
+        self.x = 0            # used only by method_a
+        self.y = 0            # used only by method_b
+        self.z = 0            # used only by method_c
+
+    def method_a(self):       # uses only self.x
+        return self.x * 2
+
+    def method_b(self):       # uses only self.y
+        return self.y + 1
+
+    def method_c(self):       # uses only self.z
+        return str(self.z)
+
+# SIGNAL: should be split into 3 classes!
+
+
+class HighCohesion:           # LOW LCOM — high cohesion:
+    def __init__(self, x, y):
+        self.x = x            # used by ALL methods
+        self.y = y            # used by ALL methods
+
+    def magnitude(self):      # uses self.x and self.y
+        return (self.x**2 + self.y**2) ** 0.5
+
+    def normalize(self):      # uses self.x and self.y
+        m = self.magnitude()
+        return HighCohesion(self.x/m, self.y/m)
+
+    def dot(self, other):     # uses self.x and self.y
+        return self.x*other.x + self.y*other.y
+```
+
+---
+
+## 🔬 Cohesion + Inheritance — Keep Cohesion Through Hierarchy
+
+```python
+# 💀 LOW COHESION via inheritance abuse — adding unrelated methods:
+class Animal:
+    def eat(self): ...
+    def sleep(self): ...
+    def breathe(self): ...
+    def generate_invoice(self): ...    # ← why is this here?!
+    def connect_to_database(self): ... # ← not animal behavior!
+
+
+# ✅ HIGH COHESION — each level adds RELATED behavior only:
+class Animal:
+    """Core animal behaviors."""
+    def eat(self, food: str) -> None: ...
+    def sleep(self, hours: float) -> None: ...
+    def breathe(self) -> None: ...
+
+class DomesticAnimal(Animal):
+    """Adds domestic/pet behaviors."""
+    def respond_to_owner(self, command: str) -> None: ...
+    def be_groomed(self) -> None: ...
+
+class ServiceAnimal(DomesticAnimal):
+    """Adds service/work behaviors."""
+    def perform_task(self, task: str) -> None: ...
+    def wear_harness(self) -> None: ...
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# High cohesion in data structure implementations:
+
+class MinHeap:
+    """Single responsibility: maintain min-heap invariant."""
+
+    def __init__(self):
+        self._data: list = []
+
+    # ── All methods serve ONE purpose: heap operations ──────────
+    def push(self, val: int) -> None:
+        self._data.append(val)
+        self._sift_up(len(self._data) - 1)
+
+    def pop(self) -> int:
+        if not self._data:
+            raise IndexError("Heap is empty")
+        self._swap(0, len(self._data) - 1)
+        val = self._data.pop()
+        self._sift_down(0)
+        return val
+
+    def peek(self) -> int:
+        if not self._data:
+            raise IndexError("Heap is empty")
+        return self._data[0]
+
+    # ── Private helpers — serve heap invariant maintenance ──────
+    def _sift_up(self, i: int) -> None:
+        parent = (i - 1) // 2
+        while i > 0 and self._data[i] < self._data[parent]:
+            self._swap(i, parent)
+            i, parent = parent, (parent - 1) // 2
+
+    def _sift_down(self, i: int) -> None:
+        n = len(self._data)
+        while True:
+            smallest = i
+            for child in (2*i+1, 2*i+2):
+                if child < n and self._data[child] < self._data[smallest]:
+                    smallest = child
+            if smallest == i:
+                break
+            self._swap(i, smallest)
+            i = smallest
+
+    def _swap(self, i: int, j: int) -> None:
+        self._data[i], self._data[j] = self._data[j], self._data[i]
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __bool__(self) -> bool:
+        return bool(self._data)
+
+# Every method serves the heap. Zero unrelated code.
+# This IS functional cohesion.
+```
+
+---
+
+## 🚀 Real-World Production Pattern
+
+```python
+# Payment processing — each class cohesively focused:
+
+from dataclasses import dataclass
+from typing import Protocol
+from decimal import Decimal
+
+@dataclass
+class Money:
+    """Cohesive: represents monetary value + arithmetic."""
+    amount:   Decimal
+    currency: str
+
+    def __add__(self, other: "Money") -> "Money":
+        if self.currency != other.currency:
+            raise ValueError(f"Cannot add {self.currency} + {other.currency}")
+        return Money(self.amount + other.amount, self.currency)
+
+    def __mul__(self, factor: Decimal) -> "Money":
+        return Money(self.amount * factor, self.currency)
+
+    def to_cents(self) -> int:
+        return int(self.amount * 100)
+
+
+class TaxCalculator:
+    """Cohesive: calculates taxes only."""
+    _RATES = {"US": Decimal("0.08"), "UK": Decimal("0.20"), "DE": Decimal("0.19")}
+
+    def calculate(self, subtotal: Money, country: str) -> Money:
+        rate = self._RATES.get(country, Decimal("0"))
+        return subtotal * rate
+
+    def inclusive_price(self, gross: Money, country: str) -> Money:
+        rate = self._RATES.get(country, Decimal("0"))
+        net  = gross.amount / (1 + rate)
+        return Money(net.quantize(Decimal("0.01")), gross.currency)
+
+
+class DiscountEngine:
+    """Cohesive: calculates discounts only."""
+    def apply_percentage(self, price: Money, pct: Decimal) -> Money:
+        return price * (1 - pct / 100)
+
+    def apply_fixed(self, price: Money, discount: Money) -> Money:
+        if price.currency != discount.currency:
+            raise ValueError("Currency mismatch")
+        result = price.amount - discount.amount
+        return Money(max(result, Decimal("0")), price.currency)
+
+    def best_of(self, price: Money, *discounts: Money) -> Money:
+        return min(
+            (self.apply_fixed(price, d) for d in discounts),
+            key=lambda m: m.amount
+        )
+
+
+class OrderPricer:
+    """Cohesive: computes final order price using tax + discount."""
+    def __init__(self, tax: TaxCalculator, discount: DiscountEngine):
+        self._tax      = tax
+        self._discount = discount
+
+    def compute(self, subtotal: Money, country: str,
+                coupon_pct: Decimal = Decimal("0")) -> dict:
+        discounted = self._discount.apply_percentage(subtotal, coupon_pct)
+        tax_amount = self._tax.calculate(discounted, country)
+        total      = discounted + tax_amount
+        return {
+            "subtotal":   subtotal,
+            "discount":   subtotal.amount - discounted.amount,
+            "tax":        tax_amount,
+            "total":      total,
+        }
+```
+
+---
+
+## 💀 Interview Trap 1 — `__init__` That Does Too Much
+
+```python
+class UserService:
+    def __init__(self, db_url: str):  # 💀 constructor does everything
+        import psycopg2
+        self._conn    = psycopg2.connect(db_url)   # I/O in constructor!
+        self._cursor  = self._conn.cursor()
+        self._cache   = {}
+        self._session = requests.Session()
+        self._session.headers["Authorization"] = f"Bearer {self._get_token()}"
+        self._setup_tables()            # DDL in constructor!
+        self._seed_defaults()           # data seeding in constructor!
+        self._warm_cache()              # network calls in constructor!
+
+# Problems:
+# 1. Cannot instantiate without real DB
+# 2. Cannot test — side effects on creation
+# 3. Slow instantiation
+# 4. Constructor violates SRP
+```
+
+```python
+# ✅ Constructor only sets up state — no I/O:
+class UserService:
+    def __init__(self, db, cache, http_client):
+        self._db     = db           # injected — no I/O
+        self._cache  = cache        # injected — no I/O
+        self._client = http_client  # injected — no I/O
+
+    def connect(self) -> None:      # explicit connection — caller decides when
+        self._db.connect()
+```
+
+---
+
+## 💀 Interview Trap 2 — God Class (Low Cohesion at Scale)
+
+```python
+# 💀 God class — knows everything, does everything:
+class Application:
+    def handle_request(self, req): ...
+    def authenticate_user(self, token): ...
+    def validate_form(self, data): ...
+    def save_user(self, user): ...
+    def send_email(self, to, msg): ...
+    def generate_report(self, data): ...
+    def resize_image(self, img): ...
+    def process_payment(self, card): ...
+    def calculate_tax(self, amount): ...
+    def log_event(self, event): ...
+    def cache_result(self, key, val): ...
+    def render_template(self, name, ctx): ...
+    # ... 50 more methods
+
+# This class:
+# Touches every team member's code
+# Changes for any reason
+# Has zero cohesion
+# Is untestable
+```
+
+```python
+# ✅ Split by responsibility:
+# AuthService, FormValidator, UserRepository, EmailService,
+# ReportGenerator, ImageProcessor, PaymentProcessor,
+# TaxCalculator, EventLogger, CacheService, TemplateRenderer
+```
+
+---
+
+## 💀 Interview Trap 3 — Temporal Cohesion Masking Low Cohesion
+
+```python
+# Temporal cohesion — grouped because they run at same time:
+def setup():
+    """Looks cohesive — all "setup" things. But are they related?"""
+    init_database()          # database setup
+    load_config_from_env()   # configuration
+    warm_redis_cache()       # caching
+    start_background_jobs()  # job scheduling
+    configure_logging()      # logging
+    register_signal_handlers()# OS signals
+    seed_test_data()         # test data
+
+# These share a TIME (startup) but not a DOMAIN
+# Change to database startup → you open the logging file
+# Change to caching → you open the background jobs file
+# They're coincidentally grouped — not functionally cohesive
+
+# ✅ Better: each infrastructure concern has own initialize():
+db.initialize()
+config.initialize()
+cache.initialize()
+scheduler.initialize()
+logging.initialize()
+```
+
+---

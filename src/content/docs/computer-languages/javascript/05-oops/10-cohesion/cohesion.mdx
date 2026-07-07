@@ -1,0 +1,1879 @@
+---
+title: JavaScript Cohesion
+slug: computer-languages/javascript/architecture/cohesion
+description: Master cohesion in JavaScript — Modules, Single Responsibility, Functional Composition, and patterns for maintainable code.
+sidebar:
+  label: "Cohesion"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [javascript, cohesion, srp, clean-code, architecture, interview, modules]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🧲 Cohesion in JavaScript — The Module Era
+
+> **Cohesion** measures how closely related the responsibilities of a module (or class) are.  
+> In Java, we talk about Class Cohesion.  
+> In **JavaScript**, we talk about **Module Cohesion**.  
+> **High Cohesion**: A module does one thing well.  
+> **Low Cohesion**: A module is a "God Object" or "Utils Dump."
+
+<Aside type="tip" title="🧠 Mental Model">
+**Focus vs. Chaos**:  
+- **High Cohesion**: A specialized tool (e.g., `dateFormatter.js`). Easy to find, easy to test.  
+- **Low Cohesion**: A junk drawer (`utils.js`). Contains dates, math, strings, and API calls. Hard to maintain.  
+**Goal**: "High Cohesion, Low Coupling."
+</Aside>
+
+---
+
+## 📋 Types of Cohesion in JS
+
+| Type | Description | Verdict | Example |
+|------|-------------|---------|---------|
+| **Coincidental** | Random functions grouped together | 🔴 Worst | `utils.js` with `formatDate`, `calcTax`, `resizeImg` |
+| **Logical** | Grouped by vague category | 🟠 Bad | `inputHandlers.js` (mouse, network, file) |
+| **Temporal** | Grouped by lifecycle (init/cleanup) | 🟡 Moderate | `appInit.js` (DB connect, cache warm, server start) |
+| **Communicational** | Operate on same data/context | 🟢 Good | `userProfile.js` (updateName, updateEmail) |
+| **Functional** | All parts contribute to ONE task | 🟢 Best | `jwtService.js` (sign, verify, decode) |
+
+<CardGrid>
+  <Card title="Low Cohesion (God Module)" icon="error">
+    ```text
+    +-------------------+
+    |     helpers.js    |
+    |                   |
+    | - formatDate()    |
+    | - sendEmail()     |
+    | - calcTax()       |
+    | - dbConnect()     |
+    +-------------------+
+    
+    Problems:
+    • No clear purpose
+    • Merge conflicts
+    • Hard to tree-shake
+    ```
+  </Card>
+  
+  <Card title="High Cohesion (Focused Module)" icon="approve-check">
+    ```text
+    +-------------------+
+    |   authUtils.js    | → Token logic
+    +-------------------+
+    |   emailSvc.js     | → SMTP logic
+    +-------------------+
+    |   taxCalc.js      | → Finance logic
+    +-------------------+
+    
+    Benefits:
+    • Clear ownership
+    • Easy to test
+    • Reusable
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣ Coincidental Cohesion — The "Utils" Trap
+
+In JS, it's tempting to dump unrelated helper functions into a single file.
+
+<Code lang="js" title="❌ Low Cohesion: The 'Utils' Dump" code={`
+// utils.js
+export function formatDate(date) { ... }
+export function calculateTax(order) { ... }
+export function resizeImage(file) { ... }
+export function isValidEmail(email) { ... }
+
+// Why it's bad:
+// 1. Importing one function bundles the whole file (if not tree-shaken)
+// 2. No logical relationship between date formatting and image resizing
+// 3. Becomes a dumping ground for "miscellaneous" code
+`} />
+
+### ✅ The Fix: Domain-Specific Modules
+
+<Code lang="js" title="✅ High Cohesion: Split by Domain" code={`
+// dateUtils.js
+export function formatDate(date) { ... }
+export function parseISO(str) { ... }
+
+// financeUtils.js
+export function calculateTax(order) { ... }
+export function formatCurrency(amount) { ... }
+
+// imageUtils.js
+export function resizeImage(file) { ... }
+
+// Usage:
+import { formatDate } from './dateUtils.js';
+import { calculateTax } from './financeUtils.js';
+`} />
+
+---
+
+## 2️⃣ Logical Cohesion — Vague Categories
+
+Grouping things because they "feel" similar, even if they do different things.
+
+<Code lang="js" title="❌ Logical Cohesion: Broad Handlers" code={`
+// inputHandlers.js
+export function handleMouseClick(e) { ... }
+export function handleNetworkPacket(p) { ... } // Unrelated!
+export function handleFileUpload(f) { ... }    // Unrelated!
+
+// "Handling input" is too broad. Network logic != UI logic.
+`} />
+
+### ✅ The Fix: Split by Context
+
+<Code lang="js" title="✅ High Cohesion: Contextual Modules" code={`
+// uiEvents.js
+export function handleMouseClick(e) { ... }
+
+// networkService.js
+export function handlePacket(p) { ... }
+
+// fileService.js
+export function handleUpload(f) { ... }
+`} />
+
+---
+
+## 3️⃣ Functional Cohesion — The Gold Standard
+
+All functions in a module contribute to a single, well-defined task.
+
+<Code lang="js" title="✅ Functional Cohesion: JWT Service" code={`
+// jwtService.js
+import jwt from 'jsonwebtoken';
+
+const SECRET = process.env.JWT_SECRET;
+
+export function sign(payload) {
+    return jwt.sign(payload, SECRET, { expiresIn: '1h' });
+}
+
+export function verify(token) {
+    try {
+        return jwt.verify(token, SECRET);
+    } catch (err) {
+        return null;
+    }
+}
+
+export function decode(token) {
+    return jwt.decode(token);
+}
+
+// Every function here relates to JWT manipulation.
+// If JWT logic changes, this is the ONLY file you touch.
+`} />
+
+---
+
+## 4️⃣ Class Cohesion in JS
+
+If you use ES6 Classes, the same rules apply. A class should have a single responsibility.
+
+<Code lang="js" title="❌ Low Cohesion: God Class" code={`
+class UserManager {
+    constructor(db, emailer) {
+        this.db = db;
+        this.emailer = emailer;
+    }
+
+    // Auth
+    login(user, pass) { ... }
+    
+    // Profile
+    updateEmail(id, email) { ... }
+    
+    // Billing
+    chargeUser(id, amount) { ... }
+    
+    // Analytics
+    trackLogin(id) { ... }
+}
+// This class changes for Auth reasons, Billing reasons, AND Analytics reasons.
+`} />
+
+### ✅ The Fix: Split Responsibilities
+
+<Code lang="js" title="✅ High Cohesion: Focused Classes" code={`
+class AuthService {
+    login(user, pass) { ... }
+}
+
+class ProfileService {
+    updateEmail(id, email) { ... }
+}
+
+class BillingService {
+    chargeUser(id, amount) { ... }
+}
+
+// Each class has ONE reason to change.
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Small ≠ High Cohesion" icon="error">
+    ```js
+    // Small but LOW cohesion
+    class MathAndEmail {
+        sqrt(n) { return Math.sqrt(n); }
+        sendEmail(to) { ... }
+    }
+    
+    // Large but HIGH cohesion
+    class ComplexParser {
+        tokenize() { ... }
+        parseSyntax() { ... }
+        validateStructure() { ... }
+        generateAST() { ... }
+    }
+    // All methods work together to parse one thing.
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Private Methods Don't Fix Low Cohesion" icon="warning">
+    ```js
+    class ReportService {
+        generate() {
+            this.fetchData();
+            this.chargeUser(); // 💸 Billing logic hidden inside Report!
+            this.sendEmail();
+        }
+        
+        // Making it private doesn't change the fact that 
+        // this class handles Billing AND Reporting.
+        #chargeUser() { ... } 
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 3: Over-Splitting (Anemic Modules)" icon="caution">
+    ```js
+    // validator.js
+    export function validate(o) { ... }
+    
+    // saver.js
+    export function save(o) { ... }
+    
+    // notifier.js
+    export function notify(o) { ... }
+    
+    // If these are always used together, maybe they belong 
+    // in one cohesive OrderProcessor module?
+    // Don't split just for the sake of splitting.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA & Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Functional Composition" icon="rocket">
+```js
+    // High cohesion functions can be composed
+    const sanitize = (str) => str.trim().toLowerCase();
+    const validate = (str) => str.length > 5;
+    const hash = (str) => btoa(str);
+
+    // Cohesive pipeline
+    const processInput = (input) => {
+        const clean = sanitize(input);
+        if (!validate(clean)) throw new Error("Invalid");
+        return hash(clean);
+    };
+```
+  </Card>
+  
+  <Card title="Pattern: Module Encapsulation" icon="shield">
+```js
+    // dbModule.js
+    // Internal state is hidden (High Cohesion)
+    let connection = null;
+
+    export async function connect() {
+        connection = await createConnection();
+    }
+
+    export async function query(sql) {
+        if (!connection) throw new Error("Not connected");
+        return connection.execute(sql);
+    }
+    
+    // Users don't know HOW it connects, just THAT it queries.
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is Cohesion in JS?" icon="information">
+    It’s how related the functions/classes in a **Module** or **Class** are. High cohesion means everything in the file works together for a single purpose.
+  </Card>
+  
+  <Card title="Q: Why is `utils.js` often a bad sign?" icon="error">
+    It usually indicates **Coincidental Cohesion**. Functions are grouped randomly rather than by domain. It becomes hard to maintain and test.
+  </Card>
+
+  <Card title="Q: How do you achieve High Cohesion?" icon="approve-check">
+    1. **Split Modules** by domain (e.g., `auth.js`, `billing.js`).  
+    2. **Single Responsibility**: Each module/class does one thing.  
+    3. **Avoid God Objects**: Don't put unrelated logic in one class.
+  </Card>
+
+  <Card title="Q: Cohesion vs Coupling?" icon="information">
+    They are inverses.  
+    - **High Cohesion** (focused modules) leads to **Low Coupling** (modules depend on few things).  
+    - **Low Cohesion** (god modules) leads to **High Coupling** (everything depends on the god module).
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Cohesion Checklist
+
+| Question | Yes/No | Action |
+|----------|--------|--------|
+| Does this module do one thing? | ✅ | Keep it. |
+| Does it do 3 unrelated things? | ❌ | Split it. |
+| Are functions named vaguely (`handle`, `process`)? | ❌ | Rename or refactor. |
+| Do methods share no state/data? | ❌ | Move them to separate modules. |
+| Is it named `Utils` or `Helper`? | ⚠️ | Check for coincidental cohesion. |
+
+### Refactoring Steps
+
+1. ✅ **Identify God Modules**: Look for large files with unrelated imports.
+2. ✅ **Extract Domains**: Move related functions to new files (e.g., `dateUtils.js`).
+3. ✅ **Use ES Modules**: `export` only what’s needed. Keep internal logic private.
+4. ✅ **Compose**: Import small, cohesive modules where needed.
+
+<Aside type="caution">
+**Final Checklist for High Cohesion**:
+1. ✅ **One Purpose**: Each module/class has a single, clear responsibility.
+2. ✅ **Related Data**: Methods operate on the same data/context.
+3. ✅ **Clear Naming**: Module name reflects its specific job (e.g., `JwtService`, not `AuthHelper`).
+4. ✅ **Easy to Test**: You can test the module without mocking half the app.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="js" title="Predict Cohesion Level" code={`
+// Q1: High or Low?
+// mathUtils.js
+export const PI = 3.14;
+export function add(a, b) { return a + b; }
+export function sendEmail(to, msg) { ... }
+
+// Q2: How to fix?
+class OrderProcessor {
+    validate(order) { ... }
+    saveToDB(order) { ... }
+    chargeCreditCard(order) { ... }
+    sendConfirmation(order) { ... }
+}
+
+// Q3: Why is this better?
+// jwtService.js
+export function sign(data) { ... }
+export function verify(token) { ... }
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Low Cohesion. Email logic doesn't belong in Math utils.
+    Fix: Move sendEmail to emailService.js.
+
+Q2: Low Cohesion (God Class). Handles Validation, DB, Billing, and Notifications.
+    Fix: Split into Validator, OrderRepository, PaymentService, NotificationService.
+
+Q3: High Cohesion. All functions relate to JWT token management.
+```
+</details>
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="JavaScript Modules (ESM)"
+    href="/computer-languages/javascript/topics/modules"
+    description="Import/Export, encapsulation, tree-shaking"
+  />
+  <LinkCard
+    title="Single Responsibility Principle"
+    href="/computer-languages/javascript/oop/solid"
+    description="SRP in JS, functional programming context"
+  />
+  <LinkCard
+    title="JavaScript Coupling"
+    href="/computer-languages/javascript/architecture/coupling"
+    description="Dependency Injection, Event Emitters"
+  />
+  <LinkCard
+    title="Clean Code in JS"
+    href="/computer-languages/javascript/guides/clean-code"
+    description="Naming, functions, modularization"
+  />
+</CardGrid>
+
+<Aside type="note">
+🎯 **Production Pro Tips**  
+1. **Avoid `utils.js`**: Create domain-specific utility modules instead.  
+2. **Tree-Shaking**: High cohesion helps bundlers remove unused code.  
+3. **Testing**: Cohesive modules are easier to unit test in isolation.  
+4. **Refactoring**: If a file is >200 lines and does 3 things, split it. 🛡️
+</Aside>
+
+> 💡 **Final Wisdom**: In JavaScript, **Modules** are the primary unit of cohesion. Keep them focused, named clearly, and single-purpose. This leads to codebases that are easy to navigate, test, and scale. 🚀✨
+
+*Converted for Astro 6 + Starlight • Optimized for interview prep + production use • Quality >>>> Quantity* 🎯
+```
+
+---
+
+## 🔄 Java Cohesion → JS Cohesion Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **Class Cohesion** | **Module Cohesion** | JS modules (files) are the primary unit of organization. |
+| **Package** | **Folder/Directory** | Folders group related modules. |
+| **Private Methods** | **Unexported Functions** | Functions not `exported` are private to the module. |
+| **God Class** | **God Module** | A file with too many unrelated exports. |
+| **LCOM Metric** | **File Analysis** | Tools like SonarQube analyze file complexity. |
+| **Interface Segregation** | **Small Modules** | Export small, focused APIs from modules. |
+
+---
+
+🧠 **Interview Power Move**: When asked about cohesion, always mention:  
+1. **Modules** are the key unit of cohesion in JS.  
+2. **Avoid `utils.js`** dumps; prefer domain-specific modules.  
+3. **Single Responsibility** applies to files, not just classes.  
+4. **High Cohesion** enables **Tree-Shaking** and better **Testing**.  
+5. **Composition** allows combining small, cohesive modules.  
+
+---
+
+
+# 🧲 JavaScript Cohesion
+
+---
+
+## 🔰 What Is Cohesion?
+
+Cohesion = **how strongly related and focused the responsibilities within a single module, class, or function are**. High cohesion = everything in a unit belongs together and works toward one clear purpose.
+
+```js
+// LOW cohesion — one class does everything unrelated:
+class AppUtils {
+  formatDate(date)        { }   // date formatting
+  sendEmail(to, body)     { }   // email sending
+  hashPassword(password)  { }   // security
+  parseCSV(data)          { }   // file parsing
+  calculateTax(amount)    { }   // finance
+  renderButton(label)     { }   // UI
+}
+// "AppUtils" = a junk drawer — zero shared purpose 😱
+
+// HIGH cohesion — one class, one focused purpose:
+class DateFormatter {
+  format(date, pattern)   { }
+  parse(str, pattern)     { }
+  toRelative(date)        { }
+  toISO(date)             { }
+}
+// Everything relates to date formatting ✅
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Cohesion in JavaScript
+│
+├── 📊 Cohesion Types
+│   ├── Coincidental    (worst)
+│   ├── Logical
+│   ├── Temporal
+│   ├── Procedural
+│   ├── Communicational
+│   ├── Sequential
+│   └── Functional      (best)
+│
+├── 🔴 Low Cohesion Patterns
+│   ├── utility/helper classes
+│   ├── god classes
+│   ├── mixed abstraction levels
+│   └── multiple responsibilities
+│
+├── 🟢 High Cohesion Techniques
+│   ├── Single Responsibility Principle
+│   ├── domain-driven grouping
+│   ├── behavior-data co-location
+│   └── role-based decomposition
+│
+├── 📦 Module Cohesion
+│   ├── ESM file cohesion
+│   ├── export surface design
+│   └── internal vs external API
+│
+├── 🔗 Cohesion vs Coupling
+│   ├── inverse relationship
+│   ├── SOLID principles
+│   └── common violations
+│
+├── 🧩 Function Cohesion
+│   ├── function-level SRP
+│   ├── abstraction level consistency
+│   └── command/query separation
+│
+└── ⚙️ Internals
+    ├── V8 hidden class cohesion
+    ├── module evaluation scope
+    └── memory locality
+```
+
+---
+
+## ⚙️ Deep Dive — Why Cohesion Matters to V8
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         COHESION AND V8 OPTIMIZATION                     │
+│                                                          │
+│  HIGH cohesion → stable object shape                     │
+│                                                          │
+│  class User {                                            │
+│    name; email; role; // always same 3 properties        │
+│  }                                                       │
+│  → ONE hidden class for ALL User instances               │
+│  → Property access = O(1) shape-indexed lookup           │
+│  → TurboFan specializes methods for this shape           │
+│                                                          │
+│  LOW cohesion → unstable object shape                    │
+│                                                          │
+│  class GodObject {                                       │
+│    // sometimes has: name, email, products, orders...    │
+│    // sometimes has: config, handlers, cache, state...   │
+│    // properties added dynamically based on use case     │
+│  }                                                       │
+│  → MANY hidden classes (different shapes per use case)   │
+│  → Inline cache misses → slower property access          │
+│  → TurboFan can't specialize → megamorphic call sites    │
+│                                                          │
+│  High cohesion → stable shape → V8 can optimize         │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Cohesion Types — From Worst to Best
+
+### Type 1: Coincidental Cohesion — Worst
+
+```js
+// Elements grouped by chance — no relationship:
+class MiscHelpers {
+  // What do these have in common? NOTHING:
+  formatDate(date)           { return date.toISOString(); }
+  hashPassword(pw)           { return crypto.createHash("sha256").update(pw).digest("hex"); }
+  parseCSV(text)             { return text.split("\n").map(r => r.split(",")); }
+  renderSpinner()            { return "<div class='spinner'></div>"; }
+  calculateCompoundInterest(p, r, n, t) { return p * (1 + r/n) ** (n*t); }
+  connectDatabase(url)       { return new Pool({ connectionString: url }); }
+}
+
+// Problems:
+// → No shared purpose → any change touches unrelated things
+// → Impossible to name accurately ("Helpers", "Utils", "Misc" = red flags)
+// → Grows without bound — everyone adds to it
+// → Tests cover unrelated cases in one file
+// → Cannot reuse parts without importing everything
+
+// Fix: extract each group into its own cohesive unit
+```
+
+---
+
+### Type 2: Logical Cohesion — Grouped by Type Not Purpose
+
+```js
+// All "input handling" — but completely different domains:
+class InputHandlers {
+  handleKeyboard(event)    { return this.#processKeyEvent(event); }
+  handleMouse(event)       { return this.#processMouseEvent(event); }
+  handleTouch(event)       { return this.#processTouchEvent(event); }
+  handleFormSubmit(event)  { return this.#processFormData(event); }
+  handleFileUpload(files)  { return this.#processFiles(files); }
+  // "input handling" — logical category but wrong grouping
+  // Keyboard and file upload share no meaningful state or logic
+}
+
+// Better — group by domain/feature, not by type:
+class FormHandler {
+  #validators; #sanitizers;
+  constructor({ validators, sanitizers }) {
+    this.#validators = validators;
+    this.#sanitizers = sanitizers;
+  }
+  submit(event) { /* form-specific logic */ }
+  upload(files) { /* file handling deeply tied to form */ }
+  validate(data) { /* form validation */ }
+}
+// Everything serves ONE form-handling purpose ✅
+```
+
+---
+
+### Type 3: Temporal Cohesion — Grouped by When, Not Why
+
+```js
+// Startup routine — things that happen at the same time:
+class AppInitializer {
+  async initialize() {
+    await this.#connectDatabase();    // DB concern
+    await this.#loadConfig();         // config concern
+    await this.#startServer();        // HTTP concern
+    await this.#scheduleJobs();       // scheduler concern
+    await this.#warmupCache();        // cache concern
+    await this.#registerPlugins();    // plugin concern
+  }
+}
+// Grouped because they run at startup — not because they're related
+// Change DB startup → touch the same class as server startup 😱
+
+// Better — orchestrate cohesive units:
+class Application {
+  #db; #config; #server; #scheduler; #cache; #plugins;
+
+  constructor({ db, config, server, scheduler, cache, plugins }) {
+    this.#db         = db;
+    this.#config     = config;
+    this.#server     = server;
+    this.#scheduler  = scheduler;
+    this.#cache      = cache;
+    this.#plugins    = plugins;
+  }
+
+  async start() {
+    await this.#config.load();        // Config cohesive unit
+    await this.#db.connect();         // DB cohesive unit
+    await this.#cache.warmup();       // Cache cohesive unit
+    await this.#plugins.initialize(); // Plugin cohesive unit
+    await this.#scheduler.start();    // Scheduler cohesive unit
+    await this.#server.listen();      // Server cohesive unit
+  }
+}
+// Orchestrator delegates to cohesive units ✅
+```
+
+---
+
+### Type 4: Procedural Cohesion — Grouped by Execution Sequence
+
+```js
+// Steps that happen in sequence but serve different concerns:
+class OrderProcessor {
+  process(order) {
+    this.#validateOrder(order);       // validation concern
+    this.#checkInventory(order);      // inventory concern
+    this.#chargePayment(order);       // payment concern
+    this.#updateInventory(order);     // inventory concern (again)
+    this.#createShipment(order);      // shipping concern
+    this.#sendNotification(order);    // notification concern
+    this.#updateAnalytics(order);     // analytics concern
+  }
+}
+// Looks like a pipeline but mixes 6 different concerns
+// Each step belongs to a different domain
+
+// Better — pipeline with cohesive steps:
+class OrderPipeline {
+  #steps;
+  constructor(steps) { this.#steps = steps; }
+
+  async run(order) {
+    for (const step of this.#steps) {
+      await step.execute(order); // each step is its own cohesive unit
+    }
+  }
+}
+
+// Each step is internally cohesive:
+class ValidateOrderStep {
+  execute(order) { /* ONLY validation logic */ }
+}
+class ChargePaymentStep {
+  #paymentGateway;
+  execute(order) { /* ONLY payment logic */ }
+}
+```
+
+---
+
+### Type 5: Communicational Cohesion — Operate on Same Data
+
+```js
+// Better — all methods work on the same order data:
+class OrderCalculator {
+  #taxRates; #discountRules;
+
+  constructor({ taxRates, discountRules }) {
+    this.#taxRates      = taxRates;
+    this.#discountRules = discountRules;
+  }
+
+  subtotal(order)       { return order.items.reduce((s, i) => s + i.price * i.qty, 0); }
+  discount(order)       { return this.#discountRules.apply(order, this.subtotal(order)); }
+  tax(order)            { return (this.subtotal(order) - this.discount(order)) * this.#taxRates.get(order.region); }
+  shipping(order)       { return order.items.reduce((s, i) => s + i.weight, 0) * 0.5; }
+  total(order)          { return this.subtotal(order) - this.discount(order) + this.tax(order) + this.shipping(order); }
+  breakdown(order)      {
+    return {
+      subtotal:  this.subtotal(order),
+      discount:  this.discount(order),
+      tax:       this.tax(order),
+      shipping:  this.shipping(order),
+      total:     this.total(order),
+    };
+  }
+}
+// All methods operate on the same 'order' data structure ✅
+// Cohesive — they share a single data concern
+```
+
+---
+
+### Type 6: Sequential Cohesion — Output of One is Input of Next
+
+```js
+// Each method's output feeds the next — pipeline over same data:
+class TextProcessor {
+  #source;
+
+  constructor(source) { this.#source = source; }
+
+  // Each method transforms same data through a sequence:
+  normalize()  { this.#source = this.#source.trim().toLowerCase(); return this; }
+  sanitize()   { this.#source = this.#source.replace(/[<>'"&]/g, ""); return this; }
+  tokenize()   { this.#tokens = this.#source.split(/\s+/).filter(Boolean); return this; }
+  filter(stopWords) {
+    this.#tokens = this.#tokens.filter(t => !stopWords.has(t));
+    return this;
+  }
+  stem()       { this.#tokens = this.#tokens.map(t => this.#stemWord(t)); return this; }
+  result()     { return this.#tokens; }
+
+  #stemWord(word) {
+    // simple stemming
+    return word.replace(/ing$|ed$|s$/, "");
+  }
+}
+
+// Sequential — each step feeds the next, all serve text processing:
+const tokens = new TextProcessor("  Running and jumped over FENCES  ")
+  .normalize()
+  .sanitize()
+  .tokenize()
+  .filter(new Set(["and", "over"]))
+  .stem()
+  .result();
+// ["run", "jump", "fenc"]
+```
+
+---
+
+### Type 7: Functional Cohesion — Best
+
+```js
+// All elements contribute to ONE well-defined function:
+class PasswordHasher {
+  static #SALT_ROUNDS = 12;
+  static #MIN_ENTROPY = 50; // bits
+
+  // ALL of these serve ONE purpose: secure password hashing
+  static #calculateEntropy(password) {
+    const charsetSize = /[A-Z]/.test(password) ? 26 : 0
+      + /[a-z]/.test(password) ? 26 : 0
+      + /[0-9]/.test(password) ? 10 : 0
+      + /[^A-Za-z0-9]/.test(password) ? 32 : 0;
+    return password.length * Math.log2(charsetSize || 1);
+  }
+
+  static #validate(password) {
+    if (typeof password !== "string") throw new TypeError("Password must be string");
+    if (password.length < 8) throw new RangeError("Password too short");
+    if (this.#calculateEntropy(password) < this.#MIN_ENTROPY) {
+      throw new Error("Password too weak");
+    }
+  }
+
+  static async hash(password) {
+    this.#validate(password);
+    return bcrypt.hash(password, this.#SALT_ROUNDS);
+  }
+
+  static async verify(password, hash) {
+    return bcrypt.compare(password, hash);
+  }
+
+  static isStrong(password) {
+    return this.#calculateEntropy(password) >= this.#MIN_ENTROPY;
+  }
+}
+
+// Every method, field, and helper serves ONE purpose:
+// secure password operations. Nothing else. ✅
+```
+
+---
+
+## 2️⃣ High Cohesion Techniques
+
+### Single Responsibility Principle (SRP)
+
+```js
+// VIOLATION — UserService does too much:
+class UserService {
+  async register(email, password) {
+    // Validation:
+    if (!email.includes("@"))       throw new Error("Invalid email");
+    if (password.length < 8)        throw new Error("Password too short");
+
+    // Persistence:
+    const hash = await bcrypt.hash(password, 12);
+    const user = await db.query("INSERT INTO users...", [email, hash]);
+
+    // Email:
+    await fetch("https://api.sendgrid.com/...", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.SG_KEY}` },
+      body: JSON.stringify({ to: email, subject: "Welcome!" })
+    });
+
+    // Analytics:
+    await fetch("https://api.segment.com/...", {
+      method: "POST",
+      body: JSON.stringify({ event: "user_registered", userId: user.id })
+    });
+
+    // Caching:
+    await redis.set(`user:${user.id}`, JSON.stringify(user), "EX", 3600);
+
+    return user;
+  }
+}
+// ONE method touches: validation, SQL, HTTP, analytics, caching 😱
+
+// HIGH COHESION — each class has ONE responsibility:
+class UserValidator {
+  validate({ email, password }) {
+    if (!email?.includes("@"))  throw new ValidationError("Invalid email");
+    if (password?.length < 8)   throw new ValidationError("Password too short");
+    if (!password)              throw new ValidationError("Password required");
+  }
+}
+
+class UserRepository {
+  async save({ email, passwordHash }) {
+    const { rows } = await db.query(
+      "INSERT INTO users (email, password_hash) VALUES ($1,$2) RETURNING *",
+      [email, passwordHash]
+    );
+    return rows[0];
+  }
+}
+
+class WelcomeMailer {
+  async send(email) {
+    await this.#mailerClient.send({ to: email, template: "welcome" });
+  }
+}
+
+class UserCache {
+  async set(user) { await redis.set(`user:${user.id}`, JSON.stringify(user), "EX", 3600); }
+  async get(id)   { const raw = await redis.get(`user:${id}`); return raw ? JSON.parse(raw) : null; }
+}
+
+// Orchestrator — coordinates cohesive units:
+class UserRegistrationService {
+  #validator; #hasher; #repo; #mailer; #cache; #analytics;
+
+  constructor({ validator, hasher, repo, mailer, cache, analytics }) {
+    this.#validator = validator;
+    this.#hasher    = hasher;
+    this.#repo      = repo;
+    this.#mailer    = mailer;
+    this.#cache     = cache;
+    this.#analytics = analytics;
+  }
+
+  async register(email, password) {
+    this.#validator.validate({ email, password });
+
+    const passwordHash = await this.#hasher.hash(password);
+    const user         = await this.#repo.save({ email, passwordHash });
+
+    await this.#cache.set(user);
+    await this.#mailer.send(email);
+    await this.#analytics.track("user_registered", { userId: user.id });
+
+    return user;
+  }
+}
+```
+
+### Behavior-Data Co-location
+
+```js
+// LOW cohesion — data and behavior in different places:
+// data-store.js:
+const users = new Map();
+
+// user-utils.js:
+function formatUserName(userId) {
+  const user = users.get(userId); // reaches across files
+  return `${user.firstName} ${user.lastName}`;
+}
+
+function validateUser(userId) {
+  const user = users.get(userId);
+  return user.email.includes("@");
+}
+
+// HIGH cohesion — data and behavior together:
+class User {
+  #firstName; #lastName; #email; #role;
+
+  constructor({ firstName, lastName, email, role = "user" }) {
+    this.#firstName = firstName;
+    this.#lastName  = lastName;
+    this.#email     = email;
+    this.#role      = role;
+  }
+
+  // Behavior lives with the data it operates on:
+  get fullName()    { return `${this.#firstName} ${this.#lastName}`; }
+  get isValid()     { return this.#email.includes("@") && this.#firstName.length > 0; }
+  get isAdmin()     { return this.#role === "admin"; }
+  get initials()    { return `${this.#firstName[0]}${this.#lastName[0]}`.toUpperCase(); }
+
+  toJSON() {
+    return { firstName: this.#firstName, lastName: this.#lastName,
+             email: this.#email, role: this.#role };
+  }
+}
+```
+
+---
+
+## 3️⃣ Module Cohesion — File as Cohesion Boundary
+
+### Cohesive Module Design
+
+```js
+// LOW cohesion — utils.mjs exports unrelated things:
+// utils.mjs:
+export function formatDate(date) { }
+export function parseQueryString(qs) { }
+export function hashPassword(pw) { }
+export function sanitizeHtml(html) { }
+export const COLORS = { primary: "#007bff" };
+export class EventEmitter { }
+// "utils" = no cohesion = catch-all = tech debt magnet 😱
+
+// HIGH cohesion — each module has one clear domain:
+// date-formatter.mjs:
+export function format(date, pattern)   { /* date formatting */ }
+export function parse(str, pattern)     { /* date parsing */ }
+export function toRelative(date)        { /* "3 hours ago" */ }
+export function toISO(date)             { /* ISO 8601 */ }
+export const FORMATS = { short: "MM/DD/YYYY", long: "MMMM D, YYYY" };
+// Every export relates to date formatting ✅
+
+// password-security.mjs:
+export async function hash(password)           { /* bcrypt hash */ }
+export async function verify(password, hash)   { /* compare */ }
+export function isStrong(password)             { /* entropy check */ }
+export function generateRandom(length = 16)   { /* random pw */ }
+// Every export relates to password security ✅
+```
+
+### Export Surface = Public API = Cohesion Signal
+
+```js
+// The exports of a module define its cohesion contract:
+// session-manager.mjs
+
+// ── Private (not exported) — internal to this module ────
+import { redis }  from "./redis.mjs";
+import { logger } from "./logger.mjs";
+
+const SESSION_TTL   = 86400;    // private constant
+const SESSION_PREFIX = "sess:"; // private constant
+
+function buildKey(sessionId) {
+  return `${SESSION_PREFIX}${sessionId}`;
+}
+
+async function serializeSession(session) {
+  return JSON.stringify({ ...session, serializedAt: Date.now() });
+}
+
+// ── Public (exported) — the cohesive session management API ──
+export async function create(userId, metadata = {}) {
+  const sessionId = crypto.randomUUID();
+  const session   = { userId, metadata, createdAt: Date.now() };
+  await redis.set(buildKey(sessionId), await serializeSession(session), "EX", SESSION_TTL);
+  logger.info(`Session created: ${sessionId}`);
+  return sessionId;
+}
+
+export async function get(sessionId) {
+  const raw = await redis.get(buildKey(sessionId));
+  return raw ? JSON.parse(raw) : null;
+}
+
+export async function refresh(sessionId) {
+  const session = await get(sessionId);
+  if (!session) throw new Error(`Session ${sessionId} not found`);
+  await redis.expire(buildKey(sessionId), SESSION_TTL);
+  return session;
+}
+
+export async function destroy(sessionId) {
+  await redis.del(buildKey(sessionId));
+  logger.info(`Session destroyed: ${sessionId}`);
+}
+
+export async function getUserSessions(userId) {
+  const keys = await redis.keys(`${SESSION_PREFIX}*`);
+  const sessions = await Promise.all(keys.map(k => redis.get(k)));
+  return sessions
+    .filter(Boolean)
+    .map(JSON.parse)
+    .filter(s => s.userId === userId);
+}
+// Every export is about session management — nothing else ✅
+```
+
+---
+
+## 4️⃣ Function Cohesion — Single Level of Abstraction
+
+### Mixed Abstraction Levels — Low Function Cohesion
+
+```js
+// LOW cohesion — mixes high and low abstraction levels:
+async function processUserRegistration(email, password, firstName, lastName, planId) {
+  // Low level — validation detail:
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Invalid email format");
+  }
+  if (password.length < 8 || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+    throw new Error("Password must be 8+ chars with uppercase and number");
+  }
+
+  // Mid level — business rule:
+  const existing = await db.query("SELECT id FROM users WHERE email=$1", [email]);
+  if (existing.rows.length > 0) throw new Error("Email taken");
+
+  // Low level — crypto detail:
+  const salt = await bcrypt.genSalt(12);
+  const hash = await bcrypt.hash(password, salt);
+
+  // Low level — SQL detail:
+  const result = await db.query(
+    "INSERT INTO users (email, password_hash, first_name, last_name) VALUES ($1,$2,$3,$4) RETURNING *",
+    [email, hash, firstName, lastName]
+  );
+  const user = result.rows[0];
+
+  // Mid level — business rule:
+  const plan = await db.query("SELECT * FROM plans WHERE id=$1", [planId]);
+  await db.query("INSERT INTO subscriptions (user_id, plan_id) VALUES ($1,$2)", [user.id, planId]);
+
+  // Low level — HTTP detail:
+  await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SG_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ to: email, subject: "Welcome!", template_id: "d-xxx" })
+  });
+
+  return user;
+}
+// 7 different abstraction levels in one function 😱
+
+// HIGH cohesion — consistent abstraction level:
+async function processUserRegistration(email, password, name, planId) {
+  validateCredentials(email, password);               // high level
+  await assertEmailAvailable(email);                  // high level
+  const user = await createUserAccount(email, password, name); // high level
+  await assignSubscriptionPlan(user.id, planId);      // high level
+  await sendWelcomeEmail(user.email, user.firstName); // high level
+  return user;
+}
+// Every line is same abstraction level — reads like requirements ✅
+```
+
+### Command/Query Separation (CQS)
+
+```js
+// VIOLATION — one function both mutates AND returns computed value:
+class ShoppingCart {
+  #items = [];
+  #discount = 0;
+
+  // Bad — adds item AND returns total in one call:
+  addItemAndGetTotal(item) {
+    this.#items.push(item);               // command (mutation)
+    return this.#items.reduce(            // query (computation)
+      (sum, i) => sum + i.price * i.qty, 0
+    ) * (1 - this.#discount);
+    // Cohesion broken: mutation + calculation = two responsibilities
+  }
+}
+
+// GOOD — separate commands from queries:
+class ShoppingCart {
+  #items   = [];
+  #discount = 0;
+
+  // Commands (mutate, return void/this):
+  addItem(item)          { this.#items.push(item); return this; }
+  removeItem(itemId)     { this.#items = this.#items.filter(i => i.id !== itemId); return this; }
+  applyDiscount(rate)    { this.#discount = rate; return this; }
+  clear()                { this.#items = []; this.#discount = 0; return this; }
+
+  // Queries (no mutation, return values):
+  get subtotal()         { return this.#items.reduce((s, i) => s + i.price * i.qty, 0); }
+  get discountAmount()   { return this.subtotal * this.#discount; }
+  get total()            { return this.subtotal - this.discountAmount; }
+  get itemCount()        { return this.#items.reduce((n, i) => n + i.qty, 0); }
+  get isEmpty()          { return this.#items.length === 0; }
+  toJSON()               { return { items: [...this.#items], discount: this.#discount, total: this.total }; }
+}
+// Mutations and reads are fully separated ✅
+// Each method has ONE job — either mutate OR read
+```
+
+---
+
+## 5️⃣ Cohesion vs Coupling — The Relationship
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         COHESION AND COUPLING — INVERSE PRESSURE         │
+│                                                          │
+│  Goal: HIGH cohesion + LOW coupling                      │
+│                                                          │
+│  HIGH cohesion                                           │
+│  → related things are TOGETHER in one unit               │
+│  → unrelated things are SEPARATED into own units         │
+│  → each unit has clear, single purpose                   │
+│                                                          │
+│  LOW coupling                                            │
+│  → units depend on each other MINIMALLY                  │
+│  → communication via abstractions/interfaces             │
+│  → change one unit without touching others               │
+│                                                          │
+│  They reinforce each other:                              │
+│  Splitting a god class → higher cohesion per unit        │
+│  + lower coupling because smaller units have fewer deps  │
+│                                                          │
+│  Common trap:                                            │
+│  Splitting too much → micro-classes with ONE method      │
+│  → artificially low cohesion inside, high coupling       │
+│    because everything depends on everything else         │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// THE TENSION — splitting for cohesion can increase coupling:
+
+// Option A — ONE class (lower coupling, lower cohesion):
+class OrderService {
+  async create(data)  { /* validation + save + notify */ }
+  async cancel(id)    { /* validation + update + notify */ }
+  async refund(id)    { /* payment + update + notify */ }
+}
+
+// Option B — MANY classes (higher cohesion, potentially higher coupling):
+class OrderValidator    { validate(data) { } }
+class OrderRepository   { save(order) { } update(id, data) { } }
+class OrderNotifier     { notifyCreated(order) { } notifyCancelled(order) { } }
+class PaymentRefunder   { refund(orderId) { } }
+class OrderService      {
+  constructor({ validator, repo, notifier, refunder }) { }
+  // Now depends on 4 classes vs 0 ← more coupling between units
+  // BUT each unit is more cohesive ✅
+}
+
+// Balance: cohesion within units, loose coupling between units
+// via dependency injection + interfaces
+```
+
+---
+
+## 6️⃣ God Class Anti-Pattern — The Cohesion Killer
+
+```js
+// GOD CLASS — does everything, knows everything:
+class Application {
+  #users     = new Map();
+  #orders    = new Map();
+  #products  = new Map();
+  #sessions  = new Map();
+  #config    = {};
+  #db;
+  #cache;
+
+  // User management:
+  createUser(data)           { }
+  updateUser(id, data)       { }
+  deleteUser(id)             { }
+  authenticateUser(email, pw){ }
+
+  // Order management:
+  createOrder(userId, items) { }
+  cancelOrder(id)            { }
+  refundOrder(id)            { }
+
+  // Product management:
+  addProduct(data)           { }
+  updateStock(id, qty)       { }
+  searchProducts(query)      { }
+
+  // Session management:
+  createSession(userId)      { }
+  validateSession(token)     { }
+  destroySession(token)      { }
+
+  // Email:
+  sendWelcomeEmail(email)    { }
+  sendOrderConfirmation(id)  { }
+
+  // DB:
+  executeQuery(sql, params)  { }
+  runTransaction(fn)         { }
+
+  // Config:
+  loadConfig()               { }
+  getConfigValue(key)        { }
+}
+// Application knows everything — changing ANYTHING risks breaking everything 😱
+
+// FIX — decompose into cohesive services:
+class UserService      { /* user domain only */ }
+class OrderService     { /* order domain only */ }
+class ProductService   { /* product domain only */ }
+class SessionService   { /* session domain only */ }
+class EmailService     { /* email sending only */ }
+class DatabaseService  { /* DB operations only */ }
+class ConfigService    { /* config loading only */ }
+
+class Application {
+  constructor({ userService, orderService, productService, ... }) {
+    // Orchestrates cohesive units — knows nothing about internals
+  }
+}
+```
+
+---
+
+## 7️⃣ Measuring Cohesion — LCOM
+
+```js
+// Lack of Cohesion of Methods (LCOM) — informal JS version:
+// High LCOM = low cohesion
+// Low LCOM  = high cohesion
+
+class CohesionAnalyzer {
+  // Analyze which fields each method accesses:
+  analyze(className, methods) {
+    const fieldSets = methods.map(m => new Set(m.accessedFields));
+    let sharedPairs = 0;
+    let totalPairs  = 0;
+
+    for (let i = 0; i < fieldSets.length; i++) {
+      for (let j = i + 1; j < fieldSets.length; j++) {
+        totalPairs++;
+        // If methods share at least one field → related:
+        const shared = [...fieldSets[i]].some(f => fieldSets[j].has(f));
+        if (shared) sharedPairs++;
+      }
+    }
+
+    const lcom = totalPairs > 0 ? 1 - (sharedPairs / totalPairs) : 0;
+    return {
+      className,
+      lcom,              // 0 = perfect cohesion, 1 = no cohesion
+      verdict: lcom < 0.3 ? "✅ Cohesive" : lcom < 0.7 ? "⚠️ Moderate" : "❌ Low cohesion",
+      sharedPairs,
+      totalPairs
+    };
+  }
+}
+
+// Example analysis:
+const analyzer = new CohesionAnalyzer();
+
+// Cohesive class — methods share fields:
+analyzer.analyze("DateFormatter", [
+  { name: "format",     accessedFields: ["locale", "pattern"] },
+  { name: "parse",      accessedFields: ["locale", "pattern"] },
+  { name: "toRelative", accessedFields: ["locale"] },
+  { name: "toISO",      accessedFields: ["pattern"] },
+]);
+// sharedPairs = 5/6 → LCOM ≈ 0.17 → ✅ Cohesive
+
+// God class — methods don't share fields:
+analyzer.analyze("AppUtils", [
+  { name: "formatDate",       accessedFields: ["dateLocale"] },
+  { name: "sendEmail",        accessedFields: ["smtpConfig"] },
+  { name: "hashPassword",     accessedFields: ["bcryptRounds"] },
+  { name: "parseCSV",         accessedFields: ["csvDelimiter"] },
+  { name: "calculateTax",     accessedFields: ["taxRates"] },
+]);
+// sharedPairs = 0/10 → LCOM = 1.0 → ❌ Low cohesion
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Domain Model with High Cohesion
+
+```js
+class Order {
+  // All state relates to ONE order:
+  #id;
+  #userId;
+  #items;
+  #status;
+  #payments    = [];
+  #statusLog   = [];
+  #createdAt;
+  #updatedAt;
+
+  static #VALID_TRANSITIONS = {
+    pending:    ["confirmed", "cancelled"],
+    confirmed:  ["processing", "cancelled"],
+    processing: ["shipped", "cancelled"],
+    shipped:    ["delivered", "returned"],
+    delivered:  [],
+    cancelled:  [],
+    returned:   ["refunded"],
+    refunded:   [],
+  };
+
+  constructor({ id, userId, items }) {
+    if (!items?.length) throw new Error("Order must have items");
+    this.#id        = id ?? crypto.randomUUID();
+    this.#userId    = userId;
+    this.#items     = items.map(i => ({ ...i }));
+    this.#status    = "pending";
+    this.#createdAt = new Date();
+    this.#updatedAt = new Date();
+    this.#logStatus("pending", "Order created");
+  }
+
+  // ── Queries (no mutation) ─────────────────────────────
+  get id()        { return this.#id; }
+  get userId()    { return this.#userId; }
+  get status()    { return this.#status; }
+  get items()     { return this.#items.map(i => ({ ...i })); } // copy
+  get createdAt() { return this.#createdAt; }
+  get updatedAt() { return this.#updatedAt; }
+
+  get subtotal() {
+    return this.#items.reduce((sum, i) => sum + i.price * i.qty, 0);
+  }
+
+  get total() {
+    const paid = this.#payments
+      .filter(p => p.status === "succeeded")
+      .reduce((s, p) => s + p.amount, 0);
+    return paid || this.subtotal;
+  }
+
+  get isPaid() {
+    return this.#payments.some(p => p.status === "succeeded");
+  }
+
+  get canBeCancelled() {
+    return ["pending", "confirmed"].includes(this.#status);
+  }
+
+  get history() { return [...this.#statusLog]; }
+
+  // ── Commands (mutation, return this) ─────────────────
+  #transition(newStatus, reason) {
+    const allowed = Order.#VALID_TRANSITIONS[this.#status];
+    if (!allowed.includes(newStatus)) {
+      throw new Error(`Cannot transition from ${this.#status} to ${newStatus}`);
+    }
+    this.#status    = newStatus;
+    this.#updatedAt = new Date();
+    this.#logStatus(newStatus, reason);
+    return this;
+  }
+
+  confirm(reason = "Payment confirmed")  { return this.#transition("confirmed", reason); }
+  process(reason = "Processing started") { return this.#transition("processing", reason); }
+  ship(trackingId)                       {
+    this.trackingId = trackingId;
+    return this.#transition("shipped", `Shipped: ${trackingId}`);
+  }
+  deliver()                              { return this.#transition("delivered", "Delivered"); }
+  cancel(reason = "Cancelled")           { return this.#transition("cancelled", reason); }
+  returnOrder(reason)                    { return this.#transition("returned", reason); }
+
+  addPayment(payment) {
+    this.#payments.push({ ...payment, recordedAt: new Date() });
+    this.#updatedAt = new Date();
+    return this;
+  }
+
+  // ── Private helpers ───────────────────────────────────
+  #logStatus(status, reason) {
+    this.#statusLog.push({ status, reason, at: new Date() });
+  }
+
+  toJSON() {
+    return {
+      id:        this.#id,
+      userId:    this.#userId,
+      items:     this.items,
+      status:    this.#status,
+      subtotal:  this.subtotal,
+      total:     this.total,
+      isPaid:    this.isPaid,
+      createdAt: this.#createdAt.toISOString(),
+      updatedAt: this.#updatedAt.toISOString(),
+    };
+  }
+}
+```
+
+### Pattern 2 — Highly Cohesive Validator
+
+```js
+// All validation logic for one domain object — nothing else:
+class UserValidator {
+  static #EMAIL_RE  = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  static #NAME_RE   = /^[\p{L}\s'-]{2,100}$/u;
+  static #ROLES     = new Set(["user", "admin", "moderator", "guest"]);
+
+  // All serve one purpose: validating a User:
+  static #validateEmail(email) {
+    if (typeof email !== "string") throw new TypeError("Email must be a string");
+    if (!this.#EMAIL_RE.test(email)) throw new ValidationError("email", "Invalid email format");
+    if (email.length > 254) throw new ValidationError("email", "Email too long");
+  }
+
+  static #validatePassword(password) {
+    if (typeof password !== "string") throw new TypeError("Password must be a string");
+    if (password.length < 8)    throw new ValidationError("password", "Too short — min 8 chars");
+    if (password.length > 128)  throw new ValidationError("password", "Too long — max 128 chars");
+    if (!/[A-Z]/.test(password)) throw new ValidationError("password", "Needs uppercase letter");
+    if (!/[0-9]/.test(password)) throw new ValidationError("password", "Needs a digit");
+  }
+
+  static #validateName(name, field = "name") {
+    if (typeof name !== "string")  throw new TypeError(`${field} must be a string`);
+    if (!this.#NAME_RE.test(name)) throw new ValidationError(field, `Invalid ${field}`);
+  }
+
+  static #validateRole(role) {
+    if (!this.#ROLES.has(role)) {
+      throw new ValidationError("role", `Role must be: ${[...this.#ROLES].join(", ")}`);
+    }
+  }
+
+  static #validateAge(age) {
+    if (!Number.isInteger(age) || age < 13 || age > 120) {
+      throw new ValidationError("age", "Age must be 13–120");
+    }
+  }
+
+  // Public API — validate partial or full user:
+  static validateRegistration({ email, password, firstName, lastName }) {
+    this.#validateEmail(email);
+    this.#validatePassword(password);
+    this.#validateName(firstName, "firstName");
+    this.#validateName(lastName,  "lastName");
+  }
+
+  static validateUpdate(changes) {
+    if (changes.email)     this.#validateEmail(changes.email);
+    if (changes.firstName) this.#validateName(changes.firstName, "firstName");
+    if (changes.lastName)  this.#validateName(changes.lastName,  "lastName");
+    if (changes.role)      this.#validateRole(changes.role);
+    if (changes.age)       this.#validateAge(changes.age);
+  }
+
+  static isValidEmail(email)    { return this.#EMAIL_RE.test(email); }
+  static isValidName(name)      { return this.#NAME_RE.test(name); }
+  static isValidRole(role)      { return this.#ROLES.has(role); }
+}
+```
+
+### Pattern 3 — Cohesive Event System
+
+```js
+// Highly cohesive event bus — all about event pub/sub:
+class TypedEventBus {
+  #handlers    = new Map();
+  #onceHandlers = new Map();
+  #middleware  = [];
+  #eventLog    = [];
+  #maxLog;
+
+  constructor({ maxLog = 100 } = {}) {
+    this.#maxLog = maxLog;
+  }
+
+  // ── Subscription ───────────────────────────────────────
+  on(event, handler) {
+    this.#assertHandler(handler);
+    if (!this.#handlers.has(event)) this.#handlers.set(event, new Set());
+    this.#handlers.get(event).add(handler);
+    return () => this.off(event, handler); // returns unsubscribe
+  }
+
+  once(event, handler) {
+    this.#assertHandler(handler);
+    const wrapper = async (data) => {
+      this.off(event, wrapper);
+      return handler(data);
+    };
+    wrapper._original = handler;
+    return this.on(event, wrapper);
+  }
+
+  off(event, handler) {
+    const handlers = this.#handlers.get(event);
+    if (!handlers) return false;
+    const direct  = handlers.delete(handler);
+    // Also check once-wrappers:
+    const wrapped = [...handlers].find(h => h._original === handler);
+    if (wrapped) handlers.delete(wrapped);
+    return direct || !!wrapped;
+  }
+
+  // ── Middleware ─────────────────────────────────────────
+  use(middleware) {
+    this.#assertHandler(middleware);
+    this.#middleware.push(middleware);
+    return this;
+  }
+
+  // ── Emission ───────────────────────────────────────────
+  async emit(event, data) {
+    const payload = await this.#runMiddleware(event, data);
+    this.#log(event, payload);
+
+    const results = await Promise.allSettled([
+      ...(this.#handlers.get(event) ?? []),
+      ...(this.#handlers.get("*") ?? []),
+    ].map(h => h(payload)));
+
+    const failed = results.filter(r => r.status === "rejected");
+    if (failed.length > 0) {
+      failed.forEach(f => this.emit("error", { event, error: f.reason }));
+    }
+
+    return results;
+  }
+
+  // ── Queries ────────────────────────────────────────────
+  listenerCount(event) { return this.#handlers.get(event)?.size ?? 0; }
+  hasListeners(event)  { return (this.#handlers.get(event)?.size ?? 0) > 0; }
+  get events()         { return [...this.#handlers.keys()]; }
+  get log()            { return [...this.#eventLog]; }
+
+  // ── Private helpers ────────────────────────────────────
+  #assertHandler(fn) {
+    if (typeof fn !== "function") throw new TypeError("Handler must be a function");
+  }
+
+  async #runMiddleware(event, data) {
+    let payload = data;
+    for (const mw of this.#middleware) {
+      payload = await mw(event, payload) ?? payload;
+    }
+    return payload;
+  }
+
+  #log(event, data) {
+    this.#eventLog.push({ event, data, at: Date.now() });
+    if (this.#eventLog.length > this.#maxLog) this.#eventLog.shift();
+  }
+}
+// Every method, field, and helper serves event pub/sub ✅
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: "Utils" and "Helpers" are always low cohesion signals
+
+```js
+// These names are red flags for coincidental cohesion:
+// utils.js, helpers.js, common.js, shared.js, misc.js
+
+// If you find yourself adding to utils.js — ask:
+// "What concept unifies ALL items in this file?"
+
+// If the answer is "they're all utility functions" → split by domain:
+// utils/date.js       → DateUtils (date formatting, parsing)
+// utils/string.js     → StringUtils (truncate, slugify, capitalize)
+// utils/array.js      → ArrayUtils (chunk, flatten, unique)
+// utils/validation.js → Validators (email, phone, url checks)
+
+// EXCEPT: some utilities ARE cohesive around a concept:
+// math-utils.js — all functions operate on numbers → cohesive ✅
+// color-utils.js — all functions convert/manipulate colors → cohesive ✅
+// The domain "math" or "color" IS the unifying concept ✅
+
+// It's not the word "utils" that's wrong —
+// it's the LACK OF UNIFYING CONCEPT that signals low cohesion
+```
+
+---
+
+### Trap 2: Splitting too much destroys cohesion at the wrong level
+
+```js
+// OVER-SPLIT — each class has ONE method:
+class UserEmailValidator { validate(email) { } }
+class UserPasswordValidator { validate(pw) { } }
+class UserNameValidator { validate(name) { } }
+class UserAgeValidator { validate(age) { } }
+
+// Now caller must know about 4 classes just to validate a user:
+new UserEmailValidator().validate(email);
+new UserPasswordValidator().validate(password);
+new UserNameValidator().validate(name);
+new UserAgeValidator().validate(age);
+// Low cohesion at the CALLER level now — must coordinate 4 validators 😱
+// Also: high coupling — caller depends on all 4
+
+// RIGHT — cohesive at the right granularity:
+class UserValidator {
+  validateEmail(email)    { /* email rules */ }
+  validatePassword(pw)    { /* password rules */ }
+  validateName(name)      { /* name rules */ }
+  validateAge(age)        { /* age rules */ }
+
+  validateRegistration({ email, password, name, age }) {
+    this.validateEmail(email);
+    this.validatePassword(password);
+    this.validateName(name);
+    this.validateAge(age);
+  }
+}
+// Cohesive: one class owns all user validation ✅
+// Right granularity: caller needs ONE dependency ✅
+```
+
+---
+
+### Trap 3: Mixing abstraction levels destroys function cohesion
+
+```js
+// LOW cohesion — mixes policy (what) and mechanism (how):
+async function registerUser(email, password) {
+  // Policy level (what):
+  if (await userExists(email)) throw new ConflictError("Email taken");
+
+  // Mechanism level (how) — SQL directly in business logic 😱:
+  const salt = await bcrypt.genSalt(12);
+  const hash = await bcrypt.hash(password, salt);
+  const { rows } = await pool.query(
+    "INSERT INTO users (email, hash) VALUES ($1, $2) RETURNING *",
+    [email, hash]
+  );
+
+  // Policy level again:
+  await sendWelcomeEmail(rows[0].email);
+  return rows[0];
+}
+
+// HIGH cohesion — consistent policy level:
+async function registerUser(email, password) {
+  await assertEmailAvailable(email);           // policy ✅
+  const user = await createUser(email, password); // policy ✅
+  await sendWelcomeEmail(user.email);          // policy ✅
+  return user;
+}
+
+// Details live in their own cohesive functions:
+async function createUser(email, password) {
+  const hash = await hashPassword(password);   // mechanism
+  return userRepo.save({ email, passwordHash: hash }); // mechanism
+}
+```
+
+---
+
+### Trap 4: Data classes without behavior = anemic domain model
+
+```js
+// ANEMIC — class only holds data, behavior lives elsewhere:
+class Order {
+  constructor(data) { Object.assign(this, data); }
+  // No methods — just a data bag 😱
+}
+
+// All behavior in a separate service:
+class OrderService {
+  static calculateTotal(order)     { return order.items.reduce(...); }
+  static canBeCancelled(order)     { return order.status === "pending"; }
+  static applyDiscount(order, pct) { order.discountPct = pct; } // mutates order directly
+  static validateItems(order)      { /* reaches into order's structure */ }
+}
+
+// Problems:
+// 1. Order class has zero cohesion — no behavior belongs to it
+// 2. OrderService has artificial cohesion — all about Order, but separate
+// 3. Business rules live OUTSIDE the entity they govern
+// 4. Change Order's structure → must find all OrderService methods
+
+// HIGH COHESION — behavior lives WITH data:
+class Order {
+  #items; #status; #discountPct = 0;
+
+  constructor(items) { this.#items = items; this.#status = "pending"; }
+
+  // Behavior lives WITH the data it operates on:
+  get total()      { return this.subtotal * (1 - this.#discountPct); }
+  get subtotal()   { return this.#items.reduce((s,i) => s + i.price * i.qty, 0); }
+  get canCancel()  { return this.#status === "pending"; }
+
+  applyDiscount(pct) {
+    if (pct < 0 || pct > 1) throw new RangeError("Discount 0–1");
+    this.#discountPct = pct;
+    return this;
+  }
+
+  cancel() {
+    if (!this.canCancel) throw new Error("Cannot cancel");
+    this.#status = "cancelled";
+    return this;
+  }
+}
+```
+
+---
+
+### Trap 5: Constructor doing too much — temporal cohesion in initialization
+
+```js
+// LOW cohesion constructor — does unrelated initialization:
+class WebServer {
+  constructor(port) {
+    this.app = express();           // HTTP setup
+    this.db  = new Pool(DB_URL);   // Database setup — different concern!
+    this.cache = new Redis(REDIS); // Cache setup — different concern!
+    this.logger = pino();          // Logging setup — different concern!
+
+    // Middleware setup — HTTP concern, ok:
+    this.app.use(express.json());
+    this.app.use(cors());
+
+    // Configuring DB — not HTTP server's concern 😱:
+    this.db.on("error", err => this.logger.error(err));
+    this.db.query("SET search_path=public");
+
+    this.app.listen(port);
+  }
+}
+
+// HIGH cohesion — WebServer only cares about HTTP:
+class WebServer {
+  #app; #port;
+
+  constructor(port, middlewares = []) {
+    this.#app  = express();
+    this.#port = port;
+    middlewares.forEach(m => this.#app.use(m)); // HTTP concern ✅
+  }
+
+  addRoute(method, path, handler) {
+    this.#app[method](path, handler);
+    return this;
+  }
+
+  async start() {
+    return new Promise(resolve =>
+      this.#app.listen(this.#port, resolve)
+    );
+  }
+}
+
+// Database has its own cohesive class:
+class DatabaseService {
+  constructor(config) { this.#pool = new Pool(config); }
+  async connect() { /* validate connection */ }
+  query(sql, p) { return this.#pool.query(sql, p); }
+}
+```
+
+---
+
+## 📊 Cohesion Types Quick Reference
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         COHESION TYPES — BEST TO WORST                   │
+├─────────────────────┬────────────────────────────────────┤
+│ Type                │ Characteristic                     │
+├─────────────────────┼────────────────────────────────────┤
+│ 7. Functional ✅✅  │ All elements serve ONE function    │
+│ 6. Sequential ✅    │ Output of one = input of next      │
+│ 5. Communicational ✅│ Operate on same data set          │
+│ 4. Procedural ⚠️    │ Sequential steps, mixed domains   │
+│ 3. Temporal ⚠️      │ Execute at same time              │
+│ 2. Logical ⚠️       │ Same category, unrelated behavior │
+│ 1. Coincidental ❌  │ No relationship — junk drawer     │
+└─────────────────────┴────────────────────────────────────┘
+```
+
+---
+
+## 📊 DSA / Internals Connection
+
+> Cohesion maps directly to the **information hiding** principle in CS theory (Parnas, 1972) — a module should encapsulate one design decision. High cohesion = one decision encapsulated. Low cohesion = multiple unrelated decisions in one unit, hiding nothing.
+>
+> In V8, cohesion has a direct performance connection via **hidden classes (shapes)**. A cohesive class always creates objects with the same properties in the same order → all instances share ONE hidden class → property access via shape-indexed lookup → O(1), cache-friendly. A low-cohesion god class creates objects with different properties depending on which methods you call → multiple hidden classes → inline cache becomes **polymorphic** (2–4 shapes) or **megamorphic** (5+ shapes) → slower property access on every access in hot code paths.
+>
+> The **LCOM (Lack of Cohesion of Methods)** metric is a graph theory problem: create a bipartite graph where methods and instance variables are nodes, edges connect methods to variables they access. LCOM = number of disconnected subgraphs in this bipartite graph. Zero disconnected components = perfectly cohesive. Multiple disconnected components = the class should be split.
+
+---

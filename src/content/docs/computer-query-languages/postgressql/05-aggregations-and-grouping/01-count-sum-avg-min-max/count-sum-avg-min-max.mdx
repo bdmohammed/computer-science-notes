@@ -1,0 +1,681 @@
+---
+title: PostgreSQL Aggregates (COUNT, SUM, AVG, MIN, MAX)
+slug: computer-query-languages/postgresql/aggregations-and-grouping/count-sum-avg-min-max
+description: Master aggregate functions in PostgreSQL — NULL handling, execution order, FILTER clause, streaming internals, and production-safe patterns.
+sidebar:
+  label: "Aggregates"
+  badge:
+    text: Querying
+    variant: tip
+tags: [postgresql, aggregates, count, sum, avg, min, max, group-by, having, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 📊 COUNT, SUM, AVG, MIN, MAX — Complete Guide
+
+> **Aggregate functions collapse many rows into one value — but each has hidden behavior around NULLs, empty sets, and duplicates that silently produces wrong answers in production if you don't know the rules.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of aggregates as **single-pass stream operators**. PostgreSQL processes rows sequentially, maintaining running state (count, sum, min/max). This is why filtering early with `WHERE` is critical for performance.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where Aggregates Live
+
+```text
+1. FROM      ← Load tables
+2. WHERE     ← Filter rows BEFORE aggregation
+3. GROUP BY  ← Group filtered rows
+4. HAVING    ← Filter groups AFTER aggregation
+5. SELECT    ← Aggregates computed HERE ✅
+6. ORDER BY  ← Sort aggregated results
+7. LIMIT     ← Truncate output
+```
+
+<Code lang="sql" title="Execution flow in practice" code={`
+aggregations-and-grouping/count-sum-avg-min-max
+SELECT   user_id, COUNT(*) AS order_count, SUM(amount) AS total     -- 5. compute aggregates
+FROM     orders                                                     -- 1. load
+WHERE    status = 'delivered'                                       -- 2. filter rows
+GROUP BY user_id                                                    -- 3. group
+HAVING   SUM(amount) > 1000                                         -- 4. filter groups
+ORDER BY total DESC;                                                -- 6. sort
+`} />
+
+---
+
+## 1️⃣ COUNT — Counting Rows
+
+### 🔑 Three Forms — All Behave Differently
+
+<Code lang="sql" title="COUNT(*) vs COUNT(col) vs COUNT(DISTINCT col)" code={`
+CREATE TABLE users (id INT, name TEXT, phone TEXT);
+INSERT INTO users VALUES
+    (1, 'Raj',    '9999'),
+    (2, 'Priya',  NULL),    -- no phone
+    (3, 'Sam',    NULL),    -- no phone
+    (4, 'Ankit',  '9999');  -- duplicate phone
+
+-- Form 1: COUNT(*) — counts ALL rows including NULLs
+SELECT COUNT(*) FROM users;          -- 4
+
+-- Form 2: COUNT(col) — counts NON-NULL values only
+SELECT COUNT(phone) FROM users;      -- 2 (skips NULLs)
+
+-- Form 3: COUNT(DISTINCT col) — counts unique non-NULL values
+SELECT COUNT(DISTINCT phone) FROM users;  -- 1 (just '9999')`} />
+
+```
+The three COUNT behaviors:
+
+Table: users
+┌────┬───────┬───────────┐
+│ id │ name  │ phone     │
+├────┼───────┼───────────┤
+│  1 │ Raj   │ 9999      │
+│  2 │ Priya │ NULL      │← no phone
+│  3 │ Sam   │ NULL      │← no phone
+│  4 │ Ankit │ 9999      │← same as Raj
+└────┴───────┴───────────┘
+
+COUNT(*)              → 4  (all rows)
+COUNT(phone)          → 2  (non-NULL: Raj, Ankit)
+COUNT(DISTINCT phone) → 1  (unique non-NULL: just '9999')
+```
+
+### COUNT in Different Contexts
+
+```sql
+-- Total rows
+SELECT COUNT(*) AS total_orders FROM orders;
+
+-- Conditional count — count only matching rows
+SELECT
+  COUNT(*)                                       AS total,
+  COUNT(*) FILTER (WHERE status = 'delivered')   AS delivered,
+  COUNT(*) FILTER (WHERE status = 'pending')     AS pending,
+  COUNT(*) FILTER (WHERE status = 'cancelled')   AS cancelled
+FROM orders;
+
+-- FILTER clause = cleaner than CASE WHEN for conditional count
+-- (covered more in CASE WHEN and Window Functions topics)
+
+-- Count per group
+SELECT user_id, COUNT(*) AS order_count
+FROM   orders
+GROUP BY user_id
+ORDER BY order_count DESC;
+
+-- Count with JOIN — the NULL trap
+SELECT u.name, COUNT(o.id) AS order_count    -- ✅ COUNT(col) not COUNT(*)
+FROM   users u
+LEFT JOIN orders o ON u.id = o.user_id
+GROUP BY u.id, u.name;
+-- Users with no orders → o.id IS NULL → COUNT(o.id) = 0 ✅
+-- If COUNT(*) used → gives 1 for users with no orders ❌
+```
+
+<CardGrid>
+  <Card title="⚠️ Interview Trap #1: LEFT JOIN + COUNT" icon="error">
+    ```sql
+    -- ❌ Wrong: COUNT(*) counts the NULL placeholder row → returns 1
+    SELECT u.name, COUNT(*) AS order_count
+    FROM users u LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.name;
+
+    -- ✅ Correct: COUNT(right_table.col) skips NULLs → returns 0
+    SELECT u.name, COUNT(o.id) AS order_count
+    FROM users u LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.name;
+    ```
+  </Card>
+  
+  <Card title="⚠️ Interview Trap #2: FILTER + DISTINCT" icon="caution">
+    ```text
+    COUNT(DISTINCT col) FILTER (WHERE ...) is NOT directly supported.
+    Workarounds:
+    • Subquery: SELECT COUNT(*) FROM (SELECT DISTINCT col FROM t WHERE ...)
+    • CASE: COUNT(DISTINCT CASE WHEN cond THEN col END)
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 2️⃣ SUM — Totalling Values
+
+### 🔑 NULL Behavior & COALESCE Protection
+
+<Code lang="sql" title="SUM ignores NULLs, but returns NULL on empty sets" code={`
+-- Basic SUM
+SELECT SUM(amount) AS total_revenue FROM orders;
+
+-- SUM with WHERE
+SELECT SUM(amount) AS delivered_revenue
+FROM   orders
+WHERE  status = 'delivered';
+
+-- SUM per group
+SELECT
+  user_id,
+  SUM(amount)              AS lifetime_value,
+  SUM(amount) / COUNT(*)   AS avg_order        -- manual avg
+FROM orders
+GROUP BY user_id;
+
+-- SUM with COALESCE (NULL protection)
+SELECT SUM(COALESCE(discount, 0)) AS total_discount
+FROM   orders;
+-- Without COALESCE: NULL discount rows skipped
+-- With COALESCE:    NULL treated as 0 → included in sum ✅
+
+-- SUM of expression
+SELECT SUM(quantity * unit_price) AS gross_revenue
+FROM   order_items;
+`} />
+
+### SUM NULL Behavior — Critical
+
+```sql
+-- SUM of all NULLs returns NULL (not 0!)
+SELECT SUM(amount) FROM orders WHERE 1 = 0;  -- no rows match
+-- Result: NULL  ← not 0! 💀
+
+-- Fix: COALESCE around SUM
+SELECT COALESCE(SUM(amount), 0) AS revenue
+FROM   orders
+WHERE  status = 'refunded';
+-- Returns 0 if no refunded orders ✅ (not NULL)
+```
+
+```
+SUM NULL rules:
+  SUM ignores NULL values in rows    → skips them silently
+  SUM of ZERO matching rows          → returns NULL (not 0!)
+  SUM of rows that are all NULL      → returns NULL
+
+Always wrap SUM with COALESCE when:
+  → Result feeds into calculation (NULL propagates!)
+  → Display in UI (NULL shows as blank, not 0)
+  → Comparing values (NULL != 0 in SQL)
+```
+
+<Aside type="danger">
+**🚨 Production Rule**: `SUM` of an empty result set returns `NULL`, **not** `0`.  
+If this feeds a dashboard or calculation, `NULL` will break charts or propagate as `NULL`.  
+✅ Always wrap: `COALESCE(SUM(col), 0)`
+</Aside>
+
+---
+
+## 3️⃣ AVG — Averaging Values
+
+### 🔑 The Denominator Trap
+
+<Code lang="sql" title="AVG divides by non-NULL count, NOT total rows" code={`
+-- Basic AVG
+SELECT AVG(amount) AS avg_order_value FROM orders;
+
+-- AVG ignores NULLs (divides by non-NULL count only)
+SELECT AVG(score) FROM students;
+-- If 3 out of 5 scores are NULL:
+-- AVG = SUM(non-null scores) / COUNT(non-null scores)
+-- NOT divided by 5! ← silent skew ⚠️
+
+-- AVG with COALESCE (treat NULL as 0 — changes meaning!)
+SELECT AVG(COALESCE(score, 0)) FROM students;
+-- Divides by ALL rows including nulls ← different result!
+-- Use only when NULL genuinely means "zero"
+
+-- AVG rounded
+SELECT ROUND(AVG(amount), 2) AS avg_order FROM orders;
+
+-- Weighted average (not built-in, compute manually)
+SELECT
+  SUM(rating * review_count) / NULLIF(SUM(review_count), 0)
+    AS weighted_avg_rating
+FROM products;
+
+-- amounts: 100, 200, NULL
+SELECT AVG(amount)                AS avg_builtin,      -- 150 ✅
+       SUM(amount) / COUNT(*)     AS sum_div_star,     -- 100 ❌ wrong
+       SUM(amount) / COUNT(amount) AS sum_div_col      -- 150 ✅
+FROM   orders;
+
+-- AVG treats NULL as "missing data"
+-- COUNT(*) includes the NULL row in the denominator → skews result downward
+-- COUNT(col) excludes NULLs → matches AVG's behavior
+`} />
+
+<Code lang="sql" title="Weighted Average (manual calculation)" code={`
+-- These are NOT always identical:
+SELECT AVG(amount) FROM orders;
+
+SELECT SUM(amount) / COUNT(*) FROM orders;      -- ❌ different!
+-- COUNT(*) includes rows where amount IS NULL
+-- AVG(amount) divides by COUNT(amount) — non-NULL only
+
+SELECT SUM(amount) / COUNT(amount) FROM orders; -- ✅ same as AVG
+-- Both divide by non-NULL count
+
+-- Example:
+-- amounts: 100, 200, NULL
+-- AVG(amount)              = (100+200) / 2 = 150
+-- SUM/COUNT(*)             = 300 / 3       = 100  ❌ wrong
+-- SUM/COUNT(amount)        = 300 / 2       = 150  ✅ correct
+
+-- Built-in AVG doesn't do weighted averages
+SELECT
+  SUM(rating * review_count) / NULLIF(SUM(review_count), 0)
+    AS weighted_avg_rating
+FROM products;
+
+-- NULLIF prevents division by zero if no reviews exist ✅`} />
+
+<Aside type="note">
+> 🎯 **Interview trap:** `SUM(col) / COUNT(*)` ≠ `AVG(col)` when NULLs exist. `AVG` divides by non-NULL count. `COUNT(*)` includes NULL rows in denominator — produces wrong result.
+
+**🎯 DSA Connection**: `AVG` is a streaming aggregate. Postgres maintains a running sum and count in a single pass. **O(n) time, O(1) memory**. No need to store all values. Exactly like computing mean in a single `for`-loop.
+</Aside>
+
+---
+
+## 4️⃣ MIN & MAX — Finding Extremes
+
+### 🔑 Index Optimization & NULL Handling
+
+<Code lang="sql" title="MIN/MAX on indexed column = O(1)" code={`
+-- Basic MIN / MAX
+SELECT
+  MIN(amount)      AS smallest_order,
+  MAX(amount)      AS largest_order,
+  MAX(created_at)  AS latest_order,
+  MIN(created_at)  AS earliest_order
+FROM orders;
+
+-- MIN/MAX on text (alphabetical)
+SELECT MIN(name), MAX(name) FROM users;
+-- MIN → alphabetically first name
+-- MAX → alphabetically last name
+
+-- MIN/MAX per group
+SELECT
+  department,
+  MIN(salary) AS lowest_salary,
+  MAX(salary) AS highest_salary,
+  MAX(salary) - MIN(salary) AS salary_range
+FROM employees
+GROUP BY department;
+
+-- Find the row with MAX value (common interview pattern)
+-- ❌ Wrong — can't use MAX in WHERE directly
+SELECT * FROM orders WHERE amount = MAX(amount);  -- ERROR!
+
+-- ✅ Correct — subquery
+SELECT * FROM orders
+WHERE amount = (SELECT MAX(amount) FROM orders);
+
+-- ✅ Better — window function (covered in 07_Window_Functions)
+SELECT * FROM orders
+WHERE amount = MAX(amount) OVER ();
+
+-- MIN/MAX on B-Tree index reads ONLY the edge nodes
+CREATE INDEX idx_orders_amount ON orders(amount);
+
+SELECT MIN(amount), MAX(amount) FROM orders;
+
+-- EXPLAIN shows:
+-- Index Scan (forward)  → reads FIRST entry only
+-- Index Scan Backward   → reads LAST entry only
+-- Cost: O(1) — no table scan, just two index lookups ✅
+`} />
+
+<CardGrid>
+  <Card title="NULL Behavior" icon="information">
+    ```text
+    • MIN/MAX IGNORE NULLs (same as SUM, AVG, COUNT(col))
+    • MIN/MAX of empty set → returns NULL
+    • MIN/MAX on TEXT → alphabetical order
+    ```
+  </Card>
+  
+  <Card title="Finding the Full Row with MAX Value" icon="rocket">
+    ```sql
+    -- ❌ Wrong: aggregates can't be used in WHERE directly
+    SELECT * FROM orders WHERE amount = MAX(amount);
+
+    -- ✅ Correct: subquery
+    SELECT * FROM orders
+    WHERE amount = (SELECT MAX(amount) FROM orders);
+
+    -- ✅ Better: window function (covered in Window Functions topic)
+    SELECT * FROM (
+      SELECT *, RANK() OVER (ORDER BY amount DESC) as rnk
+      FROM orders
+    ) t WHERE rnk = 1;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 5️⃣ NULL Rules — All Aggregates Together
+
+<table>
+  <thead>
+    <tr>
+      <th>Aggregate</th>
+      <th>NULL Behavior</th>
+      <th>Empty Set (0 rows)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>COUNT(*)</code></td><td>Counts ALL rows (includes NULLs)</td><td><code>0</code></td></tr>
+    <tr><td><code>COUNT(col)</code></td><td>Skips NULL values</td><td><code>0</code></td></tr>
+    <tr><td><code>COUNT(DISTINCT)</code></td><td>Skips NULLs + deduplicates</td><td><code>0</code></td></tr>
+    <tr><td><code>SUM(col)</code></td><td>Skips NULLs</td><td><code>NULL</code></td></tr>
+    <tr><td><code>AVG(col)</code></td><td>Skips NULLs in num & den</td><td><code>NULL</code></td></tr>
+    <tr><td><code>MIN(col)</code> / <code>MAX(col)</code></td><td>Skips NULLs</td><td><code>NULL</code></td></tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="Prove it yourself" code={`CREATE TEMP TABLE t (val INT);
+-- Empty table
+SELECT COUNT(*) AS cnt, SUM(val) AS sm, AVG(val) AS avg
+FROM t;
+-- Output: cnt=0, sm=NULL, avg=NULL
+
+INSERT INTO t VALUES (10), (NULL), (30), (NULL);
+SELECT COUNT(*) AS cnt, COUNT(val) AS col_cnt, SUM(val) AS sm, AVG(val) AS avg
+FROM t;
+-- Output: cnt=4, col_cnt=2, sm=40, avg=20`} />
+
+---
+
+## 6️⃣ Internals — How Postgres Computes Aggregates
+
+### 🔁 Single-Pass Streaming Algorithm
+```text
+For each row:
+  COUNT(*):  counter++
+  COUNT(col): if col IS NOT NULL → counter++
+  SUM(col):   if col IS NOT NULL → running_sum += col
+  AVG(col):   running_sum += col, running_count++
+  MIN(col):   if col < current_min → current_min = col
+  MAX(col):   if col > current_max → current_max = col
+```
+
+### 📦 Two Aggregation Strategies in Query Plan
+
+<CardGrid>
+  <Card title="HashAggregate (Unsorted Input)" icon="shield">
+    ```text
+    • Builds hash table: group_key → {sum, count, min, max}
+    • Memory: O(distinct groups) — can spill to disk!
+    • EXPLAIN: HashAggregate
+    • Fix spills: increase work_mem or add index
+    ```
+  </Card>
+  
+  <Card title="GroupAggregate (Sorted Input)" icon="rocket">
+    ```text
+    • Input sorted by group key (via index or explicit sort)
+    • Scans sequentially, detects group boundaries
+    • Memory: O(1) — pure streaming
+    • EXPLAIN: GroupAggregate
+    • ✅ Best for large datasets with many groups
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 7️⃣ FILTER Clause — Conditional Aggregation
+
+> PostgreSQL 9.4+ introduced `FILTER`, a cleaner alternative to `CASE WHEN` inside aggregates.
+
+<Code lang="sql" title="FILTER vs CASE WHEN" code={`-- Old way: Verbose
+SELECT
+  COUNT(CASE WHEN status = 'delivered' THEN 1 END) AS delivered,
+  SUM(CASE WHEN status = 'delivered' THEN amount ELSE 0 END) AS del_rev
+
+-- New way: Clean & readable
+SELECT
+  COUNT(*) FILTER (WHERE status = 'delivered')   AS delivered,
+  SUM(amount) FILTER (WHERE status = 'delivered') AS del_rev,
+  AVG(amount) FILTER (WHERE amount > 1000)       AS avg_high,
+  COUNT(DISTINCT user_id) FILTER (WHERE status = 'delivered') AS buyers`} />
+
+<Aside type="note">
+**Performance**: `FILTER` is slightly faster than `CASE` because Postgres skips non-matching rows entirely before feeding them to the aggregate function.
+</Aside>
+
+---
+
+## 8️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Dashboard KPI Cards" icon="chart">
+    ```sql
+    SELECT
+      COALESCE(SUM(amount), 0)       AS revenue_today,
+      COUNT(DISTINCT user_id)        AS customers_today,
+      COUNT(*)                       AS orders_today,
+      ROUND(AVG(amount), 2)          AS avg_order
+    FROM   orders
+    WHERE  created_at >= CURRENT_DATE
+      AND  status != 'cancelled';
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Percentiles & Distribution" icon="info">
+    ```sql
+    -- Postgres statistical aggregates (beyond basic AVG)
+    SELECT
+      PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY amount) AS median,
+      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY amount) AS p95,
+      STDDEV(amount)        AS std_dev,
+      VARIANCE(amount)      AS variance
+    FROM orders WHERE status = 'delivered';
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Cohort Retention Metrics" icon="users">
+    ```sql
+    -- Week-over-week retention calculation
+    SELECT
+      DATE_TRUNC('week', first_order.created_at)::DATE AS cohort_week,
+      COUNT(DISTINCT first_order.user_id)              AS cohort_size,
+      COUNT(DISTINCT second_order.user_id)             AS retained,
+      ROUND(COUNT(DISTINCT second_order.user_id) * 100.0
+            / NULLIF(COUNT(DISTINCT first_order.user_id), 0), 1) AS retention_pct
+    FROM (SELECT user_id, MIN(created_at) AS created_at FROM orders GROUP BY 1) first_order
+    LEFT JOIN orders second_order
+      ON second_order.user_id = first_order.user_id
+     AND second_order.created_at BETWEEN first_order.created_at
+                                     AND first_order.created_at + INTERVAL '14 days'
+    GROUP BY 1 ORDER BY 1;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Inventory Reorder Alerts" icon="box">
+    ```sql
+    SELECT category,
+           COUNT(*) FILTER (WHERE stock = 0)               AS out_of_stock,
+           COUNT(*) FILTER (WHERE stock < reorder_point)   AS low_stock,
+           SUM(stock)                                      AS total_units,
+           SUM(stock * cost_price)                         AS inventory_value
+    FROM   products WHERE is_active = true
+    GROUP BY category
+    HAVING COUNT(*) FILTER (WHERE stock <= reorder_point) > 0
+    ORDER BY out_of_stock DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 5: User Spend Segmentation" icon="badge">
+    ```sql
+    SELECT user_id,
+           MAX(created_at)          AS last_order,  -- Recency
+           COUNT(*)                 AS order_count,  -- Frequency
+           SUM(amount)              AS lifetime_val, -- Monetary
+           CASE
+             WHEN SUM(amount) > 100000 THEN 'platinum'
+             WHEN SUM(amount) > 50000  THEN 'gold'
+             WHEN SUM(amount) > 10000  THEN 'silver'
+             ELSE 'bronze'
+           END AS tier
+    FROM   orders WHERE status = 'delivered'
+    GROUP BY user_id ORDER BY lifetime_val DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Safe Division" icon="shield">
+    ```sql
+    -- ALWAYS use NULLIF to prevent division by zero
+    SELECT
+      department,
+      SUM(revenue) / NULLIF(COUNT(*), 0) AS revenue_per_head,
+      COUNT(*) FILTER (WHERE cancelled) * 100.0
+        / NULLIF(COUNT(*), 0)            AS cancel_rate_pct
+    FROM orders GROUP BY department;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Test aggregate behavior in psql" code={`CREATE TEMP TABLE sales (id INT, user_id INT, amount NUMERIC, status TEXT);
+INSERT INTO sales VALUES
+  (1, 1, 500,  'delivered'), (2, 1, 1000, 'delivered'),
+  (3, 2, 300,  'cancelled'), (4, 2, NULL,  'delivered'),
+  (5, 3, 800,  'delivered'), (6, 3, 200,   'pending');
+
+-- 1. COUNT forms
+SELECT COUNT(*) AS all_rows, COUNT(amount) AS non_null, COUNT(DISTINCT user_id) AS users
+FROM sales;  -- 6, 5, 3
+
+-- 2. SUM NULL trap
+SELECT SUM(amount) FROM sales WHERE 1=0;        -- NULL
+SELECT COALESCE(SUM(amount), 0) FROM sales WHERE 1=0; -- 0 ✅
+
+-- 3. AVG vs SUM/COUNT(*) trap
+SELECT AVG(amount) AS true_avg,  -- 560
+       SUM(amount)/COUNT(*) AS skewed_avg, -- 466.67 ❌
+       SUM(amount)/COUNT(amount) AS correct_avg -- 560 ✅
+FROM sales;
+
+-- 4. FILTER clause
+SELECT COUNT(*) FILTER (WHERE status='delivered') AS delivered,
+       SUM(amount) FILTER (WHERE status='delivered') AS del_rev
+FROM sales;  -- 4, 2300 (NULL skipped)
+
+-- 5. HAVING vs WHERE
+SELECT user_id, SUM(amount) AS total
+FROM   sales WHERE status != 'cancelled'
+GROUP BY user_id HAVING SUM(amount) > 500;  -- filters rows FIRST, groups SECOND`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| `COUNT(*)` vs `COUNT(col)`? | `COUNT(*)` includes NULLs. `COUNT(col)` skips them. |
+| `SUM` of empty set? | `NULL` (not 0). Use `COALESCE(SUM(), 0)` |
+| `AVG(col)` with NULLs? | Divides by **non-NULL** count only. `SUM/COUNT(*)` is wrong. |
+| After `LEFT JOIN` which `COUNT`? | `COUNT(right_table.id)` → returns 0 for unmatched rows. |
+| `MIN`/`MAX` on index? | **O(1)** — reads leftmost/rightmost B-Tree leaf only. |
+| `FILTER` vs `CASE WHEN`? | `FILTER` is cleaner & faster. `CASE` is more portable. |
+| HashAggregate spilling? | `work_mem` too small. Increase it or add index for `GroupAggregate`. |
+| Safe division pattern? | `SUM(col) / NULLIF(COUNT(*), 0)` → prevents `/0` error. |
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+Input rows → [WHERE filter] → [GROUP BY] → Aggregate → Output
+
+Single value per group accumulated in ONE pass:
+  COUNT(*):    n = 0; for each row: n++                   → n
+  COUNT(col):  n = 0; for each row: if col≠NULL: n++      → n
+  SUM(col):    s = 0; for each row: if col≠NULL: s += col → s
+  AVG(col):    s=0, n=0; accumulate both → s/n            → s/n
+  MIN(col):    m=∞; for each row: if col<m: m=col         → m
+  MAX(col):    m=-∞; for each row: if col>m: m=col        → m
+
+NULL Rules (ALL except COUNT*):
+  NULL input  → skip it
+  ALL NULL    → return NULL
+  EMPTY SET   → COUNT=0, others=NULL
+
+COALESCE Pattern:
+  COALESCE(SUM(col), 0) → fixes NULL→0 for UI/calculations ✅
+  COALESCE(AVG(col), 0) → fixes empty set averages ✅
+
+Performance:
+  Streaming: O(n) time, O(1) memory
+  MIN/MAX Index: O(1) time
+  COUNT(DISTINCT): O(n) time, O(distinct) memory
+  GroupAggregate: O(1) memory (if sorted)
+  HashAggregate: O(groups) memory (spills if > work_mem)
+```
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Always use `COALESCE(SUM(col), 0)` in reporting dashboards
+2. ✅ Prefer `COUNT(right_table.id)` after `LEFT JOIN`
+3. ✅ Use `FILTER` instead of `CASE WHEN` for conditional aggregates
+4. ✅ Wrap divisions in `NULLIF(denominator, 0)`
+5. ✅ Index `MIN`/`MAX` columns for O(1) lookups
+6. ✅ Monitor `HashAggregate` spills in `EXPLAIN ANALYZE` → tune `work_mem`
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the output" code={`Q1: Table has 5 rows. Column 'score' has values: 10, 20, NULL, 30, NULL.
+What does AVG(score) return?
+
+Q2: SELECT COUNT(*) FROM orders WHERE status = 'refunded'; returns 0 rows.
+What does SELECT SUM(amount) FROM orders WHERE status = 'refunded'; return?
+
+Q3: Why is SELECT SUM(amount)/COUNT(*) wrong for calculating average?
+
+Q4: How do you count only 'delivered' orders without GROUP BY?
+
+Q5: What happens to MIN/MAX if the column is entirely NULL?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 20. (10+20+30) / 3 non-NULL values = 20. NULLs ignored.
+
+Q2: NULL. SUM of empty set returns NULL. Wrap with COALESCE(..., 0) to get 0.
+
+Q3: COUNT(*) includes rows where amount IS NULL in the denominator, skewing the average downward. Use COUNT(amount) instead.
+
+Q4: COUNT(*) FILTER (WHERE status = 'delivered')
+   (or COUNT(CASE WHEN status='delivered' THEN 1 END))
+
+Q5: Returns NULL. No values exist to compare.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice `EXPLAIN ANALYZE` on aggregate queries to see Hash vs Group aggregation
+2. ✅ Use `FILTER` clause in your next dashboard query
+3. ✅ Add `COALESCE(SUM(), 0)` to all financial reporting queries
+4. ✅ Verify `COUNT` behavior after `LEFT JOIN` in your codebase
+5. ✅ Explore `PERCENTILE_CONT` for latency/distribution analysis
+
+Mastering aggregates turns you from a "query writer" into a **data analyst & performance engineer**. 🐘✨
+</Aside>

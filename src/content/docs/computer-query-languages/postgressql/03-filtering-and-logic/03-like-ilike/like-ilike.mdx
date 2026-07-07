@@ -1,0 +1,775 @@
+---
+title: PostgreSQL LIKE & ILIKE Pattern Matching
+slug: computer-query-languages/postgresql/filtering-and-logic/like-ilike
+description: Master pattern matching in PostgreSQL — wildcards, case sensitivity, index optimization, pg_trgm, and production-safe search patterns.
+sidebar:
+  label: "Pattern Matching"
+  badge:
+    text: Filtering
+    variant: tip
+tags: [postgresql, like, ilike, pattern-matching, indexing, pg-trgm, full-text-search, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 LIKE & ILIKE — Complete Guide
+
+> **`LIKE` matches text patterns using wildcards — fast when the pattern has a fixed prefix, completely blind when it starts with `%`, and `ILIKE` is the case-insensitive version that costs even more. At scale, both get replaced by full-text search or trigram indexes.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `LIKE` as a **pattern compiler**. It translates `%` and `_` into a search algorithm. Prefix patterns (`'Raj%'`) use B-Tree range scans. Anything with a leading `%` forces a full table scan — no index can help unless you add `pg_trgm`.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where Pattern Matching Lives
+
+```
+FROM
+WHERE     ← LIKE / ILIKE live here ✅
+GROUP BY
+HAVING    ← LIKE / ILIKE work here too ✅
+SELECT
+ORDER BY
+```
+
+```
+[Query: WHERE name LIKE 'J%']
+        ↓
+   Pattern starts with literal? → YES → B-Tree Index usable
+        ↓
+   Pattern starts with % or _? → NO  → Falls back to Seq Scan (O(N))
+
+[Query: WHERE name ILIKE '%dev%']
+        ↓
+   Case-insensitive + middle match → Standard B-Tree CANNOT help
+        ↓
+   Forces Seq Scan + runtime string comparison → 🔥 CPU/Memory spike
+```
+
+<Code lang="sql" title="Pattern matching in the query pipeline" code={`-- LIKE filters rows before they reach SELECT
+SELECT name, email
+FROM   users
+WHERE  email LIKE '%@gmail.com'    -- step 1: filter
+ORDER BY name;                     -- step 2: sort filtered results`} />
+
+---
+
+## 1️⃣ Wildcards — The Two Building Blocks
+
+```text
+LIKE has exactly two wildcard characters:
+
+  %   →  matches ANY sequence of characters (including empty)
+  _   →  matches exactly ONE character (any character)
+
+Everything else is matched literally.
+```
+
+<CardGrid>
+  <Card title="% Examples (any length)" icon="information">
+    ```sql
+    'Raj%'     → starts with 'Raj'    → Raj, Rajan, Rajesh, Rajput
+    '%gmail'   → ends with 'gmail'    → raj@gmail, priya@gmail
+    '%gmail%'  → contains 'gmail'     → raj@gmail.com, notgmail, gmail123
+    '%'        → matches everything   → every non-NULL row
+    ```
+  </Card>
+  
+  <Card title="_ Examples (exactly one char)" icon="shield">
+    ```sql
+    'R_j'      → R + any 1 char + j  → Raj, Rbj, Rcj (not Raaj)
+    '__@%'     → 2 chars then @ then anything → ab@x.com ✅  a@x.com ❌
+    'R___'     → R + exactly 3 chars → Raju, Raja, Ramm (not Raj, not Rajesh)
+    ```
+  </Card>
+
+  <Card title="Combined Patterns" icon="rocket">
+    ```sql
+    'R_j%'     → R + 1 char + j + anything → Raj, Rajan, Rajesh
+    '%@%.com'  → something@something.com → user@gmail.com ✅
+    '_a%'      → any char + 'a' + anything → cat, car, bat ✅
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 2️⃣ LIKE — Case-Sensitive Matching
+
+<Code lang="sql" title="LIKE usage patterns" code={`-- Starts with (prefix search)
+SELECT * FROM users WHERE name LIKE 'Raj%';
+-- ✅ Raj, Rajan, Rajesh
+-- ❌ raj, RAJ (case sensitive!)
+
+-- Ends with (suffix search)
+SELECT * FROM users WHERE email LIKE '%@gmail.com';
+
+-- Contains (substring search)
+SELECT * FROM products WHERE name LIKE '%phone%';
+
+-- Exact single char wildcard
+SELECT * FROM codes WHERE code LIKE 'A_1';
+-- Matches: AA1, AB1, AC1 — NOT: A1, AAA1
+
+-- NOT LIKE (exclude pattern)
+SELECT * FROM users WHERE email NOT LIKE '%@spam.com';
+
+-- LIKE with no wildcards = exact match (but slower than =)
+SELECT * FROM users WHERE name LIKE 'Raj';
+-- Same as: WHERE name = 'Raj'  (but use = for exact matches ✅)`} />
+
+<Aside type="caution">
+**Performance Tip**: `LIKE 'exact'` (no wildcards) is functionally identical to `= 'exact'` but **slower** because it goes through pattern-matching logic. Always use `=` for exact equality checks.
+</Aside>
+
+---
+
+## 3️⃣ ILIKE — Case-Insensitive Matching
+
+> **`ILIKE` = case-insensitive `LIKE` (Postgres-specific, not in SQL standard)**
+
+<Code lang="sql" title="ILIKE usage patterns" code={`-- Case-insensitive prefix search
+SELECT * FROM users WHERE name ILIKE 'raj%';
+-- ✅ Raj, raj, RAJ, rAj, RAJAN, rajesh — all match
+
+-- Case-insensitive contains
+SELECT * FROM products WHERE name ILIKE '%phone%';
+-- ✅ phone, Phone, PHONE, iPhone, smartphone — all match
+
+-- NOT ILIKE
+SELECT * FROM users WHERE email NOT ILIKE '%@gmail.com';
+
+-- ILIKE vs LOWER(col) LIKE — identical result, different internals
+WHERE name ILIKE 'raj%'
+-- same as:
+WHERE LOWER(name) LIKE 'raj%'   -- but ILIKE is cleaner syntax`} />
+
+<table>
+  <thead>
+    <tr>
+      <th>Pattern</th>
+      <th>LIKE</th>
+      <th>ILIKE</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>'Raj%'</code></td><td>Raj ✅, raj ❌, RAJ ❌</td><td>Raj ✅, raj ✅, RAJ ✅</td></tr>
+    <tr><td>Standard SQL?</td><td>✅ Yes</td><td>❌ No (Postgres-only)</td></tr>
+    <tr><td>Index support?</td><td>✅ Yes* (prefix only)</td><td>❌ No* (needs functional index)</td></tr>
+    <tr><td>Performance</td><td>Faster (byte comparison)</td><td>Slower (case folding)</td></tr>
+  </tbody>
+</table>
+
+<small>* Only for prefix patterns (`'prefix%'`) without leading `%`.</small>
+
+<Aside type="danger">
+**🚨 Production Warning**: `ILIKE` on 10M rows = full table scan every time. Search boxes almost always need case-insensitive matching — `ILIKE` is the quick solution, but at scale you move to `pg_trgm` or full-text search.
+</Aside>
+
+---
+
+## 4️⃣ The Index Problem — Core Performance Issue
+
+### Pattern Types vs Index Usage
+
+| Pattern Type | Example | Index Used? | Cost |
+|-------------|---------|-------------|------|
+| **Prefix** (fixed start) | `'Raj%'` | ✅ B-Tree range scan | O(log n + k) |
+| **Suffix** (fixed end) | `'%gmail.com'` | ❌ Full table scan | O(n) |
+| **Contains** | `'%phone%'` | ❌ Full table scan | O(n) |
+| **Exact** | `'Rajesh'` | ✅ B-Tree point lookup | O(log n) |
+
+### 🔍 Why Prefix Works, Others Don't
+
+```
+B-Tree index on name (sorted):
+
+  Ankit
+  Kiran
+  Priya
+  Raj        ← binary search lands here
+  Rajan      ← scan forward
+  Rajesh     ← scan forward
+  Rajput     ← scan forward
+  Ram        ← STOP (no longer starts with 'Raj')
+  Sam
+
+WHERE name LIKE 'Raj%'
+→ Binary search to 'Raj'
+→ Forward scan while name starts with 'Raj'
+→ STOP at 'Ram'
+✅ Index range scan — O(log n + k)
+
+WHERE name LIKE '%gmail.com'
+→ No fixed starting point in B-Tree
+→ Must check EVERY row
+→ Seq Scan — O(n) 💀
+
+WHERE name LIKE '%raj%'
+→ Same problem — 'raj' could be anywhere
+→ Seq Scan — O(n) 💀
+```
+
+<Code lang="sql" title="Verify with EXPLAIN" code={`-- Create index
+CREATE INDEX idx_users_name ON users(name);
+
+-- ✅ Uses index (prefix pattern)
+EXPLAIN SELECT * FROM users WHERE name LIKE 'Raj%';
+-- Output:
+-- Index Scan using idx_users_name
+--   Index Cond: ((name >= 'Raj') AND (name < 'Rak'))
+
+-- ❌ Falls back to seq scan (contains pattern)
+EXPLAIN SELECT * FROM users WHERE name LIKE '%gmail%';
+-- Output:
+-- Seq Scan on users
+--   Filter: (name ~~ '%gmail%')   ← ~~ is LIKE operator`} />
+
+<Aside type="tip">
+**🎯 DSA Connection**: Prefix `LIKE` = range query on sorted array. Binary search to lower bound, scan to upper bound. Suffix/contains `LIKE` = linear search — no sorted property helps. This is exactly why **tries** are used for prefix search in DSA.
+</Aside>
+
+---
+
+## 5️⃣ Escaping Special Characters
+
+<Code lang="sql" title="Escaping % and _ in patterns" code={`-- Find products with literal "50%" in name
+SELECT * FROM products
+WHERE  name LIKE '%50\%%' ESCAPE '\';
+--                   ↑
+--           escaped % = literal percent sign
+
+-- Find column names with underscore
+SELECT * FROM columns_table
+WHERE  col_name LIKE '%user\_%' ESCAPE '\';
+
+-- Customize escape character
+WHERE name LIKE '%50#%%' ESCAPE '#';   -- use # as escape char
+
+-- Real-world: sanitize user input before building LIKE patterns
+-- In app code: replace % with \% and _ with \_ in user input`} />
+
+```text
+Without escaping:
+  User searches: "50%"
+  Query: WHERE name LIKE '%50%%'
+  Pattern: anything + "50" + anything + anything
+  = matches "50 items" "1500" "50abc" etc. ← wrong!
+
+With escaping:
+  Query: WHERE name LIKE '%50\%%' ESCAPE '\'
+  Pattern: anything + literal "50%" + anything
+  = matches only names containing "50%" ← correct ✅
+```
+
+<Aside type="caution">
+**🚨 Security Note**: Always sanitize user input before building `LIKE` patterns. A user typing `%` or `_` in a search box without escaping can cause unexpected matches — or in extreme cases, performance attacks (wildcard injection forcing full table scans).
+</Aside>
+
+---
+
+## 6️⃣ Internals — How Postgres Executes LIKE
+
+<CardGrid>
+  <Card title="Step 1: Pattern Analysis (at plan time)" icon="information">
+    ```text
+    Postgres inspects the pattern:
+    
+    'Raj%'    → has fixed prefix 'Raj'
+                rewrite to: name >= 'Raj' AND name < 'Rak'
+                + residual filter: name LIKE 'Raj%'
+                → index range scan + verify ✅
+
+    '%gmail'  → no fixed prefix
+                no rewrite possible
+                → seq scan + per-row regex match ❌
+
+    'R_j%'    → fixed prefix 'R'
+                rewrite to: name >= 'R' AND name < 'S'
+                + residual filter: name LIKE 'R_j%'
+                → index range scan on 'R*' + verify each row ✅ (partial)
+    ```
+  </Card>
+  
+  <Card title="Operator Reference" icon="shield">
+    ```sql
+    -- LIKE internally uses ~ (regex) operator for non-prefix patterns
+    -- You can see this in EXPLAIN:
+
+    EXPLAIN SELECT * FROM users WHERE name LIKE '%raj%';
+    -- Filter: (name ~~ '%raj%')   ← ~~ is LIKE operator
+    -- ~~* is ILIKE operator
+
+    -- Operator reference:
+    --   ~~    = LIKE
+    --   ~~*   = ILIKE
+    --   !~~   = NOT LIKE
+    --   !~~*  = NOT ILIKE
+    ```
+  </Card>
+</CardGrid>
+
+### Why ILIKE Is Slower
+
+```text
+LIKE '%raj%':
+  Per-row: compare bytes directly against pattern
+  O(pattern_length × string_length) per row
+
+ILIKE '%raj%':
+  Per-row: lowercase the entire string THEN compare
+  OR use locale-aware case folding (slower)
+  Extra CPU per row vs LIKE
+  No standard B-Tree index support (case-sensitive only)
+```
+
+---
+
+## 7️⃣ Fixing LIKE at Scale — Three Solutions
+
+<Tabs>
+  <TabItem label="Solution 1: Functional Index" icon="hash">
+    ```sql
+    -- Store lowercase version in index
+    CREATE INDEX idx_users_name_lower
+    ON users(LOWER(name));
+
+    -- Now this query uses the index ✅
+    SELECT * FROM users
+    WHERE LOWER(name) LIKE 'raj%';   -- prefix on lowercased value
+
+    -- Or use ILIKE equivalent via LOWER:
+    WHERE LOWER(name) LIKE LOWER('Raj%')
+    -- = WHERE LOWER(name) LIKE 'raj%'  ✅ index hit
+
+    -- ⚠️ Still only works for PREFIX patterns
+    -- '%raj%' still needs full scan even with this index
+    ```
+  </TabItem>
+  
+  <TabItem label="Solution 2: pg_trgm (Trigram Index)" icon="rocket">
+    ```sql
+    -- Enable extension (one-time setup)
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+    -- Create GIN trigram index
+    CREATE INDEX idx_products_name_trgm
+    ON products USING GIN(name gin_trgm_ops);
+
+    -- Now ALL patterns use the index ✅
+    SELECT * FROM products WHERE name LIKE '%phone%';    -- ✅ index!
+    SELECT * FROM products WHERE name ILIKE '%Phone%';   -- ✅ index!
+    SELECT * FROM products WHERE name LIKE '%smart%';    -- ✅ index!
+    ```
+    
+    <Aside type="note">
+    **How trigrams work**:
+    ```text
+    Word: "Rajesh"
+    Trigrams: "  R", " Ra", "Raj", "aje", "jes", "esh", "sh "
+
+    Index stores all trigrams → GIN index maps trigram → row IDs
+
+    Query: WHERE name LIKE '%aje%'
+      Extract trigrams from pattern: "aje"
+      Look up "aje" in GIN index → get matching row IDs
+      Fetch those rows → verify full LIKE pattern
+      ✅ Much fewer rows to check than full table scan
+    ```
+    **Note**: `pg_trgm` requires at least **3 characters** to be effective. Pattern `'Ra'` (2 chars) → still seq scan. Pattern `'Raj'` (3 chars) → uses trigram index ✅.
+    </Aside>
+  </TabItem>
+
+  <TabItem label="Solution 3: Full-Text Search" icon="search">
+    ```sql
+    -- For article/product description search
+    -- Much more powerful than LIKE
+
+    -- Add tsvector column
+    ALTER TABLE posts ADD COLUMN search_vector TSVECTOR;
+    UPDATE posts SET search_vector = to_tsvector('english', content);
+
+    -- Index it
+    CREATE INDEX idx_posts_fts ON posts USING GIN(search_vector);
+
+    -- Search with ranking
+    SELECT id, title, ts_rank(search_vector, query) AS rank
+    FROM   posts, to_tsquery('english', 'database & performance') query
+    WHERE  search_vector @@ query
+    ORDER BY rank DESC;
+    -- Supports: stemming, stop words, ranking, phrase search
+    -- ✅ Much more powerful and faster than LIKE for natural language
+    ```
+  </TabItem>
+</Tabs>
+
+### When to Use What
+
+| Use Case | Solution |
+|----------|----------|
+| Prefix search only | B-Tree index + `LIKE 'prefix%'` |
+| Case-insensitive prefix | `LOWER()` functional index + `LIKE` |
+| Contains / suffix search | `pg_trgm` GIN index + `LIKE`/`ILIKE` |
+| Natural language search | Full-text search (`tsvector`/`tsquery`) |
+| Fuzzy / typo-tolerant | `pg_trgm` similarity functions |
+
+---
+
+## 8️⃣ Similarity — LIKE's Fuzzy Cousin (pg_trgm)
+
+<Code lang="sql" title="Fuzzy search with pg_trgm" code={`-- After enabling pg_trgm:
+
+-- Similarity score (0 to 1)
+SELECT similarity('Rajesh', 'Rajes');   -- 0.71 (very similar)
+SELECT similarity('Rajesh', 'Robert');  -- 0.18 (not similar)
+
+-- Find similar names (fuzzy search — handles typos)
+SELECT name FROM users
+WHERE  similarity(name, 'Rajessh') > 0.4   -- typo in search
+ORDER BY similarity(name, 'Rajessh') DESC;
+-- Returns: Rajesh ✅ (even with typo!)
+
+-- % operator (shorthand for similarity > threshold)
+SELECT name FROM users
+WHERE  name % 'Rajessh';   -- uses pg_trgm threshold (default 0.3)`} />
+
+<Aside type="tip">
+**🎯 Real-Life SDE**: Fuzzy search with `pg_trgm` is how you build "did you mean?" features and typo-tolerant search. E-commerce search boxes almost always have this under the hood.
+</Aside>
+
+---
+
+## 9️⃣ SIMILAR TO & POSIX Regex — Advanced Patterns
+
+<CardGrid>
+  <Card title="SIMILAR TO (SQL Standard Regex Hybrid)" icon="information">
+    ```sql
+    -- SIMILAR TO = SQL standard regex (between LIKE and full regex)
+    -- Syntax: SIMILAR TO 'pattern'
+    -- Wildcards: % and _ from LIKE + | () [] from regex
+
+    SELECT * FROM users
+    WHERE  phone SIMILAR TO '(\+91|0)[0-9]{10}';
+    -- Matches Indian phone numbers
+
+    SELECT * FROM codes
+    WHERE  code SIMILAR TO '[A-Z]{3}-[0-9]{4}';
+    -- Matches format: ABC-1234
+
+    -- In practice: just use ~ (POSIX regex) instead
+    -- SIMILAR TO is verbose and rarely taught in interviews
+    ```
+  </Card>
+  
+  <Card title="Full POSIX Regex in Postgres" icon="rocket">
+    ```sql
+    -- ~ = regex match (case sensitive)
+    -- ~* = regex match (case insensitive)
+    -- !~ = not match
+    -- !~* = not match, case insensitive
+
+    SELECT * FROM users WHERE email ~  '^[a-z]+@[a-z]+\.(com|in|org)$';
+    SELECT * FROM users WHERE name  ~* '^raj';      -- case insensitive prefix
+    SELECT * FROM users WHERE phone !~ '[a-zA-Z]';  -- no letters in phone
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern Matching Options Summary
+
+| Operator | Type | Use When |
+|----------|------|----------|
+| `LIKE` | Simple wildcards | Prefix search, simple match |
+| `ILIKE` | Case-insensitive | User search boxes |
+| `SIMILAR TO` | SQL regex hybrid | Avoid — verbose, slow |
+| `~` / `~*` | POSIX regex | Complex patterns, validation |
+| `pg_trgm %` | Fuzzy similarity | Typo-tolerant search |
+| `@@` | Full-text search | Natural language content |
+
+---
+
+## 🔟 Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Search Box (Most Common)" icon="search">
+    ```sql
+    -- Basic search — works for small tables (<100K rows)
+    SELECT id, name, email
+    FROM   users
+    WHERE  name ILIKE '%' || :search_term || '%'
+       OR  email ILIKE '%' || :search_term || '%'
+    LIMIT  20;
+
+    -- ⚠️ Full table scan — fine up to ~100K rows
+    -- Beyond that → add pg_trgm index
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Autocomplete / Prefix Search" icon="type">
+    ```sql
+    -- User types "Raj" → suggest completions
+    -- This DOES use a B-Tree index ✅
+    SELECT DISTINCT name
+    FROM   users
+    WHERE  name ILIKE :prefix || '%'      -- e.g. 'raj%'
+    ORDER BY name
+    LIMIT  10;
+
+    -- With functional index for case-insensitive prefix:
+    CREATE INDEX idx_users_name_lower ON users(LOWER(name));
+    WHERE LOWER(name) LIKE LOWER(:prefix) || '%'  -- ✅ index hit
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Email Domain Filter" icon="at">
+    ```sql
+    -- Find all corporate users (not gmail/yahoo/hotmail)
+    SELECT id, name, email
+    FROM   users
+    WHERE  email NOT ILIKE '%@gmail.com'
+      AND  email NOT ILIKE '%@yahoo.com'
+      AND  email NOT ILIKE '%@hotmail.com'
+      AND  is_active = true;
+
+    -- Better: extract domain and check (cleaner, maintainable)
+    WHERE  SPLIT_PART(email, '@', 2) NOT IN ('gmail.com','yahoo.com','hotmail.com')
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Data Validation / Cleanup" icon="shield">
+    ```sql
+    -- Find rows with bad data patterns
+    SELECT id, phone FROM users
+    WHERE  phone NOT LIKE '+91%'          -- not Indian format
+      AND  phone IS NOT NULL;
+
+    -- Find emails missing @
+    SELECT id, email FROM users
+    WHERE  email NOT LIKE '%@%';
+
+    -- Find product codes in wrong format (should be ABC-1234)
+    SELECT id, code FROM products
+    WHERE  code !~ '^[A-Z]{3}-[0-9]{4}$';  -- POSIX regex cleaner here
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Wildcard Search with pg_trgm (Production Scale)" icon="rocket">
+    ```sql
+    -- After: CREATE EXTENSION pg_trgm;
+    --        CREATE INDEX idx_products_trgm ON products
+    --          USING GIN(name gin_trgm_ops);
+
+    -- Contains search — now fast even at millions of rows ✅
+    SELECT id, name, price
+    FROM   products
+    WHERE  name ILIKE '%' || :search || '%'
+    ORDER BY similarity(name, :search) DESC   -- rank by relevance
+    LIMIT  20;
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Log Analysis" icon="file-text">
+    ```sql
+    -- Find error logs matching a pattern
+    SELECT id, message, created_at
+    FROM   application_logs
+    WHERE  level = 'ERROR'
+      AND  message LIKE '%NullPointerException%'
+      AND  created_at >= NOW() - INTERVAL '24 hours'
+    ORDER BY created_at DESC;
+
+    -- Find slow queries in pg_stat_statements
+    SELECT query, mean_exec_time
+    FROM   pg_stat_statements
+    WHERE  query ILIKE '%orders%'
+      AND  query NOT LIKE '%pg_stat%'
+    ORDER BY mean_exec_time DESC
+    LIMIT  10;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Behavior Yourself
+
+<Code lang="sql" title="Run these in psql" code={`-- 1. Basic wildcard behavior
+SELECT 'Rajesh' LIKE 'Raj%';      -- true
+SELECT 'Rajesh' LIKE '%esh';      -- true
+SELECT 'Rajesh' LIKE '%aje%';     -- true
+SELECT 'Rajesh' LIKE 'R_j%';      -- true  (R+any1+j+anything)
+SELECT 'Rajesh' LIKE 'R__esh';    -- true  (R+any2+esh)
+SELECT 'Rajesh' LIKE 'raj%';      -- false (case sensitive)
+SELECT 'Rajesh' ILIKE 'raj%';     -- true  (ILIKE)
+
+-- 2. Escape characters
+SELECT '50%' LIKE '50\%';         -- true  (escaped %)
+SELECT '50x' LIKE '50\%';         -- false (literal %)
+
+-- 3. NULL behavior
+SELECT NULL LIKE '%raj%';         -- NULL  (not false!)
+SELECT 'Raj' LIKE NULL;           -- NULL
+
+-- 4. Index behavior — check with EXPLAIN
+CREATE TEMP TABLE t (name TEXT);
+INSERT INTO t SELECT 'user_' || generate_series(1,100000);
+CREATE INDEX idx_t_name ON t(name);
+
+EXPLAIN SELECT * FROM t WHERE name LIKE 'user_5%';   -- index scan ✅
+EXPLAIN SELECT * FROM t WHERE name LIKE '%5%';        -- seq scan ❌`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Wildcard Basics" icon="information">
+    ```text
+    Q: % vs _?
+    A: % = any sequence (including empty). _ = exactly one char.
+
+    Q: LIKE vs ILIKE?
+    A: LIKE = case-sensitive. ILIKE = case-insensitive (Postgres-only).
+
+    Q: Does LIKE '%raj%' use index?
+    A: No — leading % = seq scan always. Use pg_trgm for contains search.
+
+    Q: Does LIKE 'raj%' use index?
+    A: Yes — prefix pattern = B-Tree range scan.
+    ```
+  </Card>
+  
+  <Card title="Index & Performance" icon="rocket">
+    ```text
+    Q: Fix for ILIKE with index?
+    A: LOWER() functional index + LIKE LOWER(pattern).
+
+    Q: Fix for '%contains%' at scale?
+    A: pg_trgm GIN index — enables all LIKE/ILIKE patterns.
+
+    Q: pg_trgm minimum chars?
+    A: 3 characters — shorter patterns still fall back to seq scan.
+
+    Q: SIMILAR TO vs LIKE?
+    A: SIMILAR TO = SQL regex hybrid. Avoid — use POSIX ~ instead.
+    ```
+  </Card>
+
+  <Card title="Edge Cases & NULLs" icon="shield">
+    ```text
+    Q: NOT LIKE and NULL?
+    A: NULL NOT LIKE 'x%' = NULL → row excluded (three-value logic).
+
+    Q: Escape % in pattern?
+    A: LIKE '50\%' or LIKE '50#%' ESCAPE '#'.
+
+    Q: LIKE with no wildcards?
+    A: Same as = but slower — always use = for exact match.
+
+    Q: ILIKE vs LOWER() LIKE?
+    A: ILIKE is cleaner. LOWER() needed for functional index trick.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Pattern Shape → Index Strategy
+
+```text
+'prefix%'          → B-Tree index ✅ fast
+'%suffix'          → No index    ❌ seq scan
+'%contains%'       → No index    ❌ seq scan  → use pg_trgm
+'exa_t'            → B-Tree partial ✅ (prefix up to wildcard)
+'exact'            → B-Tree ✅ (same as =, but use = instead)
+```
+
+### Scale Decision Tree
+
+```text
+Table < 100K rows?
+  → LIKE / ILIKE fine, no special index needed
+
+Table 100K – 1M rows?
+  Prefix search  → B-Tree index + LOWER() functional index
+  Contains search → pg_trgm GIN index
+
+Table > 1M rows?
+  Simple pattern   → pg_trgm GIN index
+  Natural language → Full-text search (tsvector + GIN)
+  Fuzzy / typos    → pg_trgm similarity()
+```
+
+### NULL Behavior Quick Guide
+
+| Expression | Result | Row Kept? |
+|------------|--------|-----------|
+| `'Raj' LIKE NULL` | `NULL` | ❌ |
+| `NULL LIKE '%raj%'` | `NULL` | ❌ |
+| `'Raj' ILIKE NULL` | `NULL` | ❌ |
+| `NULL IS NULL` | `TRUE` | ✅ |
+
+<Aside type="caution">
+**Final Checklist for Pattern Matching**:
+1. ✅ Use `=` for exact matches — never `LIKE 'exact'`
+2. ✅ Prefix patterns (`'prefix%'`) use B-Tree indexes — design queries accordingly
+3. ✅ Escape user input: replace `%` with `\%`, `_` with `\_` before building patterns
+4. ✅ For case-insensitive prefix: `LOWER(col) LIKE LOWER('prefix%')` + functional index
+5. ✅ For contains/suffix at scale: `pg_trgm` GIN index
+6. ✅ For natural language: full-text search (`tsvector`/`tsquery`)
+7. ✅ Always verify with `EXPLAIN (ANALYZE, BUFFERS)` — don't assume index usage
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What does this return?
+SELECT 'Rajesh' LIKE 'R_j%';
+
+Q2: Why might this query be slow despite an index on (name)?
+SELECT * FROM users WHERE name LIKE '%raj%';
+
+Q3: What's the fix for case-insensitive contains search at scale?
+SELECT * FROM products WHERE name ILIKE '%phone%';
+
+Q4: What does this return?
+SELECT NULL LIKE '%raj%';
+
+Q5: How do you escape a literal % in a LIKE pattern?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: true — 'Rajesh' matches 'R' + any 1 char ('a') + 'j' + anything ('esh')
+
+Q2: Leading % forces full table scan — B-Tree can't help with suffix/contains patterns.
+   Fix: Add pg_trgm GIN index for contains search.
+
+Q3: Enable pg_trgm + create GIN index:
+   CREATE EXTENSION pg_trgm;
+   CREATE INDEX idx_products_name_trgm ON products USING GIN(name gin_trgm_ops);
+   Then the ILIKE query will use the index ✅
+
+Q4: NULL — three-value logic: any comparison with NULL yields NULL, not TRUE/FALSE.
+   Row excluded because WHERE only keeps rows where condition = TRUE.
+
+Q5: Use backslash escape: LIKE '50\%' or customize: LIKE '50#%' ESCAPE '#'
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice writing prefix patterns (`'prefix%'`) to leverage B-Tree indexes
+2. ✅ Enable `pg_trgm` for contains/suffix search on large tables
+3. ✅ Use `EXPLAIN (ANALYZE, BUFFERS)` to verify index usage — don't assume
+4. ✅ Sanitize user input: escape `%` and `_` before building `LIKE` patterns
+5. ✅ For natural language search, explore full-text search (`tsvector`)
+
+Mastering pattern matching turns slow search boxes into fast, scalable features. 🐘✨
+</Aside>

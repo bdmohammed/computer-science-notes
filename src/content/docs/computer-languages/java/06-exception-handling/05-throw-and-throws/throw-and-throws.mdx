@@ -1,0 +1,1170 @@
+---
+title: Java throw and throws
+slug: computer-languages/java/exception-handling/throw-and-throws
+sidebar:
+  label: "throw & throws"
+  badge:
+    text: Exception Mechanics
+    variant: tip
+tags: [java, exception-handling, throw, throws, interview]
+---
+## 💥 throw Keyword
+
+---
+
+### 🧠 What It Is
+
+`throw` is a statement that **explicitly throws an exception object** from code. It transfers control out of the current method immediately — no further statements in that method execute. Every `throw` requires a `Throwable` instance. This is the mechanism behind all exception creation in Java — even JVM-thrown exceptions use the same object model.
+
+---
+
+### 🔬 Syntax
+
+```java
+throw expression;
+
+// expression must evaluate to:
+//   ├── an instance of Throwable (or subclass)
+//   ├── non-null
+//   └── already constructed (new) or existing reference
+```
+
+```java
+// Valid forms
+throw new RuntimeException("message");                    // ✅ new object
+throw new IllegalArgumentException("bad input: " + val); // ✅ with context
+throw new IOException("disk full");                       // ✅ checked
+
+Throwable t = new RuntimeException("stored");
+throw t;                                                  // ✅ existing reference
+
+throw null;                                               // ✅ compiles
+                                                          // ❌ runtime: NullPointerException
+                                                          //    thrown instead
+
+// Invalid forms
+throw "error message";                                    // ❌ String is not Throwable
+throw 404;                                                // ❌ int is not Throwable
+throw new Object();                                       // ❌ Object is not Throwable
+```
+
+---
+
+### 🔬 What Happens at throw
+
+```
+throw new PaymentException("card declined");
+         │
+         ▼
+1. Exception object created on heap
+   (fillInStackTrace() called — stack captured)
+         │
+         ▼
+2. Current method execution STOPS immediately
+   All statements after throw — SKIPPED
+         │
+         ▼
+3. JVM checks current method's exception table
+         │
+    ┌────┴────┐
+ matched    not matched
+    │            │
+catch runs   current frame DESTROYED
+             local variables gone
+                 │
+                 ▼
+             caller's exception table checked
+             (stack unwinds frame by frame)
+```
+
+---
+
+### 🔬 throw vs JVM-thrown Exceptions
+
+```
+JVM throws automatically:          You throw explicitly:
+  NullPointerException               throw new NullPointerException()
+  ArrayIndexOutOfBoundsException     throw new IllegalArgumentException()
+  ClassCastException                 throw new IllegalStateException()
+  ArithmeticException                throw new CustomException()
+  StackOverflowError                 throw new RuntimeException("msg", cause)
+
+Both produce identical exception objects.
+Both trigger identical stack unwinding.
+Only difference: who constructed the object.
+```
+
+---
+
+### 🔬 throw With Checked vs Unchecked
+
+```java
+// Unchecked — throw freely, no declaration needed
+void validate(int age) {
+    if (age < 0) throw new IllegalArgumentException("age negative: " + age);
+    if (age > 150) throw new IllegalArgumentException("age unrealistic: " + age);
+}
+
+// Checked — MUST declare in throws OR be inside try-catch
+void readConfig(String path) throws IOException {         // ← must declare
+    if (!Files.exists(Path.of(path))) {
+        throw new FileNotFoundException("config missing: " + path);  // checked
+    }
+}
+
+// Checked thrown but not declared — COMPILE ERROR
+void readConfig(String path) {
+    throw new IOException("fail");    // ❌ unhandled checked exception
+}
+```
+
+---
+
+### 🔬 throw Stops Execution — Unreachable Code
+
+```java
+void process(String input) {
+    if (input == null) {
+        throw new NullPointerException("input null");
+        System.out.println("after throw");      // ❌ COMPILE ERROR — unreachable
+    }
+    System.out.println("processing");           // ✅ — reachable (throw was conditional)
+}
+
+void alwaysThrows() {
+    throw new RuntimeException("always");
+    System.out.println("never");                // ❌ COMPILE ERROR — unconditional throw
+}
+```
+
+---
+
+### 🔬 Rethrowing — Three Forms
+
+```java
+// Form 1 — rethrow same exception (preserve original trace)
+try {
+    dbCall();
+} catch (SQLException e) {
+    metrics.increment("db.errors");
+    throw e;                        // ✅ rethrows original — stack trace preserved
+}
+
+// Form 2 — wrap in new exception (add context, change type)
+try {
+    dbCall();
+} catch (SQLException e) {
+    throw new RepositoryException("Failed to load user: " + userId, e);
+    // new exception created — stack trace points to THIS line
+    // original SQLException preserved as cause
+}
+
+// Form 3 — rethrow as different type (lose original — BAD)
+try {
+    dbCall();
+} catch (SQLException e) {
+    throw new RuntimeException("db failed");    // ❌ cause not chained
+    // SQLException message and trace GONE
+}
+```
+
+---
+
+### 🔬 throw in Constructor
+
+```java
+public class Config {
+    private final String host;
+    private final int port;
+
+    public Config(String host, int port) {
+        // Validate before assignment — fail fast
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("host required");
+        }
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("invalid port: " + port);
+        }
+        this.host = host;
+        this.port = port;
+        // Object never reaches "ready" state if validation fails
+        // Caller gets exception — no half-initialized Config object in circulation
+    }
+}
+```
+
+```
+throw in constructor:
+  object allocated on heap (fields zeroed)
+       │
+  constructor runs — hits throw
+       │
+  exception propagates
+       │
+  object on heap: allocated but UNREACHABLE
+  (no reference ever returned to caller)
+       │
+  GC eventually collects it
+  (finalize() could still run — finalizer attack risk)
+```
+
+---
+
+### 🔬 throw in static / instance Initializers
+
+```java
+// static block — wraps in ExceptionInInitializerError
+class AppConfig {
+    static final String DB_URL;
+    static {
+        DB_URL = System.getenv("DB_URL");
+        if (DB_URL == null) {
+            throw new RuntimeException("DB_URL env var missing");
+            // JVM wraps → ExceptionInInitializerError
+            // Class permanently FAILED — NoClassDefFoundError on all future access
+        }
+    }
+}
+
+// instance block — propagates directly
+class Service {
+    int port;
+    {
+        String val = System.getenv("PORT");
+        if (val == null) throw new RuntimeException("PORT missing");
+        // propagates to constructor caller
+    }
+}
+```
+
+---
+
+### 💻 Real-World Code — Input Validation + Domain Exception Pattern
+
+```java
+public class TransferService {
+
+    private final AccountRepository accounts;
+    private final AuditLogger audit;
+
+    public TransferResult transfer(String fromId, String toId, BigDecimal amount) {
+
+        // Guard clauses — throw early, throw specifically
+        if (fromId == null || fromId.isBlank())
+            throw new IllegalArgumentException("fromId required");
+        if (toId == null || toId.isBlank())
+            throw new IllegalArgumentException("toId required");
+        if (amount == null)
+            throw new IllegalArgumentException("amount required");
+        if (amount.compareTo(BigDecimal.ZERO) <= 0)
+            throw new IllegalArgumentException("amount must be positive: " + amount);
+        if (fromId.equals(toId))
+            throw new IllegalArgumentException("cannot transfer to same account: " + fromId);
+
+        Account from = accounts.find(fromId)
+            .orElseThrow(() -> new AccountNotFoundException("account not found: " + fromId));
+
+        Account to = accounts.find(toId)
+            .orElseThrow(() -> new AccountNotFoundException("account not found: " + toId));
+
+        if (from.balance().compareTo(amount) < 0)
+            throw new InsufficientFundsException(
+                "insufficient funds: has " + from.balance() + " needs " + amount
+            );
+
+        try {
+            from.debit(amount);
+            to.credit(amount);
+            accounts.save(from);
+            accounts.save(to);
+            audit.log("TRANSFER", fromId, toId, amount);
+            return TransferResult.success();
+
+        } catch (OptimisticLockException e) {
+            // Concurrent modification — wrap with context
+            throw new TransferConflictException(
+                "concurrent transfer conflict for " + fromId, e
+            );
+        } catch (SQLException e) {
+            // Infrastructure failure — wrap with context
+            throw new RepositoryException("transfer persistence failed", e);
+        }
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No guard clauses at method entry → `NullPointerException` inside business logic → stack trace points to arithmetic deep inside, not the null input → impossible to tell which caller passed null → prod debugging nightmare.
+
+---
+
+### 🔬 `throw null` — The Trap
+
+```java
+void dangerous() {
+    Throwable t = null;
+    throw t;                            // compiles fine
+    // Runtime: NullPointerException thrown
+    // NOT the exception you tried to throw
+    // Stack trace points here — confusing
+}
+
+// Conditional version — silent until wrong path taken
+void conditional(boolean fail) {
+    RuntimeException e = null;
+    if (fail) e = new RuntimeException("x");
+    // ... 50 lines later ...
+    if (someCondition) throw e;         // NPE if e is still null
+}
+```
+
+---
+
+### 🔬 throw in Lambda / Stream
+
+```java
+// Checked exception in lambda — requires wrapping
+List<String> paths = List.of("a.txt", "b.txt");
+
+// ❌ Won't compile — IOException is checked, not declared by Predicate
+paths.stream()
+     .filter(p -> Files.exists(Path.of(p)))     // IOException — compile error
+
+// ✅ Wrap in unchecked
+paths.stream()
+     .filter(p -> {
+         try {
+             return Files.exists(Path.of(p));
+         } catch (IOException e) {
+             throw new UncheckedIOException(e);  // wrap checked → unchecked
+         }
+     })
+     .collect(Collectors.toList());
+
+// ✅ Use helper method
+paths.stream()
+     .filter(p -> exists(p))           // exists() handles wrapping internally
+     .collect(Collectors.toList());
+```
+---
+
+## 🌊 Exception Propagation
+
+---
+
+### 🧠 What It Is
+
+Exception propagation is the **automatic travel of an unhandled exception up the call stack**, frame by frame, until a matching handler is found or the thread dies. It is not manual — you do nothing. The JVM unwinds the stack automatically. Understanding propagation means understanding exactly which frames survive, which die, and what state is lost at each level.
+
+---
+
+### 🔬 Propagation — The Mechanics
+
+```
+Method throws exception
+        │
+        ▼
+Current frame's exception table checked
+        │
+   ┌────┴────┐
+matched    not matched
+   │            │
+catch runs   current frame DESTROYED
+handled      ├── local variables gone
+             ├── operand stack gone
+             ├── return address gone
+             └── exception travels to caller frame
+                        │
+                        ▼
+                caller frame's exception table checked
+                        │
+                   ┌────┴────┐
+                matched    not matched
+                   │            │
+               catch runs   frame DESTROYED
+               handled      propagates further up
+                                    │
+                                    ▼
+                              ... repeats ...
+                                    │
+                                    ▼
+                              main() frame checked
+                                    │
+                               not matched
+                                    │
+                                    ▼
+                              main() frame DESTROYED
+                                    │
+                                    ▼
+                         Default Exception Handler
+                         prints trace — thread dies
+```
+
+---
+
+### 🔬 Checked vs Unchecked Propagation
+
+```
+Unchecked (RuntimeException + Error):
+  ├── propagates freely — no declaration needed
+  ├── compiler does not track it
+  ├── crosses any number of frames silently
+  └── caller never knows it can arrive
+
+Checked (Exception subtypes, not RuntimeException):
+  ├── MUST be declared at every frame it passes through
+  ├── compiler tracks and enforces at each level
+  ├── every method in propagation chain: throws or catches
+  └── caller KNOWS it can arrive — must handle or redeclare
+```
+
+```java
+// Unchecked — propagates silently through all frames
+void A() { B(); }                   // no declaration — NPE passes through
+void B() { C(); }                   // no declaration — NPE passes through
+void C() { throw new NullPointerException(); }
+
+// Checked — every frame must declare
+void A() throws IOException { B(); }        // declares
+void B() throws IOException { C(); }        // declares
+void C() throws IOException {               // declares
+    throw new IOException("fail");
+}
+```
+
+---
+
+### 🔬 Propagation Through Stack — Full Trace Example
+
+```java
+public class OrderPipeline {
+
+    public static void main(String[] args) {
+        new OrderPipeline().run("order-99");        // frame 1
+    }
+
+    void run(String orderId) {
+        fulfill(orderId);                           // frame 2
+    }
+
+    void fulfill(String orderId) {
+        validate(orderId);                          // frame 3
+    }
+
+    void validate(String orderId) {
+        fetchOrder(orderId);                        // frame 4
+    }
+
+    void fetchOrder(String orderId) {
+        String data = null;
+        data.length();                              // frame 5 — NPE thrown HERE
+    }
+}
+```
+
+```
+Stack at throw moment:
+┌──────────────────────────────────┐ ← TOP
+│ fetchOrder("order-99") — line 22 │ NPE thrown — no handler → DESTROYED
+├──────────────────────────────────┤
+│ validate("order-99")  — line 17  │ no handler → DESTROYED
+├──────────────────────────────────┤
+│ fulfill("order-99")   — line 13  │ no handler → DESTROYED
+├──────────────────────────────────┤
+│ run("order-99")       — line 9   │ no handler → DESTROYED
+├──────────────────────────────────┤
+│ main(args)            — line 5   │ no handler → DESTROYED
+└──────────────────────────────────┘
+
+Default handler output:
+Exception in thread "main" java.lang.NullPointerException
+    at OrderPipeline.fetchOrder(OrderPipeline.java:22)  ← throw site
+    at OrderPipeline.validate(OrderPipeline.java:17)
+    at OrderPipeline.fulfill(OrderPipeline.java:13)
+    at OrderPipeline.run(OrderPipeline.java:9)
+    at OrderPipeline.main(OrderPipeline.java:5)         ← entry point
+```
+
+---
+
+### 🔬 Partial Propagation — Caught Midway
+
+```java
+void main() {
+    try {
+        run();                  // exception caught HERE — main never sees it
+        System.out.println("A"); // ✅ runs — exception handled in run()
+    } catch (ServiceException e) {
+        System.out.println("B");
+    }
+}
+
+void run() {
+    try {
+        fulfill();              // IOException propagates from fulfill()
+    } catch (IOException e) {
+        // caught HERE — transforms to domain exception
+        throw new ServiceException("Pipeline failed", e);
+        // ServiceException propagates to main()
+    }
+}
+
+void fulfill() throws IOException {
+    throw new IOException("disk full");
+}
+```
+
+```
+Propagation path:
+  fulfill() → throws IOException
+       │
+  run() catch(IOException) → STOPS here
+       │ transforms
+  run() → throws ServiceException
+       │
+  main() catch(ServiceException) → STOPS here
+       │
+  "A" never prints — exception active when catch handled in run()
+  Wait — ServiceException caught in main() → A prints after catch
+```
+
+```
+Stack at IOException throw:
+  fulfill() — DESTROYED
+  run()     — catch matches → STAYS ALIVE
+              throws ServiceException
+  main()    — catch matches → STAYS ALIVE
+              continues after catch
+```
+
+---
+
+### 🔬 Propagation Through Threads — Stops at Thread Boundary
+
+```java
+// Exception does NOT cross thread boundaries
+ExecutorService executor = Executors.newSingleThreadExecutor();
+
+executor.execute(() -> {
+    throw new RuntimeException("worker failed");
+    // propagates within worker thread only
+    // hits thread's default handler
+    // main thread NEVER sees this exception
+});
+
+// Main thread continues — unaware of worker failure
+System.out.println("main continues");   // ✅ always prints
+```
+
+```
+Thread A (main):           Thread B (worker):
+    │                           │
+    │                    throws RuntimeException
+    │                           │
+    │                    no handler in B
+    │                           │
+    │                    B's default handler fires
+    │                    B dies
+    │
+main continues — no knowledge of B's failure
+```
+
+```java
+// To propagate across threads — use Future
+Future<?> future = executor.submit(() -> {
+    throw new RuntimeException("worker failed");
+});
+
+try {
+    future.get();                           // blocks — rethrows as ExecutionException
+} catch (ExecutionException e) {
+    Throwable cause = e.getCause();         // original RuntimeException
+    log.error("Worker failed: {}", cause.getMessage(), cause);
+}
+```
+
+---
+
+### 🔬 Propagation and finally — Guaranteed Mid-Propagation
+
+```java
+void A() {
+    try {
+        B();                        // exception propagates FROM B
+    } finally {
+        System.out.println("A finally");    // ✅ runs DURING propagation
+        // exception continues after finally — not handled
+    }
+}
+
+void B() {
+    try {
+        throw new IOException("fail");
+    } finally {
+        System.out.println("B finally");    // ✅ runs DURING propagation
+    }
+}
+
+// Call: A()
+// Output:
+// B finally    ← B's finally runs as exception exits B
+// A finally    ← A's finally runs as exception exits A
+// IOException propagates to A's caller
+```
+
+```
+finally blocks fire during propagation:
+  throw in B
+      │
+  B's finally runs
+      │
+  exception exits B → enters A
+      │
+  A has no catch match
+      │
+  A's finally runs
+      │
+  exception exits A → propagates to caller
+```
+
+---
+
+### 💻 Real-World Code — Layered Architecture Propagation
+
+```java
+// Layer 4: Infrastructure
+class JdbcUserDao {
+    User findById(long id) throws SQLException {
+        // raw JDBC — throws SQLException
+        ResultSet rs = stmt.executeQuery();
+        if (!rs.next()) throw new SQLException("not found: " + id);
+        return mapRow(rs);
+    }
+}
+
+// Layer 3: Repository — maps infra exception to domain
+class UserRepository {
+    User findById(long id) throws UserNotFoundException, RepositoryException {
+        try {
+            return dao.findById(id);                    // SQLException caught here
+        } catch (SQLException e) {
+            if (e.getMessage().contains("not found"))
+                throw new UserNotFoundException(id);    // domain exception
+            throw new RepositoryException("DB failure", e);
+        }
+    }
+    // SQLException does NOT propagate beyond this layer
+}
+
+// Layer 2: Service — maps domain exception to service response
+class UserService {
+    UserDTO getUser(long id) throws ServiceException {
+        try {
+            User user = repository.findById(id);        // UserNotFoundException caught
+            return toDTO(user);
+        } catch (UserNotFoundException e) {
+            throw new ServiceException(404, "User not found: " + id, e);
+        } catch (RepositoryException e) {
+            log.error("Repository failure for user {}", id, e);
+            throw new ServiceException(503, "Service unavailable", e);
+        }
+    }
+}
+
+// Layer 1: Controller — maps service exception to HTTP response
+class UserController {
+    Response getUser(long id) {
+        try {
+            return Response.ok(service.getUser(id));    // ServiceException caught
+        } catch (ServiceException e) {
+            return Response.status(e.getStatusCode())
+                           .entity(e.getMessage())
+                           .build();
+        }
+        // No exception escapes controller layer
+    }
+}
+```
+
+```
+Propagation map:
+  JdbcUserDao    → throws SQLException
+       ↓ caught + transformed
+  UserRepository → throws UserNotFoundException / RepositoryException
+       ↓ caught + transformed
+  UserService    → throws ServiceException
+       ↓ caught + transformed
+  UserController → returns HTTP Response
+       ↓ nothing escapes
+
+Each layer: catches what it understands, transforms what it doesn't
+Each transformation: preserves cause chain
+No raw infrastructure exception escapes to client
+```
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — `throw` creates a new stack trace at throw site, not at `new`**
+
+```java
+// Anti-pattern seen in prod:
+class Exceptions {
+    static final RuntimeException REUSED =
+        new RuntimeException("reused");         // stack trace captured HERE (class load)
+}
+
+void process() {
+    throw Exceptions.REUSED;                    // throw site — but trace points to class load
+    // Stack trace shows Exceptions.<clinit> — not process()
+    // Completely misleading in prod logs
+}
+```
+
+`fillInStackTrace()` runs at **object construction**. Reusing pre-built exception objects = stack trace points to construction site, not actual failure site. Every `throw` should use `new`.
+
+---
+
+**🪤 Trap 2 — Checked exception masquerading as unchecked via generics**
+
+```java
+// Sneaky throw — bypasses checked exception compiler enforcement
+@SuppressWarnings("unchecked")
+static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+    throw (T) t;
+}
+
+void method() {
+    // Throws IOException without declaring it
+    sneakyThrow(new IOException("sneaky"));
+    // Compiles — no throws declaration needed
+    // Runtime: IOException propagates normally
+    // catch(IOException) blocks still catch it correctly
+    // But callers don't know to expect it — contract broken
+}
+```
+
+Used in frameworks (Lombok's `@SneakyThrows`). Breaks the checked exception contract — callers cannot know what to catch. Silent failures in prod when callers don't catch the undeclared checked exception.
+
+---
+
+**🪤 Trap 3 — `throw` after `return` is unreachable but `return` after `throw` is not**
+
+```java
+void method(boolean flag) {
+    if (flag) {
+        return;
+        throw new RuntimeException(); // ❌ COMPILE ERROR — unreachable after return
+    }
+    throw new RuntimeException();
+    return;                           // ❌ COMPILE ERROR — unreachable after throw
+}
+
+// But:
+void method(boolean flag) {
+    if (flag) return;
+    throw new RuntimeException();     // ✅ reachable — conditional return above
+}
+```
+
+---
+
+**🪤 Trap 4 — throw inside finally replaces propagating exception**
+
+```java
+void process() throws IOException {
+    try {
+        throw new IOException("disk full");             // ①
+    } finally {
+        if (someCondition) throw new RuntimeException("from finally"); // ②
+        // ② fires → ① completely gone
+        // caller sees RuntimeException, not IOException
+        // someCondition may be a null check — NPE in finally → same result
+    }
+}
+```
+
+Any `throw` inside `finally` — whether explicit or from a method call — replaces the exception from `try` or `catch`. Root cause permanently lost.
+
+---
+
+**🪤 Trap 5 — `throw` does not exit `finally` early**
+
+```java
+void method() {
+    try {
+        throw new RuntimeException("x");    // ①
+    } finally {
+        System.out.println("A");            // ✅ runs
+        System.out.println("B");            // ✅ runs — throw in try doesn't skip finally
+        // both run before exception exits method
+    }
+}
+// Output: A B
+// Then RuntimeException propagates
+```
+
+`throw` in `try` stops `try` — but does NOT skip `finally`. `finally` runs completely before the exception exits the method.
+
+---
+
+**🪤 Trap 6 — Propagation stops at catch even if catch rethrows different type**
+
+```java
+void A() {
+    try {
+        B();
+    } catch (RuntimeException e) {      // catches — then rethrows different type
+        throw new IllegalStateException("wrapped", e);
+        // propagation of original exception STOPPED at A's catch
+        // NEW propagation of IllegalStateException starts from A
+    }
+}
+
+void B() {
+    throw new NullPointerException("original");
+}
+```
+
+Two separate propagation chains. Original NPE propagation ends at A's catch. New `IllegalStateException` propagation starts from A. Stack trace of `IllegalStateException` starts at A — not at B.
+
+---
+
+**🪤 Trap 7 — Local variable state lost during propagation**
+```java
+void processOrder(String orderId) {
+    String status = "PENDING";                  // local var
+
+    try {
+        status = "PROCESSING";
+        charge(orderId);                        // throws PaymentException
+        status = "COMPLETE";                    // never reached
+    } catch (PaymentException e) {
+        // status = "PROCESSING" at this point
+        log.error("Failed at status: {}", status);  // ✅ status accessible in catch
+    }
+    // If exception NOT caught — status = "PROCESSING" — frame destroyed
+    // status gone — audit trail incomplete
+}
+```
+
+Variables declared **before** `try` are accessible in catch. Variables assigned **inside** `try` after the throw point are not reached. State mid-transaction can be inspected in catch but is gone if exception propagates past the frame.
+
+---
+
+**🪤 Trap  8— Propagation through `synchronized` releases lock**
+
+```java
+class PaymentService {
+    synchronized void charge(Order order) {
+        try {
+            gateway.charge(order);              // throws RuntimeException
+        } finally {
+            // lock released here — finally runs during propagation
+        }
+        // If no finally: JVM still releases synchronized lock on exception
+        // synchronized guarantees lock release even on exception propagation
+    }
+}
+```
+
+`synchronized` method lock is **always released** when exception propagates out — whether or not `finally` is present. JVM guarantees this. Not obvious — devs assume lock might be held if exception bypasses cleanup code.
+
+---
+
+**🪤 Trap 9 — Propagation across `CompletableFuture` wraps in `CompletionException`**
+```java
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    throw new RuntimeException("async failed");     // thrown in worker thread
+});
+
+try {
+    String result = future.join();                  // blocks
+} catch (CompletionException e) {
+    // NOT RuntimeException — wrapped in CompletionException
+    Throwable cause = e.getCause();                 // original RuntimeException here
+    log.error("Real cause: {}", cause.getMessage());
+}
+
+// future.get() wraps in ExecutionException — different wrapper
+try {
+    future.get();
+} catch (ExecutionException e) {
+    Throwable cause = e.getCause();                 // original here too
+}
+```
+
+Exception thrown in async task does **not** propagate as-is. `join()` wraps in `CompletionException`. `get()` wraps in `ExecutionException`. Catching the original type fails silently.
+
+---
+
+**🪤 Trap 10 — Stack trace truncated in high-throughput systems**
+
+```java
+// JVM optimization: after same exception thrown from same location N times
+// JVM may stop filling in stack trace — returns exception with EMPTY trace
+
+// Controlled by JVM flag:
+// -XX:-OmitStackTraceInFastThrow   ← disable optimization (default: enabled)
+
+// Symptom in prod:
+// NullPointerException
+//     (no stack trace)
+// ← JVM omitted it for performance after thousands of throws from same site
+
+// Fix: add -XX:-OmitStackTraceInFastThrow to JVM args
+// Cost: stack trace capture on every throw — performance hit at high volume
+```
+
+🔴 **Prod consequence:** High-traffic endpoint throws NPE repeatedly. After JVM optimization kicks in, logs show `NullPointerException` with no trace. Ops team cannot determine source. Add `-XX:-OmitStackTraceInFastThrow` to JVM startup args — immediate cost is higher CPU from `fillInStackTrace()`.
+
+---
+
+**🪤 Trap 1 — `throws Exception` satisfies compiler but destroys caller contract**
+
+```java
+// ❌ Common lazy pattern — compiles, destroys information
+void processPayment() throws Exception {
+    // declares Exception — hides what can actually go wrong
+}
+
+// Caller forced to:
+try {
+    processPayment();
+} catch (Exception e) {
+    // what is e? IOException? SQLException? RuntimeException?
+    // no way to know — can't write specific recovery logic
+    // logs "Exception" — ops team has no idea what happened
+}
+
+// ✅ Correct — specific exceptions declared
+void processPayment() throws PaymentException, NetworkException { }
+```
+
+`throws Exception` satisfies the compiler but breaks callers — they can't write meaningful catch blocks. Every method in a production codebase with `throws Exception` is a maintenance liability.
+
+---
+
+**🪤 Trap 2 — Declared exception never actually thrown — valid, misleading**
+
+```java
+// Compiles and runs — throws clause is a LIE
+void method() throws IOException {
+    System.out.println("no IO here");
+    // IOException declared but never thrown
+    // Caller writes try-catch for IOException — dead code
+    // Misleads callers about what can go wrong
+}
+
+// Unchecked — compiler catches the lie (for checked only)
+void method() throws IOException {
+    throw new RuntimeException();  // ✅ compiles — RuntimeException needs no declaration
+    // IOException declared, RuntimeException thrown
+    // Caller's catch(IOException) never fires — catches nothing
+}
+```
+
+---
+
+**🪤 Trap 3 — `throws` on overriding method with interface AND abstract class**
+
+```java
+interface Loader {
+    void load() throws IOException;         // throws IOException
+}
+
+abstract class BaseLoader {
+    abstract void load() throws Exception;  // throws Exception (broader)
+}
+
+class MyLoader extends BaseLoader implements Loader {
+    @Override
+    public void load() throws IOException {  // must satisfy BOTH contracts
+        // IOException satisfies Loader (same)
+        // IOException satisfies BaseLoader (narrower than Exception) ✅
+    }
+
+    // ❌ Can't do:
+    // void load() throws Exception — violates Loader contract
+    // void load() throws SQLException — not in Loader
+}
+```
+
+When class implements multiple interfaces/extends class, override must satisfy **all** contracts simultaneously — must be narrower than all declared types.
+
+---
+
+**🪤 Trap 4 — `throws` doesn't force callers to catch — only to acknowledge**
+
+```java
+void method() throws IOException {
+    throw new IOException("x");
+}
+
+// Caller option 1: catch it
+try { method(); } catch (IOException e) { handle(e); }
+
+// Caller option 2: declare it and pass up — compiler happy
+void caller() throws IOException {
+    method();                   // no try-catch — just redeclares
+}
+
+// Caller option 3: wrap in unchecked — bypass checked system
+void caller() {
+    try { method(); }
+    catch (IOException e) { throw new RuntimeException(e); }
+}
+```
+
+`throws` forces callers to **acknowledge** the exception — not necessarily handle it. Callers can always redeclare or wrap. The compiler enforces acknowledgment, not recovery.
+
+---
+
+**🪤 Trap 5 — Covariant return type and throws narrowing interact**
+
+```java
+class Base {
+    Base create() throws Exception { return new Base(); }
+}
+
+class Child extends Base {
+    @Override
+    Child create() throws IOException {    // ✅ covariant return + narrower throws
+        return new Child();
+    }
+}
+
+// Both covariant return (Child extends Base) and
+// narrower throws (IOException extends Exception) — both valid independently
+// Together: both allowed simultaneously
+// Tricky: if throws broadened AND return narrowed → compile error on throws alone
+```
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Stack unwinding + heap allocation + `athrow` bytecode**
+
+```
+throw new RuntimeException("x")
+compiles to:
+
+  new         java/lang/RuntimeException     ← allocate object on heap
+  dup                                         ← duplicate reference
+  ldc         "x"                             ← push message string
+  invokespecial RuntimeException.<init>       ← call constructor (fillInStackTrace)
+  athrow                                      ← JVM instruction: begin unwinding
+
+athrow instruction:
+  1. pops exception reference from operand stack
+  2. checks: is it null? → throw NullPointerException instead
+  3. sets thread's pending exception = this object
+  4. begins exception table lookup in current frame
+  5. if no match → destroys frame → checks caller frame
+  6. repeats until match found or thread stack empty
+```
+
+```
+athrow is the ONLY JVM instruction for throwing.
+All throws — explicit, JVM-generated, Error — use athrow.
+Exception object: allocated on heap, lives until GC.
+Stack trace: StackTraceElement[] allocated on heap at step invokespecial.
+```
+
+**Underlying primitive: Stack (LIFO) + linked list (cause chain) + state machine (thread exception state)**
+
+```
+Propagation = iterative stack unwinding:
+
+while (stack not empty) {
+    frame = stack.peek()
+    if (frame.exceptionTable.hasMatch(pendingException)) {
+        frame.jumpToCatchBlock()
+        pendingException = null     ← handled
+        break
+    } else {
+        frame.runFinallyIfAny()
+        stack.pop()                 ← frame destroyed
+    }
+}
+if (stack.empty && pendingException != null) {
+    thread.defaultHandler.handle(pendingException)
+    thread.terminate()
+}
+
+Cause chain = linked list:
+  ServiceException
+      .cause → RepositoryException
+                   .cause → SQLException
+                                .cause → null
+
+Reading root cause:
+  Throwable root = e;
+  while (root.getCause() != null) root = root.getCause();
+  // root = original SQLException
+```
+
+**Underlying primitive: Compile-time type checking — throws is a type annotation**
+
+```
+throws is purely a compile-time construct:
+
+Bytecode level:
+  Method descriptor in .class file:
+    void process() throws IOException
+    → stored as: exceptions attribute in method_info
+    → lists exception class indices in constant pool
+
+  javap -verbose output:
+    Exceptions:
+      throws java.io.IOException
+
+  JVM at runtime:
+    IGNORES the exceptions attribute entirely
+    No runtime check — no enforcement
+    Pure metadata for compiler and tools
+
+Compiler uses throws to:
+  1. Verify: does caller handle or redeclare?
+  2. Verify: does override narrow or match?
+  3. Verify: does catch block have reachable exception type?
+
+Result:
+  throws = type-level contract annotation
+  enforced by compiler — invisible to JVM at runtime
+```
+
+---
+
+### 📊 throw — Decision Table
+
+| Situation | What to throw |
+|-----------|--------------|
+| Bad method argument (null, negative, out of range) | `IllegalArgumentException` |
+| Object in wrong state for this operation | `IllegalStateException` |
+| Method not implemented / supported | `UnsupportedOperationException` |
+| Element not found (collection context) | `NoSuchElementException` |
+| Index out of valid range | `IndexOutOfBoundsException` |
+| Null where not expected | `NullPointerException` (explicit) |
+| Arithmetic error (division by zero) | `ArithmeticException` |
+| IO / network failure | `IOException` (checked) |
+| Domain-specific failure | Custom exception extending appropriate base |
+| Wrapping checked for stream/lambda | `UncheckedIOException`, or custom `RuntimeException` |
+
+---
+
+### 📊 Propagation — Behavior Reference
+
+| Scenario | Propagates? | Frame destroyed? | finally runs? |
+|----------|------------|-----------------|--------------|
+| Caught in same method | ❌ stops | ❌ frame lives | ✅ |
+| Not caught — propagates to caller | ✅ | ✅ frame destroyed | ✅ |
+| Caught in caller | ✅ then stops | ✅ callee destroyed | ✅ both |
+| Thread boundary | ❌ stops at thread | ✅ all frames | ✅ all |
+| `synchronized` method | ✅ propagates | ✅ | ✅ lock released |
+| `CompletableFuture` | ✅ wrapped | ✅ | N/A |
+| `Future.get()` | ✅ wrapped in ExecutionException | ✅ | N/A |
+| `System.exit()` in catch | ❌ JVM dead | N/A | ❌ |
+
+---

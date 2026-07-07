@@ -1,0 +1,1246 @@
+---
+title: Python Exception Handling — Syntax & Runtime Errors Explained
+slug: computer-languages/python/exception-handling/errors-and-pitfalls
+description: Since Python is dynamically typed, it doesn't have "compile errors" for exceptions. Instead, master the SyntaxErrors, TypeErrors, and logical pitfalls that act as your guardrails.
+tags: [python, exceptions, syntax-errors, type-errors, interview, best-practices]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔴 Python "Exception" Errors
+
+> **Crucial Difference**: Java checks exception handling at **compile time** (static typing). Python checks it at **runtime** (dynamic typing).  
+> You won't get an error for "unhandled exceptions." Instead, you get **SyntaxErrors** for bad structure and **TypeErrors** for bad usage.
+
+### 🔬 The Python "Catalog" of Errors
+
+```text
+Python Exception Errors
+│
+├── Syntax Errors (The "Compile" Errors)
+│   ├── 01. Invalid try/except syntax
+│   ├── 02. except without try
+│   ├── 03. else/finally placement errors
+│   └── 04. Raising non-Exceptions
+│
+├── Type & Logic Errors (The Runtime Traps)
+│   ├── 05. Catching the wrong order
+│   ├── 06. Swallowing errors silently
+│   ├── 07. Losing context (no chaining)
+│   ├── 08. Bare except clauses
+│   └── 09. Mutable default arguments in handlers
+```
+
+---
+
+### 🔬 01 — Invalid `try` Syntax
+
+In Java, a `try` block *must* have a catch or finally. In Python, a `try` block *must* have at least one `except` or `finally`.
+
+```python
+# ❌ SyntaxError: expected 'except' or 'finally' block
+try:
+    risky_op()
+
+# ✅ Fix
+try:
+    risky_op()
+except Exception:
+    pass
+```
+
+---
+
+### 🔬 02 — `except` Without `try`
+
+```python
+# ❌ SyntaxError: invalid syntax
+def method():
+    print("before")
+    except ValueError:  # Floating except clause
+        handle()
+
+# ✅ Fix: Must be attached to a try block
+try:
+    print("before")
+except ValueError:
+    handle()
+```
+
+---
+
+### 🔬 03 — `else` and `finally` Placement
+
+Python is strict about order: `try` → `except` → `else` → `finally`.
+
+```python
+# ❌ SyntaxError: invalid syntax
+try:
+    op()
+finally:
+    cleanup()
+except Exception: # except cannot come after finally
+    handle()
+
+# ❌ SyntaxError: invalid syntax
+try:
+    op()
+except Exception:
+    handle()
+else:
+    success()
+finally:
+    cleanup()
+except AnotherError: # No more excepts allowed after else/finally
+    handle()
+```
+
+---
+
+### 🔬 04 — Raising Non-Exceptions
+
+In Java, `throw "string"` is a compile error. In Python, it's a **TypeError** at runtime.
+
+```python
+# ❌ TypeError: exceptions must derive from BaseException
+raise "Something went wrong"
+
+# ❌ TypeError: throwing None
+raise None
+
+# ✅ Fix: Raise an Exception instance
+raise ValueError("Something went wrong")
+```
+
+<Aside type="tip">
+**Pro Tip**: Always raise instances (`ValueError()`) not classes (`ValueError`). Raising the class works but is deprecated and confusing.
+</Aside>
+
+---
+
+### 🔬 05 — Catching Order Matters
+
+Just like Java, Python checks `except` blocks top-to-bottom. If you catch `Exception` first, specific errors are unreachable.
+
+```python
+# ❌ Logic Error / Warning
+try:
+    int("abc")
+except Exception: 
+    print("General error")
+except ValueError: # ⚠️ This block is UNREACHABLE
+    print("Specific error")
+
+# ✅ Fix: Specific first
+try:
+    int("abc")
+except ValueError:
+    print("Specific error")
+except Exception:
+    print("General error")
+```
+
+---
+
+### 🔬 06 — The "Bare Except" Trap
+
+In Java, `catch (Exception e)` is common. In Python, `except:` catches **everything**, including `KeyboardInterrupt` (Ctrl+C) and `SystemExit`.
+
+```python
+# ❌ Dangerous: Makes program unkillable
+try:
+    while True:
+        pass
+except: 
+    pass # Swallows Ctrl+C!
+
+# ✅ Fix: Catch Exception explicitly
+try:
+    while True:
+        pass
+except Exception:
+    pass # Allows Ctrl+C to work
+```
+
+---
+
+### 🔬 07 — Losing Context (No Chaining)
+
+Java forces you to chain causes (`new Ex(e)`). Python allows you to lose them easily.
+
+```python
+try:
+    open("missing.txt")
+except FileNotFoundError:
+    # ❌ Bad: Loses the original traceback
+    raise ConfigError("Config missing")
+
+# ✅ Good: Preserves context implicitly
+raise ConfigError("Config missing")
+
+# ✅ Best: Explicit chaining
+raise ConfigError("Config missing") from e
+```
+
+---
+
+### 🔬 08 — Unreachable Code After `raise`
+
+Python doesn't give a "compile error" for code after `raise`, but linters (like `pylint`) will flag it as unreachable.
+
+```python
+def method():
+    raise ValueError("Fail")
+    print("This never runs") # ⚠️ Unreachable code
+```
+
+---
+
+### 🔬 09 — The `as` Variable Scope
+
+In Java, the catch variable is local to the block. In Python, it is also local, but referencing it outside causes a `NameError`.
+
+```python
+try:
+    raise ValueError("Oops")
+except ValueError as e:
+    print(e)
+
+print(e) # ❌ NameError: name 'e' is not defined
+```
+
+---
+
+## 💻 Real-World Code: The "Perfect" Handler
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def process_data(data_id):
+    try:
+        # Risky operation
+        result = db.query(data_id)
+    except DatabaseConnectionError as e:
+        # Log with context, chain exception
+        logger.error(f"DB failed for {data_id}", exc_info=True)
+        raise ServiceUnavailableError("Database down") from e
+    except ValidationError as e:
+        # Don't log stack trace for user errors
+        logger.warning(f"Invalid data: {e}")
+        raise BadRequestError(str(e)) from e
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logger.exception(f"Unexpected error for {data_id}")
+        raise InternalServerError() from e
+    else:
+        # Runs only if no exception
+        logger.info(f"Success for {data_id}")
+        return result
+    finally:
+        # Always runs
+        metrics.increment("db_queries")
+```
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: `except (ValueError, KeyError)`" icon="shield">
+    ```python
+    # ✅ Valid: Catch multiple types
+    except (ValueError, KeyError) as e:
+        handle(e)
+    
+    # ❌ Invalid: Syntax Error
+    except ValueError | KeyError: 
+        handle(e)
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Modifying the Exception" icon="warning">
+    ```python
+    try:
+        raise ValueError("Original")
+    except ValueError as e:
+        e.args = ("Modified",) 
+        raise e 
+    # ⚠️ This modifies the original object. 
+    # Usually better to raise a NEW exception.
+    ```
+  </Card>
+
+  <Card title="Trap 3: `raise` vs `raise e`" icon="rocket">
+    ```python
+    try:
+        raise ValueError("Original")
+    except ValueError as e:
+        raise e      # ❌ Resets traceback to this line
+        # raise      # ✅ Preserves original traceback
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: Does Python have checked exceptions?
+    A: No. All exceptions are runtime.
+    
+    Q: What is the order of blocks?
+    A: try -> except -> else -> finally.
+    ```
+  </Card>
+  
+  <Card title="Best Practices" icon="rocket">
+    ```text
+    Q: How do you preserve stack traces?
+    A: Use `raise ... from ...` or bare `raise`.
+    
+    Q: Why avoid bare `except:`?
+    A: It catches SystemExit and KeyboardInterrupt.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+try:
+    raise ValueError("Inner")
+except ValueError as e:
+    try:
+        raise TypeError("Outer")
+    except TypeError:
+        print("Caught Outer")
+    print("After Inner Except")
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Caught Outer
+After Inner Except
+```
+*Reason: The inner `try/except` handles the `TypeError`. Execution continues in the `ValueError` block.*
+</details>
+
+> 🚀 **Final Wisdom**: Python trusts you to handle errors responsibly. Use `try/except` sparingly, chain your exceptions, and never swallow errors silently. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔥 Python — Compile-Time Errors & Top Exceptions
+
+---
+
+## PART 1 — Compile-Time Errors
+
+### 🧠 Mental Model
+
+```
+Java:    compile-time errors → javac catches them BEFORE running
+Python:  "compile-time" = parse/compile phase (before bytecode runs)
+         Python compiles source → bytecode BEFORE execution
+         Errors caught during this phase = SyntaxError family
+
+PYTHON COMPILE PHASES:
+  Source code
+      │
+      ▼
+  Tokenizer      ← catches: invalid characters, bad string literals
+      │
+      ▼
+  Parser         ← catches: SyntaxError, IndentationError, TabError
+      │
+      ▼
+  AST Builder    ← catches: structural syntax problems
+      │
+      ▼
+  Compiler       ← catches: SyntaxError (semantic like return outside func)
+      │
+      ▼
+  Bytecode (.pyc)← stored, ready to execute
+      │
+      ▼
+  PVM executes   ← runtime errors happen here
+```
+
+---
+
+### All Possible Compile-Time Errors
+
+#### 1. `SyntaxError` — Invalid Syntax
+
+```python
+# Missing colon:
+if True
+    pass
+# SyntaxError: expected ':'
+
+# Missing closing bracket:
+x = (1 + 2
+# SyntaxError: '(' was never closed
+
+# Invalid assignment target:
+1 + 2 = x
+# SyntaxError: cannot assign to expression here
+
+# f-string expression issues:
+f"{'nested" quote}"
+# SyntaxError: f-string expression part cannot include a backslash
+
+# Walrus in wrong position:
+x := 10
+# SyntaxError: invalid syntax (must be inside expression)
+
+# Star in wrong position:
+a, *b, *c = [1, 2, 3]
+# SyntaxError: multiple starred expressions in assignment
+
+# Positional after keyword:
+def f(a=1, b):
+    pass
+# SyntaxError: non-default argument follows default argument
+
+# / before * in wrong order:
+def f(*, a, /, b):
+    pass
+# SyntaxError: / must be ahead of *
+
+# Duplicate keyword in call:
+f(x=1, x=2)
+# SyntaxError: keyword argument repeated: x
+
+# Invalid decorator:
+@123
+def f(): pass
+# SyntaxError: invalid syntax
+```
+
+#### 2. `IndentationError` — Wrong Indentation
+
+```python
+# Missing indentation:
+if True:
+pass            # IndentationError: expected an indented block after 'if'
+
+# Unexpected indentation:
+x = 1
+    y = 2       # IndentationError: unexpected indent
+
+# Inconsistent indentation:
+if True:
+    x = 1
+      y = 2     # IndentationError: unexpected indent
+
+# Deindent mismatch:
+if True:
+    x = 1
+  y = 2         # IndentationError: unindent does not match any outer indent level
+```
+
+#### 3. `TabError` — Mixed Tabs and Spaces
+
+```python
+# File uses spaces everywhere then:
+if True:
+	pass        # TabError: inconsistent use of tabs and spaces in indentation
+                # (tab character where spaces expected)
+```
+
+#### 4. Compile-Time `SyntaxError` — Semantic Rules
+
+```python
+# return outside function:
+return 42
+# SyntaxError: 'return' outside function
+
+# yield outside function:
+yield 42
+# SyntaxError: 'yield' outside function
+
+# await outside async function:
+await something()
+# SyntaxError: 'await' outside function / 'await' outside async function
+
+# break outside loop:
+break
+# SyntaxError: 'break' outside loop
+
+# continue outside loop:
+continue
+# SyntaxError: 'continue' outside loop
+
+# nonlocal at module level:
+nonlocal x
+# SyntaxError: nonlocal declaration not allowed at module level
+
+# nonlocal of global name:
+x = 10
+def f():
+    nonlocal x
+# SyntaxError: no binding for nonlocal 'x' found
+
+# delete literal:
+del 42
+# SyntaxError: cannot delete literal (3.10+)
+
+# Annotation assignment target error:
+(x): int = 5
+# SyntaxError: only single target (not parenthesized) can be annotated
+
+# async for outside async function:
+async for x in gen():
+    pass
+# SyntaxError: 'async for' outside async function
+
+# match without case:
+match x:
+    pass        # SyntaxError: expected 'case'
+
+# Exception group mixing:
+try: pass
+except ValueError: pass
+except* TypeError: pass
+# SyntaxError: cannot have both 'except' and 'except*' on the same 'try'
+```
+
+#### 5. `NameError` at Import — Effectively Compile-Time
+
+```python
+# Class body accessing undefined name (detected at class creation):
+class Foo:
+    x = undefined_name    # NameError at class body execution (import time)
+```
+
+#### 6. Encoding Errors
+
+```python
+# File with wrong encoding declaration:
+# -*- coding: ascii -*-
+# ❤           ← non-ASCII in ascii-declared file
+# SyntaxError: (unicode error) 'ascii' codec can't decode byte...
+
+# Invalid encoding name:
+# -*- coding: utf-99 -*-
+# SyntaxError: unknown encoding: utf-99
+```
+
+#### 7. `ValueError` from `compile()` — Structural
+
+```python
+# Null bytes in source:
+compile("x = \x00", "<string>", "exec")
+# ValueError: source code string cannot contain null bytes
+
+# Incorrect mode:
+compile("x = 1", "<string>", "invalid_mode")
+# ValueError: compile() mode must be 'exec', 'eval' or 'single'
+```
+
+#### Complete Error Table
+
+```
+┌─────────────────────────┬─────────────────────────────────────────┐
+│ Error                   │ Trigger                                 │
+├─────────────────────────┼─────────────────────────────────────────┤
+│ SyntaxError             │ Invalid grammar, bad structure          │
+│ IndentationError        │ Wrong indent level                      │
+│ TabError                │ Mixed tabs/spaces                       │
+│ SyntaxError (semantic)  │ return/yield/break/continue outside ctx │
+│ SyntaxError (f-string)  │ Invalid f-string expression             │
+│ SyntaxError (annot.)    │ Invalid annotation target               │
+│ SyntaxError (params)    │ positional after keyword default        │
+│ SyntaxError (except*)   │ mixing except and except*               │
+│ SyntaxError (encoding)  │ invalid encoding declaration            │
+│ ValueError (compile)    │ null bytes, wrong mode                  │
+└─────────────────────────┴─────────────────────────────────────────┘
+```
+
+---
+
+## PART 2 — Top Exceptions In The Wild
+
+---
+
+### 1. `NullPointerException` → Python: `AttributeError` / `TypeError`
+
+```
+Java:   NullPointerException → accessing method/field on null object
+Python: No null — None is a real object
+        But: AttributeError when accessing attr on None
+             TypeError when passing None where object expected
+```
+
+```python
+# Python's "NullPointerException" moments:
+
+user = None
+user.name               # 💥 AttributeError: 'NoneType' has no attribute 'name'
+user.get_orders()       # 💥 AttributeError: 'NoneType' has no attribute 'get_orders'
+len(user)               # 💥 TypeError: object of type 'NoneType' has no len()
+user + "string"         # 💥 TypeError: unsupported operand type: NoneType + str
+
+# Real prod scenario — function returns None unexpectedly:
+def find_user(user_id: int):
+    result = db.query("SELECT ...", (user_id,))
+    return result[0] if result else None    # returns None on miss
+
+user = find_user(999)
+user.email              # 💥 AttributeError — forgot to check None!
+
+# Fix — explicit None guard:
+user = find_user(999)
+if user is None:
+    raise UserNotFoundError(999)
+email = user.email      # ✅ safe
+
+# Fix — walrus operator:
+if (user := find_user(999)) is None:
+    raise UserNotFoundError(999)
+
+# Fix — raise in find_user:
+def find_user(user_id: int) -> dict:
+    result = db.query("SELECT ...", (user_id,))
+    if not result:
+        raise UserNotFoundError(user_id)
+    return result[0]
+```
+
+```python
+# Safe None propagation patterns:
+name = user.name if user else "Unknown"
+name = getattr(user, 'name', None)
+name = user and user.name              # short-circuit — None if user is None
+```
+
+---
+
+### 2. `ClassCastException` → Python: `TypeError`
+
+```
+Java:   ClassCastException → invalid cast: (String) integerObject
+Python: Dynamic typing — no explicit cast
+        TypeError: wrong type passed to operation/function
+```
+
+```python
+# Python's ClassCastException equivalent:
+
+# Wrong type in arithmetic:
+"5" + 5             # 💥 TypeError: can only concatenate str (not "int") to str
+"5" * 5             # ✅ "55555" — Python overloads * for str×int
+
+# Wrong type in function:
+len(42)             # 💥 TypeError: object of type 'int' has no len()
+sorted(42)          # 💥 TypeError: 'int' is not iterable
+int([1, 2, 3])      # 💥 TypeError: int() arg must be a string or number
+
+# Unpacking wrong type:
+a, b = 42           # 💥 TypeError: cannot unpack non-iterable int
+
+# Real prod scenario — API returns string, code expects int:
+response = {"status": "200", "user_id": "42"}    # all strings from JSON
+user_id  = response["user_id"]
+db.find(user_id)    # 💥 if db expects int, gets string
+
+# Fix — type cast explicitly:
+user_id = int(response["user_id"])
+
+# Fix — isinstance guard:
+def process(value: int) -> int:
+    if not isinstance(value, int):
+        raise TypeError(f"Expected int, got {type(value).__name__}: {value!r}")
+    return value * 2
+```
+
+---
+
+### 3. `StackOverflowError` → Python: `RecursionError`
+
+```
+Java:   StackOverflowError → call stack too deep
+Python: RecursionError     → recursion limit exceeded (default: 1000)
+```
+
+```python
+# Python recursion limit:
+import sys
+sys.getrecursionlimit()   # 1000  (default)
+sys.setrecursionlimit(10000)  # increase (careful — may crash interpreter)
+
+# Classic trigger — infinite recursion:
+def f():
+    return f()
+
+f()   # 💥 RecursionError: maximum recursion depth exceeded
+
+
+# Real prod scenario — circular data structure traversal:
+def serialize(obj):
+    if isinstance(obj, dict):
+        return {k: serialize(v) for k, v in obj.items()}   # no cycle check!
+
+circular = {}
+circular["self"] = circular
+serialize(circular)   # 💥 RecursionError
+
+
+# Fix 1 — iterative with explicit stack:
+def dfs_iterative(graph: dict, start: int) -> list:
+    visited = set()
+    stack   = [start]
+    result  = []
+    while stack:                          # explicit stack, no recursion
+        node = stack.pop()
+        if node not in visited:
+            visited.add(node)
+            result.append(node)
+            stack.extend(graph.get(node, []))
+    return result
+
+
+# Fix 2 — increase limit for legitimate deep recursion:
+import sys
+sys.setrecursionlimit(10_000)
+
+
+# Fix 3 — memoization to avoid redundant deep calls:
+from functools import lru_cache
+
+@lru_cache(maxsize=None)
+def fib(n: int) -> int:
+    if n < 2: return n
+    return fib(n-1) + fib(n-2)
+
+
+# Fix 4 — trampolining for tail recursion:
+def trampoline(f):
+    result = f
+    while callable(result):
+        result = result()
+    return result
+
+def fib_tramp(n, acc1=0, acc2=1):
+    if n == 0: return acc1
+    return lambda: fib_tramp(n-1, acc2, acc1+acc2)
+
+trampoline(fib_tramp(10000))   # no RecursionError
+```
+
+---
+
+### 4. `OutOfMemoryError` → Python: `MemoryError`
+
+```
+Java:   OutOfMemoryError → JVM heap exhausted
+Python: MemoryError      → OS can't allocate requested memory
+```
+
+```python
+# Trigger:
+x = [0] * (10 ** 12)    # 💥 MemoryError (on most systems)
+"x" * 10 ** 11          # 💥 MemoryError
+
+
+# Real prod scenarios:
+
+# 1. Loading entire file into memory:
+with open("huge_file.csv") as f:
+    data = f.read()         # 💥 MemoryError if file > available RAM
+
+# Fix — stream line by line:
+def process_large_file(path: str):
+    with open(path) as f:
+        for line in f:              # O(1) memory — one line at a time
+            yield process_line(line)
+
+
+# 2. Unbounded list accumulation:
+results = []
+for row in huge_query():
+    results.append(transform(row))  # 💥 grows without bound
+
+# Fix — generator:
+def results_gen():
+    for row in huge_query():
+        yield transform(row)
+
+
+# 3. Memory leak via reference cycle in cache:
+cache = {}
+def memoize(key, value):
+    cache[key] = value              # 💀 never evicted
+
+# Fix — use LRU cache with max size:
+from functools import lru_cache
+
+@lru_cache(maxsize=1000)
+def expensive(n): return n ** 2
+
+
+# Fix — weakref for caches:
+import weakref
+cache = weakref.WeakValueDictionary()
+
+
+# 4. Catching MemoryError (risky — may fail to catch):
+try:
+    large_data = [0] * huge_number
+except MemoryError:
+    large_data = []                 # fall back to empty
+    gc.collect()                    # try to free some memory
+```
+
+---
+
+### 5. `ArrayIndexOutOfBoundsException` → Python: `IndexError`
+
+```
+Java:   ArrayIndexOutOfBoundsException → array[i] where i >= length
+Python: IndexError → sequence[i] where i out of range
+```
+
+```python
+# Trigger:
+lst = [1, 2, 3]
+lst[5]          # 💥 IndexError: list index out of range
+lst[-4]         # 💥 IndexError: list index out of range
+"hi"[10]        # 💥 IndexError: string index out of range
+[][0]           # 💥 IndexError: list index out of range
+
+
+# Real prod scenario — off-by-one:
+items = get_items()
+for i in range(len(items) + 1):    # 💀 +1 causes IndexError on last iteration
+    process(items[i])
+
+# Fix — iterate directly:
+for item in items:                  # ✅ no index needed
+    process(item)
+
+# Fix — range(len(items)):
+for i in range(len(items)):         # ✅ 0 to len-1
+    process(items[i])
+
+
+# Real prod — pagination boundary:
+PAGE_SIZE = 10
+page = 5
+data = fetch_all()
+start = page * PAGE_SIZE
+end   = start + PAGE_SIZE
+
+chunk = data[start:end]     # ✅ slicing NEVER raises IndexError (returns [])
+item  = data[start]         # 💥 IndexError if start >= len(data)
+
+# Fix — bounds check:
+if start < len(data):
+    item = data[start]
+else:
+    raise PageNotFoundError(page)
+
+# Fix — safe get with default:
+def safe_get(lst: list, idx: int, default=None):
+    try:
+        return lst[idx]
+    except IndexError:
+        return default
+
+
+# next() with default — StopIteration → IndexError equivalent for iterators:
+items = iter([])
+first = next(items, None)   # ✅ None instead of StopIteration
+```
+
+---
+
+### 6. `ConcurrentModificationException` → Python: Silent Bug
+
+```
+Java:   ConcurrentModificationException → modify collection while iterating
+Python: NO exception — silent wrong behavior (skipped elements)
+        WORSE than Java because Python silently gives wrong results
+```
+
+```python
+# 💀 Silent corruption — no exception raised:
+lst = [1, 2, 3, 4, 5, 6]
+for x in lst:
+    if x % 2 == 0:
+        lst.remove(x)          # 💀 skips elements silently
+
+print(lst)   # [1, 3, 5, 4]?  WRONG — 4 was skipped!
+
+
+# Why:
+# Iteration uses internal index counter
+# remove() shifts elements left
+# Counter advances past unvisited elements
+
+
+# Dict modification during iteration:
+d = {"a": 1, "b": 2, "c": 3}
+for k in d:
+    if d[k] == 2:
+        del d[k]          # 💥 RuntimeError: dictionary changed size during iteration
+                          # Dict DOES raise — list does NOT
+
+
+# Fix — iterate copy:
+for x in lst[:]:              # copy of list
+    if x % 2 == 0:
+        lst.remove(x)
+
+for k in list(d.keys()):      # copy of dict keys
+    if d[k] == 2:
+        del d[k]
+
+
+# Fix — list comprehension:
+lst = [x for x in lst if x % 2 != 0]
+
+# Fix — dict comprehension:
+d = {k: v for k, v in d.items() if v != 2}
+
+
+# Fix — collect then delete:
+to_delete = [k for k, v in d.items() if v == 2]
+for k in to_delete:
+    del d[k]
+```
+
+---
+
+### 7. `IllegalArgumentException` → Python: `ValueError` / `TypeError`
+
+```
+Java:   IllegalArgumentException → method receives invalid argument
+Python: ValueError → right type, wrong value
+        TypeError  → wrong type entirely
+```
+
+```python
+# ValueError — right type, wrong value:
+int("")             # 💥 ValueError: invalid literal for int()
+int("abc")          # 💥 ValueError: invalid literal for int()
+math.sqrt(-1)       # 💥 ValueError: math domain error
+"".split("", 1)     # 💥 ValueError: empty separator
+datetime(2024, 13, 1) # 💥 ValueError: month must be in 1..12
+range(1, 0)         # ✅ empty range (no error!)
+[].index(99)        # 💥 ValueError: 99 is not in list
+
+# TypeError — wrong type:
+len(42)             # 💥 TypeError: object of type 'int' has no len()
+"hi" + 5            # 💥 TypeError: can only concatenate str (not "int")
+
+
+# Real prod — custom validation:
+def set_age(age: int) -> None:
+    if not isinstance(age, int):
+        raise TypeError(f"age must be int, got {type(age).__name__}")
+    if age < 0 or age > 150:
+        raise ValueError(f"age must be 0-150, got {age}")
+
+
+# Real prod scenario — payment amount:
+def charge(amount: float, currency: str) -> dict:
+    if not isinstance(amount, (int, float)):
+        raise TypeError(f"amount must be numeric, got {type(amount).__name__}")
+    if amount <= 0:
+        raise ValueError(f"amount must be positive, got {amount}")
+    if currency not in {"USD", "EUR", "GBP"}:
+        raise ValueError(f"unsupported currency: {currency!r}")
+    return process_payment(amount, currency)
+```
+
+---
+
+### 8. `IllegalStateException` → Python: `RuntimeError` / Custom
+
+```
+Java:   IllegalStateException → method called at wrong time/state
+Python: RuntimeError (or custom) for state violations
+```
+
+```python
+# Python state violations:
+gen = (x for x in range(3))
+list(gen)           # [0, 1, 2]
+list(gen)           # [] — generator exhausted (silent state issue)
+next(gen)           # 💥 StopIteration — exhausted generator
+
+# File operations after close:
+f = open("file.txt")
+f.close()
+f.read()            # 💥 ValueError: I/O operation on closed file
+
+# Thread state:
+import threading
+t = threading.Thread(target=lambda: None)
+t.start()
+t.start()           # 💥 RuntimeError: threads can only be started once
+
+# Real prod — custom state machine:
+class Connection:
+    STATES = {"CLOSED", "CONNECTING", "OPEN", "CLOSING"}
+
+    def __init__(self):
+        self._state = "CLOSED"
+
+    def connect(self) -> None:
+        if self._state != "CLOSED":
+            raise RuntimeError(
+                f"Cannot connect: already in state '{self._state}'"
+            )
+        self._state = "CONNECTING"
+        self._do_connect()
+        self._state = "OPEN"
+
+    def send(self, data: bytes) -> None:
+        if self._state != "OPEN":
+            raise RuntimeError(
+                f"Cannot send: connection is '{self._state}', not OPEN"
+            )
+        self._socket.sendall(data)
+
+    def close(self) -> None:
+        if self._state == "CLOSED":
+            raise RuntimeError("Already closed")
+        self._state = "CLOSING"
+        self._socket.close()
+        self._state = "CLOSED"
+```
+
+---
+
+### 9. `UnsupportedOperationException` → Python: `NotImplementedError` / `TypeError`
+
+```
+Java:   UnsupportedOperationException → operation not supported (e.g. immutable list)
+Python: NotImplementedError → abstract method not implemented
+        TypeError           → operation not supported by type
+        AttributeError      → method doesn't exist
+```
+
+```python
+# TypeError — operation not supported:
+(1, 2, 3).append(4)     # 💥 AttributeError: 'tuple' has no attribute 'append'
+frozenset().add(1)      # 💥 AttributeError: 'frozenset' has no attribute 'add'
+"hello"[0] = "H"        # 💥 TypeError: 'str' does not support item assignment
+
+# NotImplementedError — abstract method:
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self) -> float: ...
+
+class BadShape(Shape):
+    pass
+
+BadShape()   # 💥 TypeError: Can't instantiate abstract class BadShape
+             # with abstract method area
+
+# Real prod — read-only view:
+class ReadOnlyList:
+    def __init__(self, data: list):
+        self._data = data
+
+    def __getitem__(self, i):
+        return self._data[i]
+
+    def __len__(self):
+        return len(self._data)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def append(self, _) -> None:
+        raise TypeError("ReadOnlyList does not support append")
+
+    def __setitem__(self, _, __) -> None:
+        raise TypeError("ReadOnlyList does not support item assignment")
+
+
+# collections.abc immutable:
+from collections.abc import Mapping
+
+class FrozenConfig(Mapping):
+    def __init__(self, data: dict):
+        self._data = dict(data)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    # __setitem__ not implemented → Mapping provides no default
+    # Attempting cfg["key"] = val → raises AttributeError or TypeError
+```
+
+---
+
+### 10. `NoClassDefFoundError` → Python: `ModuleNotFoundError` / `ImportError`
+
+```
+Java:   NoClassDefFoundError → class was compiled but not found at runtime
+Python: ModuleNotFoundError  → module not found
+        ImportError          → module found but import fails
+        AttributeError       → module found but name not in it
+```
+
+```python
+# ModuleNotFoundError — module doesn't exist:
+import nonexistent_module     # 💥 ModuleNotFoundError: No module named 'nonexistent'
+from os import nonexistent    # 💥 ImportError: cannot import name 'nonexistent' from 'os'
+
+# AttributeError after import — name not in module:
+import os
+os.nonexistent_function()     # 💥 AttributeError: module 'os' has no attribute 'nonexistent_function'
+
+# Real prod scenarios:
+
+# 1. Optional dependency not installed:
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ModuleNotFoundError:
+    HAS_NUMPY = False
+    np = None                 # graceful degradation
+
+def compute(data):
+    if HAS_NUMPY:
+        return np.array(data).mean()
+    return sum(data) / len(data)   # fallback
+
+
+# 2. Wrong package name:
+import cv2                    # installed as: pip install opencv-python
+                              # not pip install cv2!
+
+# 3. Virtual environment not activated:
+import pandas                 # 💥 if pandas installed globally but venv active
+
+# 4. Circular import → ImportError:
+# a.py:  from b import B_func
+# b.py:  from a import A_func
+#        ImportError: cannot import name 'A_func' from partially initialized 'a'
+
+# 5. __init__.py missing:
+# mypackage/
+#   module.py   (no __init__.py)
+# import mypackage.module  # 💥 ModuleNotFoundError (in older Python)
+
+
+# Fix — lazy import:
+def get_numpy():
+    try:
+        import numpy
+        return numpy
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError(
+            "numpy is required for this feature. "
+            "Install with: pip install numpy"
+        )
+```
+
+---
+
+## 📊 Java → Python Exception Mapping
+
+```
+┌────────────────────────────────┬─────────────────────────────────────────┐
+│ Java Exception                 │ Python Equivalent                       │
+├────────────────────────────────┼─────────────────────────────────────────┤
+│ NullPointerException           │ AttributeError / TypeError (on None)    │
+│ ClassCastException             │ TypeError                               │
+│ StackOverflowError             │ RecursionError                          │
+│ OutOfMemoryError               │ MemoryError                             │
+│ ArrayIndexOutOfBoundsException │ IndexError                              │
+│ StringIndexOutOfBoundsException│ IndexError                              │
+│ ConcurrentModificationException│ RuntimeError (dict) / silent (list) ⚠️  │
+│ IllegalArgumentException       │ ValueError / TypeError                  │
+│ IllegalStateException          │ RuntimeError / custom StateError        │
+│ UnsupportedOperationException  │ NotImplementedError / TypeError         │
+│ NoClassDefFoundError           │ ModuleNotFoundError / ImportError       │
+│ NumberFormatException          │ ValueError                              │
+│ ClassNotFoundException         │ ModuleNotFoundError                     │
+│ ArithmeticException            │ ArithmeticError / ZeroDivisionError     │
+│ NegativeArraySizeException     │ ValueError                              │
+│ CloneNotSupportedException     │ TypeError                               │
+│ InterruptedException           │ KeyboardInterrupt / asyncio.CancelledError│
+│ IOException                    │ OSError / IOError                       │
+│ FileNotFoundException          │ FileNotFoundError                       │
+│ EOFException                   │ EOFError                                │
+└────────────────────────────────┴─────────────────────────────────────────┘
+```
+
+---
+
+## 💀 Interview Trap 1 — List Modification Silent Bug (Worst of All)
+
+```python
+# 💀 No exception — silent wrong results:
+nums = [1, 2, 2, 3, 2, 4]
+for n in nums:
+    if n == 2:
+        nums.remove(n)
+
+print(nums)   # [1, 2, 3, 4] ← ONE '2' survived!
+              # Expected: [1, 3, 4]
+
+# This is Python's ConcurrentModificationException equivalent
+# EXCEPT Python gives NO warning — just wrong results
+# Senior devs have shipped this bug to production
+```
+
+---
+
+## 💀 Interview Trap 2 — `RecursionError` Masks Real Error
+
+```python
+def f(d: dict):
+    return {k: f(v) if isinstance(v, dict) else v
+            for k, v in d.items()}
+
+# Circular dict:
+a = {}
+a['self'] = a
+
+f(a)    # 💥 RecursionError — but real bug is circular reference
+        # RecursionError is symptom — missed cycle detection is cause
+```
+
+---
+
+## 💀 Interview Trap 3 — `MemoryError` in `except` Handler
+
+```python
+try:
+    huge = [0] * (10**12)
+except MemoryError:
+    print("Out of memory")   # 💀 print() itself may fail — needs memory!
+    log.error("OOM")         # 💀 logging needs memory!
+    fallback = []            # ✅ minimal allocation — may succeed
+
+# On MemoryError: minimize allocations in handler
+# Don't format strings, don't create new objects unnecessarily
+```
+
+---

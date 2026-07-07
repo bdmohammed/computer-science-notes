@@ -1,0 +1,1401 @@
+---
+title: C++ Arithmetic Operators
+slug: computer-languages/cpp/arithmetic-operators/arithmetic-operators
+description: Type promotion rules, division behavior, NaN semantics, undefined behavior traps, and interview essentials for C++ arithmetic.
+sidebar:
+  label: "Arithmetic"
+  badge:
+    text: Operators
+    variant: tip
+tags: [cpp, operators, arithmetic, division, nan, undefined-behavior, interview, c++11, c++17, c++20]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 2️⃣ Arithmetic Operators in C++
+
+```text
+Arithmetic Operators
+│
+├── Basic
+│   ├── +   addition / string concatenation (with std::string)
+│   ├── -   subtraction
+│   ├── *   multiplication
+│   ├── /   division (integer or floating point)
+│   └── %   modulo (remainder)
+│
+├── Compound Assignment
+│   ├── +=  add and assign
+│   ├── -=  subtract and assign
+│   ├── *=  multiply and assign
+│   ├── /=  divide and assign
+│   └── %=  modulo and assign
+│
+└── Special Behaviors (C++ Specific)
+    ├── Integer division truncates toward zero (C++11+)
+    ├── Division by zero — int: UB / float: Infinity/NaN
+    ├── % with negatives — sign follows dividend (C++11+)
+    ├── std::string + requires std::to_string for numbers
+    ├── Signed overflow = UNDEFINED BEHAVIOR 🔥
+    └── Numeric promotion: usual arithmetic conversions
+```
+
+<Code lang="cpp" title="Basic usage — C++" code={`
+#include <iostream>
+
+int main() {
+    int a = 10, b = 3;
+    
+    int sum  = a + b;   // 13
+    int diff = a - b;   // 7
+    int prod = a * b;   // 30
+    int quot = a / b;   // 3  ← integer division — truncates toward zero (C++11)
+    int rem  = a % b;   // 1  ← remainder
+    
+    double x = 10.0, y = 3.0;
+    double dquot = x / y;   // 3.3333333333333335 — floating point division
+    double drem  = std::fmod(x, y);   // 1.0 — floating point modulo (use std::fmod)
+    
+    std::cout << "quot=" << quot << ", rem=" << rem << '\\n';
+    std::cout << "dquot=" << dquot << ", drem=" << drem << '\\n';
+    return 0;
+}
+`} />
+
+<Aside type="danger">
+**🔥 Critical C++ Difference**:  
+In Java, `int` overflow wraps silently (defined two's complement).  
+In C++, **signed integer overflow is UNDEFINED BEHAVIOR** — the compiler may assume it never happens and optimize unpredictably!
+
+```cpp
+int max = std::numeric_limits<int>::max();  // 2147483647
+int overflow = max + 1;  // 💥 Undefined Behavior!
+// May wrap to -2147483648, crash, or "work" — compiler can remove overflow checks!
+```
+✅ **Rule**: Use `unsigned` types for wrap-around semantics, or check bounds manually.
+</Aside>
+
+---
+
+## 🔢 Rule 1: Type Promotion — Usual Arithmetic Conversions
+
+> When applying arithmetic operations, C++ uses **"usual arithmetic conversions"** — similar to Java but with subtle differences.
+
+### 📊 Promotion Hierarchy (Widening)
+
+```text
+Promotion order (simplified):
+  char, short → int → unsigned int → long → unsigned long → long long → float → double → long double
+
+Rules:
+  1. If either operand is long double → other promoted to long double
+  2. Else if either is double         → other promoted to double
+  3. Else if either is float          → other promoted to float
+  4. Else integral promotions apply:
+     • char, short → int (or unsigned int)
+     • Then: if types differ, smaller rank → larger rank
+     • Signed/unsigned mixing: complex rules (see below)
+```
+
+Before any arithmetic operation, both operands are converted to a **common type**. This happens automatically.
+
+```
+Conversion hierarchy (low → high):
+
+int → unsigned int → long → unsigned long → long long
+  → unsigned long long → float → double → long double
+
+Rule: lower type is converted UP to match the higher type
+```
+
+```cpp
+int    i = 10;
+double d = 3.14;
+
+i + d    // i converted to double → 13.14  (double)
+i * d    // i converted to double → 31.4   (double)
+i / d    // i converted to double → 3.184  (double)
+
+int + int         → int
+int + long        → long
+int + double      → double
+float + double    → double
+unsigned + int    → unsigned  ← DANGER
+```
+
+---
+
+## ☣️ Signed + Unsigned — The Silent Killer
+
+```cpp
+int           a = -1;
+unsigned int  b = 1;
+
+a + b   // → 4294967296  ❌
+        // -1 converted to unsigned: wraps to 4294967295
+        // 4294967295 + 1 = 4294967296 = 0 with overflow → 4294967296
+
+a < b   // → false  ❌
+        // -1 becomes 4294967295 unsigned
+        // 4294967295 < 1 is false
+
+a * b   // → 4294967295  ❌
+```
+
+```
+Signed + Unsigned:
+  signed value → converted to UNSIGNED
+  negative signed → wraps to large positive
+  all comparisons and math become wrong
+```
+
+```cpp
+// Real prod bug:
+std::vector<int> v = {1, 2, 3};
+int n = -1;
+if (n < v.size()) {   // ❌ v.size() returns size_t (unsigned)
+                       // n converted to size_t: -1 → 18446744073709551615
+                       // 18446744073709551615 < 3 is FALSE
+    // this block never executes
+}
+
+// ✅ Fix
+if (n < (int)v.size()) { }
+if (n < static_cast<int>(v.size())) { }
+```
+
+---
+
+### 🆚 Java vs C++ Promotion Comparison
+
+| Operand Types | Java Result | C++ Result | Notes |
+|--------------|-------------|------------|-------|
+| `byte + byte` | `int` | `int` | ✅ Same |
+| `char + char` | `int` | `int` | ✅ Same (char promoted to int) |
+| `short + short` | `int` | `int` | ✅ Same |
+| `int + unsigned int` | ❌ Error | `unsigned int` | ⚠️ C++: signed+unsigned → unsigned! |
+| `long + float` | `float` | `float` | ✅ Same |
+| `float + double` | `double` | `double` | ✅ Same |
+
+<Code lang="cpp" title="Character arithmetic — C++" code={`
+#include <iostream>
+
+int main() {
+    // char promoted to int before arithmetic
+    std::cout << ('a' + 'b') << '\\n';      // 195 (97 + 98) ✅
+    std::cout << ('a' + 1) << '\\n';         // 98  (97 + 1) ✅
+    std::cout << ('a' + 1.2) << '\\n';       // 98.2 (97.0 + 1.2) ✅
+    
+    // To concatenate characters as string:
+    std::cout << std::string(1, 'a') + std::string(1, 'b') << '\\n';  // "ab"
+    // Or simpler:
+    std::cout << 'a' << 'b' << '\\n';  // Output: ab (stream insertion, not +)
+    
+    return 0;
+}
+`} />
+
+<Aside type="caution">
+**⚠️ Signed/Unsigned Mixing Trap**:
+
+```cpp
+int signed_val = -1;
+unsigned int unsigned_val = 1;
+
+if (signed_val < unsigned_val) {  // 💥 signed_val promoted to unsigned!
+    // -1 becomes 4294967295 (UINT_MAX) → condition is FALSE!
+    std::cout << "This won't print\\n";
+}
+
+// ✅ Fix: use same signedness, or explicit cast
+if (static_cast<int>(unsigned_val) > signed_val) { /* ... */ }
+```
+**Memory Rule**: When mixing signed and unsigned of same rank, **signed is converted to unsigned** — negative values become huge positives!
+</Aside>
+
+---
+
+## 🔥 Rule 2: Division by Zero — Integral vs Floating Point
+
+### Integral Arithmetic (`int`, `long`, etc.)
+
+> **C++: Division by zero on integers = UNDEFINED BEHAVIOR** (not an exception!).
+
+<Code lang="cpp" title="Integral division by zero — UB!" code={`
+#include <iostream>
+
+int main() {
+    // 💥 Undefined Behavior — may crash, hang, or "work"
+    // int quot = 10 / 0;    // UB! Don't do this!
+    // int rem  = 10 % 0;    // UB! Don't do this!
+    
+    // ✅ Safe pattern: check divisor before operation
+    int divisor = 0;
+    if (divisor != 0) {
+        int quot = 10 / divisor;
+        std::cout << quot << '\\n';
+    } else {
+        std::cerr << "Error: division by zero\\n";
+    }
+    
+    return 0;
+}
+`} />
+
+### Floating Point Arithmetic (`float`, `double`)
+
+> IEEE 754 standard (same as Java) — **Infinity** and **NaN** returned, no crash.
+
+<Code lang="cpp" title="Floating point division by zero — defined" code={`
+#include <iostream>
+#include <cmath>    // std::isinf, std::isnan
+#include <limits>   // std::numeric_limits
+
+int main() {
+    double pos_inf = 10.0 / 0.0;      // ✅ Infinity
+    double neg_inf = -10.0 / 0.0;     // ✅ -Infinity
+    double nan_val = 0.0 / 0.0;       // ✅ NaN
+    double nan_mod = std::fmod(10.0, 0.0);  // ✅ NaN (use std::fmod for float %)
+    
+    // Check special values:
+    std::cout << std::boolalpha;
+    std::cout << "pos_inf is infinite: " << std::isinf(pos_inf) << '\\n';  // true
+    std::cout << "nan_val is NaN: " << std::isnan(nan_val) << '\\n';        // true
+    
+    // Access constants:
+    std::cout << "POSITIVE_INFINITY: " << std::numeric_limits<double>::infinity() << '\\n';
+    std::cout << "NaN: " << std::numeric_limits<double>::quiet_NaN() << '\\n';
+    
+    return 0;
+}
+`} />
+
+<Aside type="note">
+**🔑 Key Difference Summary**:
+
+| Operation | Java | C++ |
+|-----------|------|-----|
+| `int / 0` | 💥 `ArithmeticException` | 💥 **Undefined Behavior** |
+| `double / 0.0` | ✅ `Infinity` | ✅ `Infinity` (IEEE 754) |
+| `0 / 0` (int) | 💥 `ArithmeticException` | 💥 **Undefined Behavior** |
+| `0.0 / 0.0` (double) | ✅ `NaN` | ✅ `NaN` (IEEE 754) |
+
+✅ **C++ Rule**: Floating-point division by zero is **defined** (IEEE 754). Integer division by zero is **undefined behavior** — always check divisor!
+</Aside>
+
+---
+
+## 🔬 Rule 3: NaN (Not a Number) Semantics — Same as Java (IEEE 754)
+
+### NaN Comparison Rules — Critical Interview Trap
+
+> **For ANY value `x` (including `NaN` itself), comparisons with `NaN` behave unexpectedly** (same as Java):
+
+<table>
+  <thead>
+    <tr><th>Expression</th><th>Result</th><th>Why?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>10 &lt; NaN</code></td><td><code>false</code></td><td>NaN is unordered</td></tr>
+    <tr><td><code>10 &lt;= NaN</code></td><td><code>false</code></td><td>NaN is unordered</td></tr>
+    <tr><td><code>10 &gt; NaN</code></td><td><code>false</code></td><td>NaN is unordered</td></tr>
+    <tr><td><code>10 &gt;= NaN</code></td><td><code>false</code></td><td>NaN is unordered</td></tr>
+    <tr><td><code>10 == NaN</code></td><td><code>false</code></td><td>NaN ≠ anything, even itself</td></tr>
+    <tr><td><code>NaN == NaN</code></td><td><code>false</code></td><td>NaN is not equal to itself!</td></tr>
+    <tr><td><code>10 != NaN</code></td><td><code>true</code></td><td>Only != returns true with NaN</td></tr>
+    <tr><td><code>NaN != NaN</code></td><td><code>true</code></td><td>NaN is not equal to itself!</td></tr>
+  </tbody>
+</table>
+
+<Code lang="cpp" title="✅ Safe NaN checking in C++" code={`
+#include <cmath>    // std::isnan
+#include <iostream>
+
+int main() {
+    double result = 0.0 / 0.0;  // NaN
+    
+    // ❌ Wrong way (same as Java):
+    // if (result == std::numeric_limits<double>::quiet_NaN()) { }  // Always false!
+    
+    // ✅ Correct ways:
+    if (std::isnan(result)) {              // Use <cmath> function
+        std::cout << "Result is NaN\\n";
+    }
+    
+    // Alternative: NaN is the only value != itself
+    if (result != result) {
+        std::cout << "Result is NaN (self-inequality trick)\\n";
+    }
+    
+    // C++20: std::floating_point concepts + std::isnan
+    // C++23: std::is_constant_evaluated for compile-time NaN checks
+    
+    return 0;
+}
+`} />
+
+<Aside type="danger">
+**Interview Gold**: `NaN == NaN` is **false** in C++ (IEEE 754, same as Java).  
+✅ Always use `std::isnan(x)` from `<cmath>` to check for NaN.  
+⚠️ Note: `std::isnan` is a function, not a macro — include `<cmath>`, not `<math.h>`.
+</Aside>
+
+---
+
+## 🔬 Integer Division — Truncates Toward Zero (C++11 Standardized)
+
+```cpp
+// Positive / positive
+10 / 3   →  3     (not 3.33)
+7  / 2   →  3     (not 3.5)
+
+// Negative — C++11: truncates TOWARD ZERO (same as Java)
+-7 / 2   →  -3    (not -4)  ← toward zero
+ 7 / -2  →  -3    (not -4)  ← toward zero
+-7 / -2  →   3
+
+// Proof:
+std::cout << (-7 / 2) << '\\n';    // -3
+std::cout << (7 / -2) << '\\n';    // -3
+std::cout << (-7 / -2) << '\\n';   //  3
+```
+
+```
+Pre-C++11: Implementation-defined for negative division!
+C++11 and later: Standardized to truncate toward zero — matches Java.
+
+Truncation toward zero:
+  7  / 2 =  3.5 → truncate →  3
+ -7  / 2 = -3.5 → truncate → -3  (NOT -4 — floor would give -4)
+
+// If you need floor division (mathematical modulo):
+#include <cmath>
+int floor_div(int a, int b) {
+    int q = a / b;
+    int r = a % b;
+    return (r != 0 && (r < 0) != (b < 0)) ? q - 1 : q;
+}
+// Or C++20: std::floor((double)a / b) for floating-point floor
+```
+
+> 🔑 **C++11+**: Integer division truncates toward zero — **same as Java**. Pre-C++11 code may have differed — always specify `-std=c++11` or later!
+
+---
+
+## 🔬 Modulo (%) Operator — Sign Follows Dividend (C++11 Standardized)
+
+```cpp
+// Basic
+10 % 3   →  1
+10 % 5   →  0
+10 % 10  →  0
+10 % 11  →  10  (dividend < divisor → result = dividend)
+
+// Sign rule (C++11+): result sign matches DIVIDEND (left operand) — same as Java!
+// Rule: (a/b)*b + a%b == a  (always)
+7  % 3   // →  1    ( 7/3= 2,  2*3=6,  7-6=1  )
+-7 % 3   // → -1    (-7/3=-2, -2*3=-6, -7-(-6)=-1)
+7  % -3  // →  1    ( 7/-3=-2,-2*-3=6, 7-6=1  )
+-7 % -3  // → -1    (-7/-3=2,  2*-3=-6,-7-(-6)=-1)
+
+ 7 %  3  →  1   (positive dividend → positive result)
+-7 %  3  → -1   (negative dividend → negative result)
+ 7 % -3  →  1   (positive dividend → positive result — divisor sign ignored)
+-7 % -3  → -1   (negative dividend → negative result)
+
+Sign of result of a % b:
+→ same sign as DIVIDEND (a), not divisor
+→ -7 % 3 → negative (follows -7)
+→  7 % -3 → positive (follows 7)
+
+// Floating point modulo: use std::fmod (not % operator)
+#include <cmath>
+double r1 = std::fmod(10.5, 3.0);   // 1.5
+double r2 = std::fmod(-10.5, 3.0);  // -1.5
+```
+
+```
+Formula (C++11+): a % b = a - (a/b)*b   (where / truncates toward zero)
+
+-7 % 3:
+  -7 / 3 = -2 (truncated toward zero)
+  -7 % 3 = -7 - (-2 * 3) = -7 + 6 = -1
+
+Use case: checking even/odd
+  n % 2 == 0  → even  (BUT: -4 % 2 == 0 ✅ still works)
+  n % 2 == 1  → odd   ❌ WRONG for negatives (-3 % 2 = -1, not 1)
+  n % 2 != 0  → odd   ✅ correct for all integers
+```
+
+```
+Mathematical:  -7 / 2 = -3.5
+C++ truncates toward zero: → -3  (NOT floor(-3.5) = -4)
+
+        -4    -3.5   -3     0     3    3.5    4
+─────────┼──────●──────┼─────┼─────┼─────●────┼──────
+              actual       C++ result
+         floor(floor)   truncate(toward 0)
+```
+
+> 🔑 **C++11+**: `%` sign follows dividend — **same as Java**. Pre-C++11: implementation-defined. Always use `n % 2 != 0` to check odd numbers (works for negatives).
+
+> 🔴 **This changed in C++11** — before C++11, truncation direction for negative division was implementation-defined. C++11 mandates truncation toward zero.
+---
+
+## 🔬 Compound Assignment Operators — Implicit Narrowing Cast (Same as Java)
+
+```cpp
+int x = 10;
+
+x += 5;     // x = x + 5  = 15
+x -= 3;     // x = x - 3  = 12
+x *= 2;     // x = x * 2  = 24
+x /= 4;     // x = x / 4  = 6
+x %= 4;     // x = x % 4  = 2
+```
+
+### Hidden Cast in Compound Assignment — Same Trap as Java
+
+```cpp
+#include <cstdint>
+#include <iostream>
+
+int main() {
+    int8_t b = 10;  // typically signed char
+    
+    b = b + 5;          // ❌ Error: narrowing conversion from 'int' to 'int8_t'
+    b += 5;             // ✅ Compiles — compound op includes implicit cast!
+    
+    // Compiler expands b += 5 as:
+    // b = static_cast<int8_t>(b + 5);  // implicit narrowing cast
+    
+    // ⚠️ Danger: silent overflow
+    int8_t b2 = 120;
+    b2 += 10;           // 130 overflows int8_t (max 127)
+    std::cout << static_cast<int>(b2) << '\\n';  // -126 — silent wrap!
+    
+    // ✅ Safe pattern: check bounds or use larger type
+    if (b2 <= std::numeric_limits<int8_t>::max() - 10) {
+        b2 += 10;
+    }
+    
+    return 0;
+}
+```
+
+> 🔑 Compound operators (`+=`, `-=`, etc.) include an **implicit narrowing cast** — same as Java. `int8_t b += 200` silently overflows. `b = b + 200` gives a compile error forcing explicit cast.
+
+---
+
+## 🔬 `+` Operator and String Concatenation — C++ Differences
+
+```cpp
+#include <string>
+#include <iostream>
+
+int main() {
+    // ❌ C++: No automatic toString() — numbers don't concatenate with strings!
+    // std::string s = "value: " + 10 + 20;  // ❌ Error: no operator+ matches
+    
+    // ✅ Fix: use std::to_string (C++11) or std::ostringstream
+    std::string s = "value: " + std::to_string(10) + std::to_string(20);  // "value: 1020"
+    std::string t = "value: " + std::to_string(10 + 20);                  // "value: 30"
+    
+    // ✅ C++20: std::format (type-safe, like Python f-strings)
+    #if __cplusplus >= 202002L
+    #include <format>
+    std::string u = std::format("value: {} {}", 10, 20);  // "value: 10 20"
+    #endif
+    
+    // ✅ Stream insertion (idiomatic C++):
+    std::cout << "value: " << 10 << 20 << '\\n';  // Output: value: 1020
+    
+    // Any type with operator<< works with streams:
+    std::cout << "result: " << true << '\\n';        // "result: 1" (bool as int)
+    std::cout << "result: " << nullptr << '\\n';     // "result: (nil)" or "0"
+    std::cout << "result: " << 3.14 << '\\n';        // "result: 3.14"
+    std::cout << "result: " << 'A' << '\\n';         // "result: A"
+    
+    return 0;
+}
+```
+
+```
+Key Differences from Java:
+  • No automatic toString() — must use std::to_string, std::format, or streams
+  • std::string + std::string works, but std::string + int does NOT
+  • Stream insertion (<<) is the idiomatic way to output mixed types
+  • C++20 std::format provides type-safe, Python-like formatting
+```
+
+<Aside type="tip">
+**Modern C++ String Formatting**:
+
+```cpp
+// C++11: std::to_string (simple, but limited)
+std::string s = "count: " + std::to_string(42);
+
+// C++17: std::string_view + custom formatters (advanced)
+
+// C++20: std::format (recommended — type-safe, extensible)
+#include <format>
+std::string msg = std::format("User {} has {} orders (total: ${:.2f})", 
+                              "Alice", 5, 99.99);
+// → "User Alice has 5 orders (total: $99.99)"
+
+// Fallback: std::ostringstream (verbose but flexible)
+#include <sstream>
+std::ostringstream oss;
+oss << "User " << "Alice" << " has " << 5 << " orders";
+std::string msg = oss.str();
+```
+</Aside>
+
+---
+
+## 🎯 Common Traps & Solutions — C++ Edition
+
+<CardGrid>
+  <Card title="Trap 1: Integer Division — Same as Java" icon="error">
+    ```cpp
+    int a = 7, b = 2;
+    std::cout << a / b;  // 3  NOT 3.5! 😱
+    
+    // ✅ Fix: Cast at least one operand to floating point
+    std::cout << static_cast<double>(a) / b;  // 3.5 ✅
+    std::cout << a / static_cast<double>(b);  // 3.5 ✅
+    std::cout << 1.0 * a / b;                 // 3.5 ✅
+    ```
+    **Rule**: If either operand is `float`/`double`, result is floating point.
+  </Card>
+  
+  <Card title="Trap 2: Modulus Sign Rule — Same as Java (C++11+)" icon="error">
+    ```cpp
+    std::cout << ( 10 %  3) << '\\n';  //  1
+    std::cout << (-10 %  3) << '\\n';  // -1  ← sign follows DIVIDEND!
+    std::cout << ( 10 % -3) << '\\n';  //  1
+    std::cout << (-10 % -3) << '\\n';  // -1
+    
+    // ✅ Memory rule: result sign = sign of LEFT operand (dividend)
+    ```
+    **Interview Answer**: C++11 standardized `%` to match Java — sign follows dividend.
+  </Card>
+
+  <Card title="Trap 3: Signed Integer Overflow — UB! 🔥" icon="error">
+    ```cpp
+    int max = std::numeric_limits<int>::max();  // 2147483647
+    std::cout << max + 1;  // 💥 Undefined Behavior! May wrap, crash, or optimize away!
+    
+    // ✅ Fix 1: Use unsigned for wrap semantics
+    unsigned int u = std::numeric_limits<unsigned>::max();
+    std::cout << u + 1;  // ✅ Defined: wraps to 0
+    
+    // ✅ Fix 2: Use larger type
+    long long safe = static_cast<long long>(max) + 1;  // ✅ 2147483648
+    
+    // ✅ Fix 3: Check bounds manually (no built-in exception)
+    if (a > std::numeric_limits<int>::max() - b) {
+        // Overflow would occur
+    } else {
+        int sum = a + b;
+    }
+    
+    // ✅ Fix 4: Use std::add_overflow (C++20) or compiler built-ins
+    #if __cplusplus >= 202002L
+    #include <utility>
+    int result;
+    if (std::add_overflow(a, b, &result)) {
+        // Handle overflow
+    }
+    #endif
+    ```
+  </Card>
+  
+  <Card title="Trap 4: NaN Comparison — Same as Java" icon="information">
+    ```cpp
+    double nan = 0.0 / 0.0;
+    
+    // ❌ Wrong:
+    if (nan == std::numeric_limits<double>::quiet_NaN()) { }  // Always false!
+    
+    // ✅ Correct:
+    #include <cmath>
+    if (std::isnan(nan)) { }  // Use std::isnan from <cmath>
+    
+    // Alternative trick:
+    if (nan != nan) { }  // NaN is only value != itself
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Arithmetic in C++ Algorithms
+
+<CardGrid>
+  <Card title="Pattern: Safe Midpoint Calculation — C++20 std::midpoint" icon="shield">
+    Avoid overflow in binary search:
+    ```cpp
+    // ❌ Dangerous — can overflow (UB for signed!):
+    int mid = (low + high) / 2;
+    
+    // ✅ Safe — no overflow risk (C++11+):
+    int mid = low + (high - low) / 2;
+    
+    // ✅ Also safe — unsigned right shift (works for unsigned):
+    unsigned int mid = (low + high) >> 1;
+    
+    // ✅ C++20: std::midpoint (type-safe, overflow-proof)
+    #include <numeric>  // C++20
+    int mid = std::midpoint(low, high);  // ✅ Handles all integer types safely
+    ```
+  </Card>
+  
+  <Card title="Pattern: Modulus for Cyclic Indexing — Same as Java" icon="rocket">
+    Use `%` for circular buffer/array access:
+    ```cpp
+    // Rotate array index safely:
+    int next = (current + 1) % arr.size();  // wraps to 0 at end
+    int prev = (current - 1 + arr.size()) % arr.size();  // handles negative
+    
+    // Hash table indexing:
+    size_t index = static_cast<size_t>(std::abs(key)) % table_size;
+    
+    // ⚠️ Note: std::abs(INT_MIN) is UB for signed int! Use unsigned or check bounds.
+    ```
+  </Card>
+
+  <Card title="Pattern: Detect Overflow in Competitive Coding" icon="backspace">
+    When problem constraints suggest large numbers:
+    ```cpp
+    // If sum of n numbers (each ≤ 10⁹, n ≤ 10⁵) is needed:
+    // Max sum = 10⁹ × 10⁵ = 10¹⁴ → exceeds int (2×10⁹)
+    
+    // ✅ Always use long long for accumulators (64-bit):
+    long long sum = 0;
+    for (int val : arr) {
+        // Check for overflow before adding (optional but safe)
+        if (val > 0 && sum > LLONG_MAX - val) {
+            // Handle overflow
+        }
+        sum += val;  // safe up to ~9×10¹⁸
+    }
+    
+    // ✅ C++20: std::add_overflow for explicit checks
+    #if __cplusplus >= 202002L
+    long long temp;
+    if (!std::add_overflow(sum, static_cast<long long>(val), &temp)) {
+        sum = temp;
+    }
+    #endif
+    ```
+  </Card>
+  
+  <Card title="Underlying primitive: CPU instructions + IEEE 754 + two's complement" icon="information">
+    ```cpp
+      C++ arithmetic maps to CPU instructions:
+        add, sub, imul, idiv, idiv/rem   ← integer operations
+        addss, subss, mulss, divss       ← float (SSE)
+        addsd, subdd, mulsd, divsd       ← double (SSE)
+      
+      Integer division (idiv):
+        CPU IDIV instruction — truncates toward zero (x86, ARM)
+        Division by zero → CPU exception → OS signal (SIGFPE)
+        C++: no built-in exception — may crash or be caught by signal handler
+      
+      Float division (divsd):
+        IEEE 754 compliant — produces Infinity/NaN for special cases
+        No CPU exception for float division by zero
+        → Special values returned, program continues
+      
+      Overflow behavior:
+        Signed overflow: CPU sets overflow flag → C++ standard says UB
+        Compiler may assume no overflow → optimize away checks!
+        unsigned overflow: defined wrap (two's complement)
+      
+      Safe arithmetic libraries:
+        • C++20: std::add_overflow, std::mul_overflow (in <utility>)
+        • GCC/Clang: __builtin_add_overflow, __builtin_mul_overflow
+        • Boost.SafeNumerics: checked arithmetic types
+        • Microsoft: SafeInt library
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Advanced: Checked Arithmetic Libraries
+
+<Code lang="cpp" title="Using compiler built-ins for overflow checks" code={`
+#include <iostream>
+#include <limits>
+
+int main() {
+    int a = std::numeric_limits<int>::max();
+    int b = 1;
+    int result;
+    
+    // GCC/Clang built-in: returns true if overflow occurred
+    #if defined(__GNUC__) || defined(__clang__)
+    if (__builtin_add_overflow(a, b, &result)) {
+        std::cerr << "Overflow detected!\\n";
+    } else {
+        std::cout << "Result: " << result << '\\n';
+    }
+    #endif
+    
+    // C++20 standard: std::add_overflow (in <utility>)
+    #if __cplusplus >= 202002L
+    #include <utility>
+    if (std::add_overflow(a, b, result)) {
+        std::cerr << "Overflow detected!\\n";
+    }
+    #endif
+    
+    return 0;
+}
+`} />
+
+<Aside type="tip">
+**Production Best Practice**:  
+For safety-critical code (financial, embedded, security), use checked arithmetic:
+- ✅ C++20: `std::add_overflow`, `std::mul_overflow` (standard, portable)
+- ✅ GCC/Clang: `__builtin_add_overflow` (fast, compiler-integrated)
+- ✅ Boost.SafeNumerics: type-safe wrappers with automatic checks
+- ✅ Microsoft SafeInt: mature library for Windows development
+
+Don't rely on undefined behavior — check overflow explicitly!
+</Aside>
+
+---
+
+## 💣 Interview Traps — C++ Specific
+
+**🪤 Trap 1 — Signed Overflow is Undefined Behavior**
+
+```cpp
+int max = std::numeric_limits<int>::max();
+int result = max + 1;  // 💥 Undefined Behavior!
+
+// Compiler may optimize assuming overflow never happens:
+if (result < max) {  // Compiler may remove this check entirely!
+    // This code may never execute, even if overflow occurred
+}
+
+// ✅ Fix: use unsigned for wrap semantics, or check bounds
+unsigned int u = static_cast<unsigned>(max) + 1;  // ✅ Defined: wraps to 0
+```
+
+---
+
+**🪤 Trap 2 — Signed/Unsigned Comparison Surprise**
+
+```cpp
+int signed_val = -1;
+unsigned int unsigned_val = 1;
+
+if (signed_val < unsigned_val) {  // 💥 signed_val promoted to unsigned!
+    // -1 becomes 4294967295 (UINT_MAX) → condition is FALSE!
+    std::cout << "Won't print\\n";
+}
+
+// ✅ Fix: use same signedness
+if (static_cast<int>(unsigned_val) > signed_val) { /* ... */ }
+// Or: enable -Wsign-compare compiler warning
+```
+
+---
+
+**🪤 Trap 3 — Integer Division by Zero = UB, Not Exception**
+
+```cpp
+int divisor = 0;
+int result = 10 / divisor;  // 💥 Undefined Behavior!
+
+// Java: throws ArithmeticException (catchable)
+// C++: may crash (SIGFPE), hang, or "work" — no standard exception!
+
+// ✅ Always check divisor:
+if (divisor != 0) {
+    int result = 10 / divisor;
+} else {
+    // Handle error: return optional, throw custom exception, etc.
+}
+
+int a = 5 / 0;       // ❌ UB — signed integer
+int b = 5 % 0;       // ❌ UB — signed integer
+unsigned c = 5u / 0u; // ❌ UB — still UB for integer division by zero
+double d = 5.0 / 0.0; // ✅ defined by IEEE 754 → +infinity
+double e = 0.0 / 0.0; // ✅ defined by IEEE 754 → NaN
+double f = -5.0/ 0.0; // ✅ defined by IEEE 754 → -infinity
+```
+
+---
+
+**🪤 Trap 4 — std::abs(INT_MIN) is Undefined Behavior**
+
+```cpp
+#include <cstdlib>  // std::abs
+
+int x = std::numeric_limits<int>::min();  // -2147483648
+int y = std::abs(x);  // 💥 Undefined Behavior! (no positive representation)
+
+// ✅ Fix: use unsigned or check bounds
+if (x == std::numeric_limits<int>::min()) {
+    // Handle edge case
+} else {
+    int y = std::abs(x);
+}
+
+// Or use unsigned arithmetic:
+unsigned int ux = static_cast<unsigned>(std::abs(static_cast<long long>(x)));
+```
+
+---
+
+**🪤 Trap 5 — Floating Point Precision in Loops**
+
+```cpp
+// ❌ Dangerous: accumulating float in loop
+float sum = 0.0f;
+for (int i = 0; i < 1000000; ++i) {
+    sum += 0.1f;  // Precision loss accumulates!
+}
+// sum may not equal 100000.0 due to rounding errors
+
+// ✅ Fix: use double for accumulation, or Kahan summation
+double sum = 0.0;
+for (int i = 0; i < 1000000; ++i) {
+    sum += 0.1;  // double has more precision
+}
+
+// ✅ Advanced: Kahan summation for maximum accuracy
+double kahan_sum(const std::vector<double>& values) {
+    double sum = 0.0, c = 0.0;
+    for (double v : values) {
+        double y = v - c;
+        double t = sum + y;
+        c = (t - sum) - y;
+        sum = t;
+    }
+    return sum;
+}
+```
+
+---
+
+## 🔑 Quick Reference Summary
+
+<table>
+  <thead>
+    <tr>
+      <th>Operation</th>
+      <th>Integral Result</th>
+      <th>Floating Result</th>
+      <th>Exception/UB?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>10 / 0</code> (int)</td><td>—</td><td>—</td><td>💥 <strong>Undefined Behavior</strong></td></tr>
+    <tr><td><code>10.0 / 0.0</code></td><td>—</td><td><code>Infinity</code></td><td>✅ No exception (IEEE 754)</td></tr>
+    <tr><td><code>-10.0 / 0.0</code></td><td>—</td><td><code>-Infinity</code></td><td>✅ No exception (IEEE 754)</td></tr>
+    <tr><td><code>0 / 0</code> (int)</td><td>—</td><td>—</td><td>💥 <strong>Undefined Behavior</strong></td></tr>
+    <tr><td><code>0.0 / 0.0</code></td><td>—</td><td><code>NaN</code></td><td>✅ No exception (IEEE 754)</td></tr>
+    <tr><td><code>NaN == NaN</code></td><td>—</td><td><code>false</code></td><td>✅ By design (IEEE 754)</td></tr>
+    <tr><td><code>10 % -3</code></td><td><code>1</code></td><td><code>1.0</code></td><td>✅ Sign follows dividend (C++11+)</td></tr>
+    <tr><td><code>INT_MAX + 1</code></td><td>💥 <strong>UB</strong></td><td>—</td><td>💥 Undefined Behavior (signed overflow)</td></tr>
+    <tr><td><code>UINT_MAX + 1</code></td><td><code>0</code></td><td>—</td><td>✅ Defined wrap (unsigned overflow)</td></tr>
+  </tbody>
+</table>
+
+<Aside type="tip">
+**🔥 Pro Checklist for C++ Arithmetic**:
+1. ✅ Remember: `char/short` operations promote to `int` (same as Java)
+2. ✅ Cast to `double` before division if you need decimal results
+3. ✅ Use `std::isnan(x)` from `<cmath>` — never `x == NaN`
+4. ✅ **Signed overflow = UB** — use `unsigned` for wrap, or check bounds
+5. ✅ Modulus sign = sign of left operand (C++11+, same as Java)
+6. ✅ Floating point never crashes on div-by-zero — returns Infinity/NaN
+7. ✅ `std::string + int` doesn't work — use `std::to_string` or streams
+8. ✅ Enable `-Wall -Wextra -Wsign-conversion` to catch promotion traps
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output — C++ edition" code={`
+#include <iostream>
+#include <cmath>
+#include <limits>
+
+int main() {
+    // Q1: Type promotion
+    char c = 10;
+    short s = 20;
+    auto r1 = c + s;  // What type is r1?
+    std::cout << std::is_same<decltype(r1), int>::value << '\\n';  // ?
+    
+    // Q2: Division behavior
+    std::cout << (5 / 2) << '\\n';           // ?
+    std::cout << (5.0 / 2) << '\\n';         // ?
+    std::cout << (5 / 2.0) << '\\n';         // ?
+    
+    // Q3: NaN comparisons
+    double nan = 0.0 / 0.0;
+    std::cout << (nan == nan) << '\\n';      // ?
+    std::cout << (nan != nan) << '\\n';      // ?
+    std::cout << std::isnan(nan) << '\\n';   // ?
+    
+    // Q4: Modulus sign (C++11+)
+    std::cout << (-7 % 3) << '\\n';          // ?
+    std::cout << (7 % -3) << '\\n';          // ?
+    
+    // Q5: Signed overflow — UB! (may vary by compiler/optimization)
+    int max = std::numeric_limits<int>::max();
+    int overflow = max + 1;  // 💥 UB — output unpredictable!
+    std::cout << (overflow < max) << '\\n';  // ? (trick: compiler may optimize away)
+    
+    return 0;
+}
+
+/* Expected Output (typical, but Q5 is UB!):
+1        ← r1 is int (char+short → int)
+2        ← integer division truncates
+2.5      ← floating point division
+2.5      ← floating point division
+0        ← NaN == NaN is false
+1        ← NaN != NaN is true
+1        ← std::isnan(nan) is true
+-1       ← sign follows dividend
+1        ← sign follows dividend
+?        ← UB: signed overflow — may print 0 or 1, or crash, or be optimized away!
+*/
+`} />
+
+<Aside type="caution">
+**🔥 Final Warning**: Arithmetic bugs in C++ are silent killers. Integer overflow doesn't crash — it's **undefined behavior**, meaning the compiler may optimize unpredictably. Always:
+1. Use `unsigned` for counters that wrap
+2. Check bounds before arithmetic on signed types
+3. Use `std::add_overflow` (C++20) or compiler built-ins for safety-critical code
+4. Enable `-fsanitize=undefined` during testing to catch UB at runtime
+</Aside>
+
+---
+
+## 🧭 Quick-Revision Cheat Sheet
+
+```text
+✅ BASIC RULES:
+   • char/short promote to int before arithmetic (same as Java)
+   • Signed + unsigned of same rank → unsigned (⚠️ trap!)
+   • Integer division truncates toward zero (C++11+, same as Java)
+   • % sign follows dividend (C++11+, same as Java)
+   • Floating point: IEEE 754 — Infinity/NaN for div-by-zero
+
+✅ UNDEFINED BEHAVIOR ALERTS 🔥:
+   • Signed integer overflow: UB! Use unsigned for wrap semantics
+   • Integer division/modulo by zero: UB! Always check divisor
+   • std::abs(INT_MIN): UB! Check bounds or use unsigned
+   • Signed/unsigned comparison: signed promoted to unsigned
+
+✅ NaN HANDLING:
+   • NaN == NaN → false (IEEE 754, same as Java)
+   • Use std::isnan(x) from <cmath> — never x == NaN
+   • Floating point never throws — returns special values
+
+✅ STRING CONCATENATION:
+   • std::string + std::string → works
+   • std::string + int → ❌ Error! Use std::to_string or streams
+   • Idiomatic: std::cout << "val: " << 42; (stream insertion)
+   • C++20: std::format("val: {}", 42) — type-safe formatting
+
+✅ SAFE ARITHMETIC PATTERNS:
+   • Use unsigned for wrap-around counters (hashes, circular buffers)
+   • Check bounds: if (a > MAX - b) before a + b
+   • C++20: std::add_overflow(a, b, result) for explicit checks
+   • Compiler built-ins: __builtin_add_overflow (GCC/Clang)
+   • Libraries: Boost.SafeNumerics, Microsoft SafeInt
+
+✅ COMPILER FLAGS FOR SAFETY:
+   • -Wall -Wextra -Wsign-conversion  ← catch promotion traps
+   • -fsanitize=undefined             ← runtime UB detection (testing)
+   • -fwrapv                          ← define signed overflow as wrap (non-standard)
+   • -std=c++11 or later              ← ensure standardized division/modulo
+```
+
+> 🎯 **Interview Pro Tip**: When asked about arithmetic operators in C++, always mention:  
+> 1. **Signed overflow = undefined behavior** — the #1 difference from Java  
+> 2. **Integer division/modulo standardized in C++11** — now matches Java  
+> 3. **NaN semantics identical to Java** (IEEE 754) — `NaN != NaN`  
+> 4. **No built-in exceptions** — must check divisors and overflow manually  
+> 5. **String concatenation requires std::to_string or streams** — no auto-toString  
+> This demonstrates deep understanding of C++'s "zero-overhead, trust the programmer" philosophy — and its pitfalls! 🚀
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="C++ Undefined Behavior"
+    href="/computer-languages/cpp/topics/undefined-behavior"
+    description="Sequence points, strict aliasing, object lifetime, and how to avoid UB"
+  />
+  <LinkCard
+    title="C++ Type System"
+    href="/computer-languages/cpp/topics/type-system"
+    description="Usual arithmetic conversions, signed/unsigned rules, and type traits"
+  />
+  <LinkCard
+    title="C++ Numeric Limits"
+    href="/computer-languages/cpp/topics/numeric-limits"
+    description="std::numeric_limits, overflow checks, and safe arithmetic patterns"
+  />
+  <LinkCard
+    title="C++ String Handling"
+    href="/computer-languages/cpp/topics/strings"
+    description="std::string, std::to_string, std::format, and stream I/O"
+  />
+</CardGrid>
+
+---
+
+## ⬆️ Integer Promotion
+
+Types **smaller than `int`** are promoted to `int` before arithmetic.
+
+```cpp
+char  a = 100;
+char  b = 100;
+auto  c = a + b;    // c is INT (200), not char
+                    // 200 fits in int but not signed char (-128→127)
+char  d = a + b;    // d = -56 (truncated from 200 to signed char)
+```
+
+```
+Promotion table:
+bool            → int
+char            → int
+signed char     → int
+unsigned char   → int  (if int can hold all values, else unsigned int)
+short           → int
+unsigned short  → int  (if int can hold all values, else unsigned int)
+```
+
+```cpp
+char x = 255;
+char y = 1;
+char z = x + y;     // x+y computed as int (256)
+                    // 256 truncated to char → 0
+                    // silent data loss
+```
+
+---
+
+## 💥 Overflow Behavior
+
+### Signed Overflow — UB
+
+```cpp
+int x = INT_MAX;    // 2147483647
+x + 1;              // ❌ UB — signed overflow
+                    // compiler ASSUMES signed overflow never happens
+                    // may delete your surrounding code at -O2
+
+// Classic compiler optimization kill:
+for (int i = 0; i >= 0; i++) {   // infinite loop?
+    // compiler: "i is signed, i++ can't overflow (UB),
+    //  so i >= 0 is ALWAYS true, loop is infinite"
+    // deletes the condition entirely at -O2
+}
+```
+
+```bash
+# Catch signed overflow at runtime:
+g++ -fsanitize=undefined main.cpp
+# runtime error: signed integer overflow: 2147483647 + 1
+```
+
+### Unsigned Overflow — Well Defined (Wraps)
+
+```cpp
+unsigned int x = UINT_MAX;   // 4294967295
+x + 1;                        // → 0  (wraps — modular arithmetic)
+x + 2;                        // → 1
+
+unsigned int a = 0;
+a - 1;                        // → 4294967295  (wraps — not -1)
+```
+
+### Overflow Summary
+
+| Type | Overflow behavior | Defined? |
+|---|---|---|
+| `signed` overflow | **UB** — compiler may do anything | ❌ |
+| `unsigned` overflow | Wraps modulo 2ⁿ | ✅ |
+| `float`/`double` overflow | ±infinity (IEEE 754) | ✅ |
+| Integer ÷ 0 | **UB** | ❌ |
+| Float ÷ 0 | ±infinity or NaN | ✅ |
+
+---
+
+## 🌊 Floating Point Arithmetic — IEEE 754 Rules
+
+```cpp
+// These are NOT mathematical errors
+double inf  = 1.0 / 0.0;     // +infinity
+double ninf = -1.0 / 0.0;    // -infinity
+double nan  = 0.0 / 0.0;     // NaN (Not a Number)
+double nan2 = inf - inf;      // NaN
+
+// NaN is not equal to anything — including itself
+nan == nan    // → false ← the only value not equal to itself
+nan != nan    // → true  ← use this to detect NaN
+std::isnan(nan) // → true ← correct way
+
+// Infinity arithmetic
+inf + 1       // → infinity
+inf * -1      // → -infinity
+inf + inf     // → infinity
+inf - inf     // → NaN
+inf * 0       // → NaN
+```
+
+### Floating Point Is Not Exact
+
+```cpp
+0.1 + 0.2 == 0.3    // → false
+// 0.1 + 0.2 = 0.30000000000000004
+
+// ✅ Always use epsilon comparison
+const double EPSILON = 1e-9;
+std::abs((0.1 + 0.2) - 0.3) < EPSILON    // → true
+```
+
+### Catastrophic Cancellation
+
+```cpp
+double a = 1234567890.123456;
+double b = 1234567890.123455;
+double c = a - b;    // → 0.000976... instead of 0.000001
+                     // both numbers nearly identical
+                     // subtracting loses all significant digits
+                     // relative error becomes huge
+```
+
+---
+
+## 🔬 Under the Hood — Assembly
+
+```cpp
+int a = 10, b = 3;
+int add = a + b;
+int sub = a - b;
+int mul = a * b;
+int div = a / b;
+int mod = a % b;
+```
+
+```asm
+; x86-64
+mov eax, [a]      ; load a
+
+; ADD
+add eax, [b]      ; eax = a + b  (1 instruction)
+
+; SUB
+sub eax, [b]      ; eax = a - b  (1 instruction)
+
+; MUL (signed)
+imul eax, [b]     ; eax = a * b  (1 instruction, 32-bit result)
+
+; DIV (signed) — most expensive
+mov eax, [a]
+cdq               ; sign-extend eax into edx:eax
+idiv [b]          ; eax = quotient, edx = remainder
+                  ; idiv is ~20-90 cycles vs 1 cycle for add/mul
+
+; MOD — same idiv instruction, just use edx
+; edx = remainder after idiv
+```
+
+### Operation Cost (approximate cycles, modern CPU)
+
+| Operation | Integer | Float (double) |
+|---|---|---|
+| `+` | 1 | 4 |
+| `-` | 1 | 4 |
+| `*` | 3 | 4 |
+| `/` | 20–90 | 10–20 |
+| `%` | 20–90 | N/A |
+
+> 🔑 Division is **20–90× slower** than addition. In tight loops, replace `x / 2` with `x >> 1`, `x % 8` with `x & 7` for powers of 2.
+
+```cpp
+// Power-of-2 optimizations (compiler does this automatically at -O2)
+x / 2    → x >> 1
+x / 4    → x >> 2
+x % 2    → x & 1
+x % 8    → x & 7
+x * 2    → x << 1
+x * 4    → x << 2
+```
+
+---
+
+## 🔧 Compound Assignment Operators
+
+```cpp
+x += y;    // x = x + y
+x -= y;    // x = x - y
+x *= y;    // x = x * y
+x /= y;    // x = x / y
+x %= y;    // x = x % y
+```
+
+### Hidden Conversion Trap
+
+```cpp
+short s = 100;
+s += 200;       // ✅ fine — s = 300
+
+// But:
+short a = 100;
+short b = 200;
+short c = a + b;    // ❌ a+b is INT (promotion), then truncated to short
+                    //    300 fits in short here but dangerous pattern
+
+// Compound assignment does implicit narrowing cast:
+a += b;             // ✅ equivalent to a = (short)(a + b)
+                    //    compiler inserts the cast silently
+```
+
+---
+
+## 🔢 Unary Operators
+
+```cpp
+int x = 5;
++x    // → 5   (unary plus — almost useless, triggers promotion)
+-x    // → -5  (negation)
+
+// Unary minus trap:
+int x = INT_MIN;   // -2147483648
+-x;                // ❌ UB — negating INT_MIN overflows
+                   // -INT_MIN = 2147483648 > INT_MAX
+
+unsigned int u = 5u;
+-u;   // → 4294967291  (wraps — result is unsigned)
+```
+
+---
+
+## 🏭 Real-World Production Scenarios
+
+### Scenario 1 — Financial Calculation Error
+
+```cpp
+// ❌ Floating point for money
+double price    = 19.99;
+double tax_rate = 0.08;
+double tax      = price * tax_rate;   // 1.5992000000000002
+double total    = price + tax;        // 21.589200000000002
+// Displayed: $21.59 — correct
+// Stored:    21.589200000000002 — accumulates error over millions of transactions
+
+// ✅ Use integers (cents) for money
+int price_cents  = 1999;
+int tax_rate_bps = 800;    // basis points (800 = 8%)
+int tax_cents    = (price_cents * tax_rate_bps) / 10000;  // integer math
+int total_cents  = price_cents + tax_cents;
+```
+
+### Scenario 2 — Division in Hot Path
+
+```cpp
+// ❌ Division every iteration — 90 cycles each
+for (int i = 0; i < 1'000'000; i++) {
+    int bucket = value[i] / BUCKET_SIZE;  // expensive
+}
+
+// ✅ Multiply by reciprocal (if BUCKET_SIZE is runtime constant)
+double inv = 1.0 / BUCKET_SIZE;
+for (int i = 0; i < 1'000'000; i++) {
+    int bucket = (int)(value[i] * inv);   // ~4 cycles
+}
+
+// ✅ Bit shift if power of 2 (BUCKET_SIZE = 16)
+for (int i = 0; i < 1'000'000; i++) {
+    int bucket = value[i] >> 4;           // 1 cycle
+}
+```
+
+### Scenario 3 — Unsigned Subtraction Wrap
+
+```cpp
+// ❌ Packet loss in network monitor
+uint64_t prev_count = get_packet_count();
+// ... time passes ...
+uint64_t curr_count = get_packet_count();
+uint64_t diff = curr_count - prev_count;  // fine normally
+
+// But if counter resets (device reboot):
+prev_count = 1000;
+curr_count = 5;       // counter reset
+diff = 5 - 1000;      // unsigned: wraps to 18446744073709550621
+// Dashboard shows 18 quintillion packets — alerts fire, on-call wakes up
+
+// ✅ Fix
+if (curr_count >= prev_count)
+    diff = curr_count - prev_count;
+else
+    diff = (UINT64_MAX - prev_count) + curr_count + 1;  // handle wrap
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+int x = -7;
+int y = 2;
+std::cout << x / y << " " << x % y;
+```
+> Prints `-3 -1`. Division truncates toward zero (not floor). Remainder has same sign as dividend. Many candidates say `-4 1` (floor division).
+
+**Trap 2:**
+```cpp
+unsigned int x = 1;
+unsigned int y = 2;
+std::cout << x - y;
+```
+> Prints `4294967295`. Unsigned subtraction wraps. Result is `UINT_MAX`. Not `-1`.
+
+**Trap 3:**
+```cpp
+int x = INT_MIN;
+int y = -1;
+int z = x / y;    // what happens?
+```
+> **UB** — `INT_MIN / -1` = `INT_MAX + 1` which overflows signed int. This is the one signed division that causes UB. On x86, `idiv` with these values raises `SIGFPE` — same signal as divide-by-zero.
+
+**Trap 4:**
+```cpp
+double x = 0.1 + 0.2 + 0.3;
+double y = 0.3 + 0.2 + 0.1;
+std::cout << (x == y);
+```
+> May print `0` (false). Floating point addition is **not associative**. Different order of operations → different rounding → different result. Senior devs know this but forget it applies to `==`.
+
+**Trap 5:**
+```cpp
+int a = 1000000;
+int b = 1000000;
+long long c = a * b;   // c = ?
+```
+> `c = -727379968` (garbage). `a * b` is computed as `int × int = int` — overflows before being stored in `long long`. Fix: `long long c = (long long)a * b;` — cast ONE operand to trigger 64-bit multiplication.
+
+---
+

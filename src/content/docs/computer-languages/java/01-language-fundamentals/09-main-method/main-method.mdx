@@ -15,13 +15,23 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 ## 🎯 Java Main Method — Complete Guide
 
 > The **main method** is the entry point of every Java program. The JVM looks for this exact signature to start execution.
-
+> Whether the class contains main() method or not, and whether it is properly declared or not, these checking's are not responsibilities of the compiler, at runtime JVM is responsible for this. If JVM unable to find the required main() method then we will get runtime exception saying NoSuchMethodError: main.
 ---
 
 ## 📌 The Exact Signature
 
 ```java
+class Test {}
+
+Output:
+> javac Test.java
+> java Test R.E: NoSuchMethodError: main
+
+// At runtime JVM always searches for the main() method with the following prototype
+
 public static void main(String[] args)
+
+// If we are performing any changes to the above syntax then the code won\'t run and will get Runtime exception saying NoSuchMethodError. or main method not found in class Test, please declared main method as p s v m(S[] a)
 ```
 
 ### 🏛️ Architecture: JVM Entry Point
@@ -48,6 +58,55 @@ public static void main(String[] args)
 |   Execute Code      |
 +---------------------+
 ```
+
+```
+java MainClass arg1 arg2
+       │
+       ▼
+┌──────────────────────────────────────────┐
+│  1. JVM starts                           │
+│     → creates JVM process                │
+│     → allocates heap, metaspace, etc.    │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  2. Bootstrap ClassLoader loads          │
+│     → java.lang.Object                  │
+│     → java.lang.String                  │
+│     → other core classes                │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  3. Application ClassLoader loads        │
+│     MainClass.class from classpath       │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  4. Static initialization of MainClass   │
+│     → static fields initialized          │
+│     → static blocks executed             │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  5. JVM creates main thread              │
+│     → name: "main"                       │
+│     → daemon: false                      │
+│     → priority: 5 (NORM_PRIORITY)        │
+└──────────────────┬───────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  6. main thread pushes stack frame       │
+│     → invokes MainClass.main(args)       │
+│     → execution begins                   │
+└──────────────────────────────────────────┘
+```
+> 🔑 Static initializers run **before** `main()`. If a static block throws, `ExceptionInInitializerError` fires and `main()` never runs.
+
 ### 🔑 Keyword Breakdown
 
 | Keyword | Meaning | Why? (Interview Answer) |
@@ -68,12 +127,46 @@ public static void main(String[] args)
 ## 🔬 In-Depth — Why Each Keyword?
 
 ```text
-If NOT public → JVM can't access → ❌ runtime error
-If NOT static → JVM must create object first
+1. If NOT public → JVM can't access → ❌ runtime error
+java MainClass
+Error: Main method not found in class MainClass,
+please define the main method as:
+   public static void main(String[] args)
+
+2. If NOT static → JVM must create object first
                but WHICH constructor? JVM doesn't know → ❌
-If NOT void   → return value goes nowhere (JVM ignores) → ❌
-If NOT main   → JVM doesn't find entry point → ❌
-If NOT String[] → signature mismatch → ❌
+// If main() were instance method:
+public void main(String[] args) { }     // non-static
+
+// JVM would need to do:
+MainClass obj = new MainClass();        // which constructor?
+obj.main(args);                         // which args to constructor?
+
+// JVM has no way to know — static solves this:
+MainClass.main(args);                   // no object needed — clean entry point
+
+3. If NOT void   → return value goes nowhere (JVM ignores) → ❌
+// JVM discards any return value from main()
+// To signal exit code to OS — use System.exit()
+public static void main(String[] args) {
+    if (args.length == 0) {
+        System.exit(1);     // exit code 1 → OS — signals failure
+    }
+    // normal completion → exit code 0 automatically
+}
+
+4. If NOT main   → JVM doesn't find entry point → ❌
+
+5. If NOT String[] → signature mismatch → ❌
+OS command:
+  java OrderService --env=prod --port=8080
+
+JVM receives:
+  args[0] = "--env=prod"
+  args[1] = "--port=8080"
+
+args is never null — may be empty array (String[0])
+if no args passed: args.length == 0
 ```
 
 ---
@@ -83,22 +176,30 @@ If NOT String[] → signature mismatch → ❌
 ### 1. Var-Args Allowed ✅
 Since Java 5, you can use var-args instead of an array.
 
-<Code lang="java" title="Var-args syntax" code={`// ✅ Valid — compiles to array internally
-public static void main(String... args) { }`} />
+<Code lang="java" title="Var-args syntax" code={`
+// ✅ Valid — compiles to array internally
+public static void main(String... args) { }
+`} />
 
 ### 2. Argument Name Change ✅
 
-<Code lang="java" title="Variable name is flexible" code={`// ✅ Valid — JVM only cares about type, not name
+<Code lang="java" title="Variable name is flexible" code={`
+// ✅ Valid — JVM only cares about type, not name
 public static void main(String[] myArgs) { }
-public static void main(String[] xyz) { }`} />
+public static void main(String[] xyz) { }
+`} />
 
 ### 3. Final Modifier ✅
 
-<Code lang="java" title="Prevent reassignment" code={`// ✅ Valid — prevents args = new String[...]
-public static void main(final String[] args) { }`} />
+<Code lang="java" title="Prevent reassignment" code={`
+// ✅ Valid — prevents args = new String[...]
+public static void main(final String[] args) { }
+`} />
+
 ### 4. Overloading `main` ✅ (But JVM Ignores Others)
 
-<Code lang="java" title="Overloading is allowed" code={`public static void main(String[] args) { } // ✅ JVM calls this
+<Code lang="java" title="Overloading is allowed" code={`
+public static void main(String[] args) { } // ✅ JVM calls this
 public static void main(int[] args) { }    // ✅ Valid method, but JVM ignores it
 public static void main(String args, int x) { } // ✅ Valid overload
 
@@ -107,18 +208,21 @@ public static void main(String args, int x) { } // ✅ Valid overload
 
 ### 5. Modifier Order Doesn't Matter
 
-<Code lang="java" title="static public is valid" code={`// ✅ Valid — order of public/static doesn't matter
+<Code lang="java" title="static public is valid" code={`
+// ✅ Valid — order of public/static doesn't matter
 static public void main(String[] args) { }`} />
 
 ### 6. Additional Modifiers Allowed
 
-<Code lang="java" title="synchronized, strictfp, etc." code={`// ✅ Valid — extra modifiers don't break signature
+<Code lang="java" title="synchronized, strictfp, etc." code={`
+// ✅ Valid — extra modifiers don't break signature
 public static synchronized void main(String[] args) { }
 public static strictfp void main(String[] args) { }`} />
 
 ### 7. Array Declaration Styles
 
-<Code lang="java" title="All valid array syntaxes" code={`public static void main(String[] args) { }  // ✅ Recommended
+<Code lang="java" title="All valid array syntaxes" code={`
+public static void main(String[] args) { }  // ✅ Recommended
 public static void main(String []args) { }  // ✅ Valid
 public static void main(String args[]) { }  // ✅ Valid (C-style)`} />
 
@@ -126,15 +230,23 @@ public static void main(String args[]) { }  // ✅ Valid (C-style)`} />
 
 Static methods follow **method hiding**, not overriding. If child class lacks `main()`, parent's `main()` executes.
 
-<Code lang="java" title="Case 1: Child inherits parent's main" code={`class Parent {
+<Code lang="java" title="Case 1: Child inherits parent's main" code={`
+class Parent {
     public static void main(String[] args) {
         System.out.println("parent main");
     }
 }
 class Child extends Parent {}
-// java Child → Output: "parent main" ✅`} />
+//it is method hiding not method overriding
+> javac Parent.java
+> java Parent.class
+o/p: parent main
+> java Child.class
+o/p: parent main
+`} />
 
-<Code lang="java" title="Case 2: Child hides parent's main" code={`class Parent {
+<Code lang="java" title="Case 2: Child hides parent's main" code={`
+class Parent {
     public static void main(String[] args) {
         System.out.println("parent main");
     }
@@ -145,7 +257,9 @@ class Child extends Parent {
     }
 }
 // java Child → Output: "Child main" ✅
-// This is METHOD HIDING, not overriding (static methods can't be overridden)`} />
+// This is METHOD HIDING, not overriding (static methods can't be overridden)
+`} />
+
 <Aside type="caution">
 **Key Distinction**: Static methods use **method hiding**, not polymorphic overriding. The method called depends on the **reference type at compile time**, not the runtime object type.
 </Aside>
@@ -330,14 +444,16 @@ main method
 
 ```mermaid
 flowchart TD
-    A[Execute static block if it is available]
-    B["Check whether main() available or not"]
-    C["Execute main() method"]
-    D["RE: NoSuchMethodError"]
+    A[Identification of static members]
+    B[Execute static block & Variable assignment if it is available]
+    C["Check whether main() available or not"]
+    D["Execute main() method"]
+    E["RE: NoSuchMethodError"]
 
     A --> B
-    B -- Yes --> C
-    B -- No --> D
+    B --> C
+    C -- Yes --> D
+    C -- No --> E
 ```
 
 ### Java 1.7+ Flow
@@ -345,15 +461,73 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["Check whether main() available or not"]
-    B[Execute static block if it is available]
-    C["Execute main() method"]
-    D[Raise Error]
+    B[Identification of static members]
+    C[Execute static block & Variable assignment if it is available]
+    D["Execute main() method"]
+    E[Raise Error]
 
     A -- Yes --> B
-    A -- No --> D
-    B --> C
+    A -- No --> E
+    B --> C --> D
 ```
 
+```java
+class Test {
+    static {
+        sop('static block');
+    }
+}
+
+// Java 1.6
+> javac Test.java
+> java Test 
+o/p: Static block
+R.E: NoSuchMethodError: main
+
+// Java 1.7
+> javac Test.java
+> java Test
+Error: main method not found in class Test, please define the main method
+as public static void main(String[] args)
+
+class Test {
+    static {
+        sop('static block');
+        System.exist(0);
+    }
+}
+// Java 1.6
+> javac Test.java
+> java Test 
+o/p: Static block
+
+// Java 1.7
+> javac Test.java
+> java Test
+Error: main method not found in class Test, please define the main method
+as public static void main(String[] args)
+
+
+class Test {
+    static {
+        sop('static block');
+    }
+    public static void main(String[] args) {
+        sop('main block');
+    }
+}
+// Java 1.6
+> javac Test.java
+> java Test 
+o/p: Static block
+     main block
+
+// Java 1.7
+> javac Test.java
+> java Test
+o/p: Static block
+     main block
+```
 <Aside type="tip">
 **Key Insight**: Java 7+ **checks for main() FIRST**, before executing static blocks. This ensures clear error messages and prevents silent failures.
 </Aside>
@@ -362,7 +536,8 @@ flowchart TD
 
 ## 📦 Command Line Arguments — String[] args
 
-<Code lang="java" title="Using command-line arguments" code={`public static void main(String[] args) {
+<Code lang="java" title="Using command-line arguments" code={`
+public static void main(String[] args) {
     System.out.println("Number of args: " + args.length);
     
     if (args.length > 0) {
@@ -472,6 +647,301 @@ JVM exits
 
 ---
 
+## 🔬 Step 5 — Reading Command-Line Arguments
+
+```java
+public static void main(String[] args) {
+
+    // Raw access
+    System.out.println(args.length);    // number of args
+    System.out.println(args[0]);        // first arg — AIOOBE if empty
+
+    // Safe access
+    if (args.length > 0) {
+        String first = args[0];
+    }
+
+    // Common patterns:
+    // java MyApp 8080
+    int port = args.length > 0
+        ? Integer.parseInt(args[0])
+        : 8080;                         // default if not provided
+
+    // java MyApp --port=8080 --env=prod
+    Map<String, String> params = new HashMap<>();
+    for (String arg : args) {
+        if (arg.startsWith("--") && arg.contains("=")) {
+            String[] parts = arg.substring(2).split("=", 2);
+            params.put(parts[0], parts[1]);
+        }
+    }
+    int port2 = Integer.parseInt(params.getOrDefault("port", "8080"));
+}
+```
+
+### args vs System Properties vs Environment Variables
+
+```java
+// Command line args — positional or custom format
+// java MyApp --port=8080
+String port = args[0];
+
+// System properties — -D flag
+// java -Dserver.port=8080 MyApp
+String port2 = System.getProperty("server.port", "8080");
+
+// Environment variables — set in OS/container
+// export SERVER_PORT=8080
+String port3 = System.getenv("SERVER_PORT");
+
+// Priority in prod (Spring Boot convention):
+// env vars > system props > args > config file > defaults
+```
+
+---
+
+## 🔬 Step 6 — main() and Threads
+
+```java
+public static void main(String[] args) throws InterruptedException {
+
+    System.out.println(Thread.currentThread().getName());   // "main"
+    System.out.println(Thread.currentThread().isDaemon());  // false
+
+    // Non-daemon threads keep JVM alive
+    Thread worker = new Thread(() -> {
+        try { Thread.sleep(5000); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        System.out.println("worker done");
+    });
+    worker.setDaemon(false);    // default — JVM waits for it
+    worker.start();
+
+    System.out.println("main done");
+    // main thread exits — but JVM stays alive for worker
+}
+// Output:
+// main
+// false
+// main done
+// (5 seconds later)
+// worker done
+// JVM exits
+```
+
+```
+JVM exit condition:
+  ALL non-daemon threads finished
+  ↓
+  JVM calls shutdown hooks
+  ↓
+  JVM exits
+
+main() finishing ≠ JVM exiting
+If non-daemon threads still running → JVM stays alive
+Daemon threads: killed immediately when JVM exits
+```
+
+---
+
+## 🔬 Step 7 — Java 21 Instance main() (Preview)
+
+```java
+// Java 21+ preview — JEP 445: Unnamed Classes and Instance Main Methods
+// Removes ceremony for small programs
+
+// Old way — full ceremony
+public class Hello {
+    public static void main(String[] args) {
+        System.out.println("Hello");
+    }
+}
+
+// Java 21 preview — instance main, no class declaration needed
+void main() {
+    System.out.println("Hello");
+}
+
+// Also valid in Java 21 preview:
+class Hello {
+    void main() {                   // instance method — JVM creates instance
+        System.out.println("Hello");
+    }
+}
+```
+
+```
+Java 21 main method search order:
+  1. static void main(String[])    ← traditional — checked first
+  2. static void main()            ← no-arg static
+  3. void main(String[])           ← instance with args
+  4. void main()                   ← instance no-arg
+
+JVM picks first match.
+For instance main: JVM calls no-arg constructor, then main().
+```
+
+> 🔑 Java 21 instance main is **preview** — needs `--enable-preview` flag. Production code: still use `public static void main(String[] args)`.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — Invalid main() compiles but fails at runtime**
+
+```java
+// Compiles perfectly — fails when you run java MyClass
+public class MyClass {
+    public void main(String[] args) {   // missing static — looks fine
+        System.out.println("hello");
+    }
+}
+
+// java MyClass →
+// Error: Main method not found in class MyClass,
+// please define the main method as:
+//    public static void main(String[] args)
+
+// Not a compile error — a runtime startup error
+// Compiler has no idea this is intended as entry point
+```
+
+---
+
+**🪤 Trap 2 — Overloaded main() — which one runs?**
+
+```java
+public class MyClass {
+
+    public static void main(String[] args) {
+        System.out.println("String[] version");     // ← JVM calls THIS
+    }
+
+    public static void main(String args) {          // overloaded — different signature
+        System.out.println("String version");       // never called by JVM
+    }
+
+    public static void main() {                     // overloaded — no param
+        System.out.println("no-arg version");       // never called by JVM (pre-Java 21)
+    }
+}
+// Output: String[] version
+// JVM strictly requires: public static void main(String[])
+// Other overloads are regular methods — JVM ignores them as entry point
+```
+
+---
+
+**🪤 Trap 3 — Calling main() explicitly — recursive or re-entrant**
+
+```java
+public static void main(String[] args) {
+    System.out.println("count: " + args.length);
+    if (args.length < 3) {
+        main(new String[]{"a", "b", "c"});  // ✅ legal — main is just a static method
+    }
+}
+// Output:
+// count: 0
+// count: 3
+// main() can call itself — it's just a static method
+// recursive main → StackOverflowError if unbounded
+// No special JVM protection against re-entrant main
+```
+
+---
+
+**🪤 Trap 4 — `System.exit()` skips finally blocks in other threads**
+
+```java
+public static void main(String[] args) {
+    Thread t = new Thread(() -> {
+        try {
+            Thread.sleep(10000);
+        } finally {
+            System.out.println("finally in thread");    // may NOT run
+        }
+    });
+    t.start();
+
+    System.exit(0);     // JVM terminates immediately
+    // thread t's finally: skipped — JVM doesn't wait
+    // shutdown hooks: DO run (registered via addShutdownHook)
+    // finally in main thread: also skipped
+}
+// Output: (nothing from finally)
+// System.exit() = hard stop
+```
+
+---
+
+**🪤 Trap 5 — `args` is never null but elements can be**
+
+```java
+public static void main(String[] args) {
+    // args itself — NEVER null — JVM guarantees String[0] if no args
+    if (args == null) { }   // dead code — args is never null
+
+    // But if you do:
+    String[] custom = {null, "hello", null};
+    main(custom);           // calling main explicitly
+    // now args[0] = null — elements can be null when called programmatically
+    // args[0].length() → NPE
+
+    // Safe pattern:
+    for (String arg : args) {
+        if (arg == null) continue;      // guard against programmatic nulls
+        processArg(arg);
+    }
+}
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Stack frame creation + method lookup via constant pool**
+
+```
+JVM entry point invocation — bytecode level:
+
+java MainClass arg1 arg2
+
+JVM runtime:
+  1. Build String[] from OS args:
+     String[] args = new String[]{"arg1", "arg2"};
+
+  2. Resolve main method:
+     Class  clazz  = Class.forName("MainClass");
+     Method method = clazz.getMethod("main", String[].class);
+     // lookup: constant pool → method descriptor → match
+
+  3. Create main thread stack frame:
+     frame {
+       local variable array:
+         slot 0: args  (String[] reference)
+       operand stack: empty
+       return address: JVM_exit
+     }
+
+  4. invokestatic MainClass.main([Ljava/lang/String;)V
+     // static method — no 'this' slot
+
+  5. After main() returns:
+     frame popped
+     main thread terminates
+     JVM checks: any non-daemon threads alive?
+       yes → wait
+       no  → run shutdown hooks → exit
+
+Bytecode descriptor of main:
+  ([Ljava/lang/String;)V
+   │                 │
+   array of String   void return
+```
+
+---
+
 ## 🧩 DSA Angle
 
 <Code lang="java" title="main() as test harness in DSA" code={`public static void main(String[] args) {
@@ -546,6 +1016,61 @@ public static void main(String[] args) {
         // business logic here
     }
 }`} />
+
+```java
+public class PaymentService {
+
+    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
+    public static void main(String[] args) {
+
+        // Step 1: parse and validate args
+        ServiceConfig config = parseArgs(args);
+
+        // Step 2: register shutdown hook — cleanup on Ctrl+C or SIGTERM
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.info("Shutdown signal received — cleaning up");
+            config.getServer().stop();
+            config.getDb().close();
+            log.info("Shutdown complete");
+        }, "shutdown-hook"));
+
+        // Step 3: initialize and start
+        try {
+            Server server = new Server(config);
+            server.start();
+            log.info("PaymentService started on port {}", config.getPort());
+
+            // Step 4: keep main thread alive — server runs on other threads
+            server.awaitTermination();
+
+        } catch (Exception e) {
+            log.error("Failed to start PaymentService", e);
+            System.exit(1);     // non-zero exit code → signals failure to OS/k8s
+        }
+    }
+
+    private static ServiceConfig parseArgs(String[] args) {
+        ServiceConfig config = new ServiceConfig();
+
+        for (String arg : args) {
+            if (arg.startsWith("--port=")) {
+                config.setPort(Integer.parseInt(arg.substring(7)));
+            } else if (arg.startsWith("--env=")) {
+                config.setEnv(arg.substring(6));
+            } else {
+                System.err.println("Unknown argument: " + arg);
+                System.exit(1);
+            }
+        }
+
+        return config;
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No shutdown hook → Ctrl+C kills process → in-flight transactions not committed → DB connections not returned to pool → next startup finds leaked connections → connection pool exhausted → service fails to start.
+
 
 <Aside type="tip">**Production Best Practice**: Always validate `args` early in `main()` and provide clear usage messages. Exit with non-zero code (`System.exit(1)`) on error to signal failure to shell scripts and orchestrators.</Aside>
 

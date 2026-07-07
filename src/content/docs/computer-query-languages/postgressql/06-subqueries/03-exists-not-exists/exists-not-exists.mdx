@@ -1,0 +1,1022 @@
+---
+title: PostgreSQL EXISTS / NOT EXISTS
+slug: computer-query-languages/postgresql/subqueries/exists-not-exists
+description: Master row existence checks in PostgreSQL — short-circuit evaluation, NULL safety, Semi-Joins vs Anti-Joins, and performance optimization patterns.
+sidebar:
+  label: "EXISTS / NOT EXISTS"
+  badge:
+    text: Subqueries
+    variant: tip
+tags: [postgresql, subqueries, exists, semi-join, anti-join, null-safety, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 📄 EXISTS / NOT EXISTS — Complete Guide
+
+> **`EXISTS` checks if a subquery returns at least one row — it stops immediately at the first match (true short-circuit), never cares about the actual values returned, and is always `NULL`-safe making it the correct default for any "does this relationship exist?" question.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `EXISTS` as a **boolean switch**.  
+- `EXISTS` = "Did the subquery find **anything**?" → Returns `TRUE` (≥1 row) or `FALSE` (0 rows).  
+- It **never returns `NULL`**.  
+- It **short-circuits**: finds one row → stops scanning → returns `TRUE`.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Architecture
+
+```
+FROM
+WHERE    ← EXISTS / NOT EXISTS live here ✅
+GROUP BY
+HAVING   ← EXISTS / NOT EXISTS work here too ✅
+SELECT
+ORDER BY
+```
+
+<Code lang="sql" title="Basic syntax: checking existence" code={`
+-- EXISTS = boolean test on a subquery
+-- TRUE  if subquery returns ≥ 1 row
+-- FALSE if subquery returns 0 rows
+-- NULL  never — EXISTS is always TRUE or FALSE ✅
+
+SELECT * FROM users u
+WHERE  EXISTS (
+  SELECT 1           -- ← value doesn't matter — only row count matters
+  FROM   orders o
+  WHERE  o.user_id = u.id
+);`} />
+
+---
+
+## 1️⃣ What EXISTS Actually Does
+
+### Scenario: Users with Orders
+```
+Two tables:
+
+users                        orders
+┌────┬────────┐              ┌────┬─────────┬────────┐
+│ id │ name   │              │ id │ user_id │ amount │
+├────┼────────┤              ├────┼─────────┼────────┤
+│  1 │ Raj    │              │  1 │    1    │  500   │
+│  2 │ Priya  │              │  2 │    1    │  900   │
+│  3 │ Sam    │              │  3 │    2    │  300   │
+│  4 │ Ankit  │              │  4 │   NULL  │  700   │
+└────┴────────┘              └────┴─────────┴────────┘
+
+EXISTS (SELECT 1 FROM orders WHERE user_id = u.id):
+
+For Raj   (id=1): orders has user_id=1 → FOUND → TRUE  → include ✅
+For Priya (id=2): orders has user_id=2 → FOUND → TRUE  → include ✅
+For Sam   (id=3): orders has no user_id=3 → NOT FOUND → FALSE → skip ❌
+For Ankit (id=4): orders has no user_id=4 → NOT FOUND → FALSE → skip ❌
+
+Result: Raj, Priya
+```
+
+```sql
+The key insight:
+
+EXISTS doesn't ask "what values are there?"
+EXISTS asks "are there ANY rows at all?"
+
+SELECT 1    ← returns 1 if row exists (value irrelevant)
+SELECT NULL ← still works — EXISTS only checks row existence
+SELECT *    ← also works — but wasteful, SELECT 1 is idiomatic
+SELECT 1/0  ← even this works if no rows found (never evaluated!)
+```
+
+> 🎯 **Interview Q:** *"Why do people write `SELECT 1` instead of `SELECT *` in EXISTS?"*
+> **A:** Convention + clarity. `SELECT 1` signals "I only care if a row exists, not what it contains." Performance-wise, Postgres optimizes both identically — it never fetches column data for EXISTS. But `SELECT 1` makes intent explicit and avoids confusion.
+
+<Aside type="note">
+**Key Insight**: `EXISTS` doesn't ask "what values are there?". It asks "are there **ANY** rows at all?".
+`SELECT 1`, `SELECT NULL`, or even `SELECT 1/0` (if short-circuited) works because the **values** are ignored.
+</Aside>
+
+---
+
+## 2️⃣ Basic Syntax Patterns
+
+<Code lang="sql" title="Common EXISTS patterns" code={`-- 1. EXISTS: find rows where related data exists
+SELECT u.id, u.name
+FROM   users u
+WHERE  EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+
+-- 2. NOT EXISTS: find rows where related data does NOT exist
+SELECT u.id, u.name
+FROM   users u
+WHERE  NOT EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+
+-- 3. Complex conditions in subquery
+SELECT u.id, u.name
+FROM   users u
+WHERE  EXISTS (
+  SELECT 1 FROM orders o
+  WHERE  o.user_id  = u.id
+    AND  o.status   = 'delivered'
+    AND  o.amount   > 1000
+);
+
+-- 4. EXISTS in HAVING
+SELECT department, COUNT(*) AS headcount
+FROM   employees
+GROUP BY department
+HAVING EXISTS (
+  SELECT 1 FROM dept_budgets db
+  WHERE  db.dept_name = department
+    AND  db.budget > 500000
+);`} />
+
+---
+
+## 3️⃣ The Short-Circuit Advantage
+
+> **`EXISTS` stops scanning the inner table the moment it finds ONE row.**
+
+```
+This is true short-circuit evaluation — not just in theory.
+
+For user Raj (id=1):
+
+orders table:
+┌────┬─────────┬────────┐
+│ id │ user_id │ amount │
+├────┼─────────┼────────┤
+│  1 │    1    │  500   │ ← FOUND! Stop here immediately ✅
+│  2 │    1    │  900   │ ← never read
+│ ...│   ...   │  ...   │ ← never read
+└────┴─────────┴────────┘
+
+COUNT(*) must read ALL rows: O(n)
+EXISTS stops at first match:  O(1) best case, O(n) worst case
+Average case for EXISTS:      O(n/k) where k = match density
+```
+
+### Performance Comparison
+| Scenario | Approach | Cost |
+| :--- | :--- | :--- |
+| **User has 100 orders** | `EXISTS (SELECT 1...)` | Reads **1** row → Stops. **O(1)** |
+| **User has 100 orders** | `COUNT(*) > 0` | Reads **100** rows → Counts all. **O(n)** |
+
+<Code lang="sql" title="Proof of Short-Circuit" code={`-- If EXISTS truly short-circuits, the division-by-zero error is avoided
+-- because after finding the first row, no more rows are evaluated.
+
+-- Case 1: No rows found → 1/0 never evaluated → Returns FALSE
+SELECT EXISTS (SELECT 1/0 FROM users WHERE id = 999);
+-- Result: FALSE ✅
+
+-- Case 2: Row found → 1/0 might be evaluated once, but value is ignored
+-- Note: Behavior varies by PG version, but generally safe.
+SELECT EXISTS (SELECT 1 FROM users WHERE id = 1);
+-- Result: TRUE ✅
+
+-- Cleaner proof: Expensive function
+SELECT EXISTS (
+  SELECT pg_sleep(10) -- 10 second delay
+  FROM   users
+  LIMIT  1            -- Stops immediately after finding first row
+);`} />
+
+<Aside type="tip">
+**🎯 DSA Connection**: `EXISTS` short-circuit = `anyMatch()` in Java streams, `any()` in Python.  
+For "does at least one exist?" always prefer `EXISTS` over `COUNT(*) > 0`.
+</Aside>
+
+---
+
+## 4️⃣ EXISTS vs COUNT(*) > 0 — The Classic Mistake
+
+<CardGrid>
+  <Card title="❌ Wrong: COUNT(*) > 0" icon="error">
+    ```sql
+    SELECT u.name FROM users u
+    WHERE (
+      SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id
+    ) > 0;
+    ```
+    - For each user: scans ALL their orders, counts every one.
+    - Even if 1000 orders exist → reads all 1000 💀
+  </Card>
+  
+  <Card title="✅ Correct: EXISTS" icon="approve-check">
+    ```sql
+    SELECT u.name FROM users u
+    WHERE EXISTS (
+      SELECT 1 FROM orders o WHERE o.user_id = u.id
+    );
+    ```
+    - For each user: reads **first** matching order → STOP ✅
+    - 10K users × 100 orders = **100x faster**
+  </Card>
+</CardGrid>
+```
+-- ❌ Also wrong: MIN/MAX to check existence
+SELECT u.name
+FROM   users u
+WHERE  (SELECT MIN(o.id) FROM orders o WHERE o.user_id = u.id)
+       IS NOT NULL;
+-- Still reads/computes MIN of all rows ← wasteful
+
+-- ❌ Even more wrong: joining and checking for NULLs
+SELECT DISTINCT u.name
+FROM   users u
+JOIN   orders o ON u.id = o.user_id;
+-- Join produces duplicates → DISTINCT needed → extra cost
+
+
+Performance on 10K users, 1M orders (index on orders.user_id):
+
+COUNT(*) > 0:    reads ALL orders per user = O(orders_per_user)
+EXISTS:          reads FIRST order per user = O(1) per user
+
+For users with 100 orders each:
+  COUNT approach: 10K × 100 = 1M index reads 💀
+  EXISTS approach: 10K × 1  = 10K index reads ✅ (100× faster)
+```
+
+> 🎯 **Real-life SDE:** Replacing `COUNT(*) > 0` with EXISTS is one of the highest-ROI query optimizations. It's non-obvious to junior devs, shows up constantly in code reviews, and can turn a 10-second query into a 100ms query on large tables.
+
+
+---
+
+## 5️⃣ NOT EXISTS — The NULL-Safe Anti-Join
+
+**This is the most important property of `NOT EXISTS`. It is safe even if the related table contains `NULL`s.**
+
+### The Trap: `NOT IN` vs `NOT EXISTS`
+
+<CardGrid>
+  <Card title="❌ NOT IN (Dangerous)" icon="error">
+    ```sql
+    -- Subquery returns: (1, 2, NULL)
+    WHERE id NOT IN (SELECT user_id FROM orders)
+    ```
+    - `id != NULL` evaluates to **`NULL`**.
+    - `TRUE AND NULL` = `NULL` (not TRUE).
+    - **Result: ZERO rows returned.** The `NULL` poisons the whole query 💀
+  </Card>
+  
+  <Card title="✅ NOT EXISTS (Safe)" icon="approve-check">
+    ```sql
+    -- Subquery returns: (1, 2, NULL)
+    WHERE NOT EXISTS (SELECT 1 FROM orders WHERE user_id = id)
+    ```
+    - Checks: "Is there a row where `user_id` equals `id`?"
+    - `NULL = id` is **unknown** → no match found.
+    - **Result: Correctly excludes rows that exist, includes those that don't.** ✅
+  </Card>
+</CardGrid>
+
+<Aside type="danger">
+**Golden Rule**: If you are writing `NOT IN` with a subquery, stop. Rewrite it as `NOT EXISTS`. It is the only way to guarantee safety against `NULL` values in the subquery result.
+</Aside>
+
+
+```sql
+-- Find users who have NEVER placed an order
+SELECT u.id, u.name, u.email
+FROM   users u
+WHERE  NOT EXISTS (
+  SELECT 1
+  FROM   orders o
+  WHERE  o.user_id = u.id
+);
+```
+
+### Why NOT EXISTS is NULL-Safe
+
+```
+orders table has:
+  (user_id=1, amount=500)
+  (user_id=2, amount=300)
+  (user_id=NULL, amount=700)  ← orphaned row
+
+NOT EXISTS for Sam (id=3):
+  Inner query: SELECT 1 FROM orders WHERE user_id = 3
+  Check row (user_id=1):  1 = 3? → FALSE → skip
+  Check row (user_id=2):  2 = 3? → FALSE → skip
+  Check row (user_id=NULL): NULL = 3? → NULL → no match (NULL ≠ found)
+  No rows found → EXISTS = FALSE → NOT EXISTS = TRUE → Sam included ✅
+
+Compare with NOT IN:
+  NOT IN (1, 2, NULL)
+  3 != NULL → NULL → uncertainty → Sam EXCLUDED 💀
+
+NOT EXISTS wins: NULL in inner table = "that row doesn't match"
+NOT IN loses:    NULL in inner set  = "this comparison is uncertain"
+```
+
+```
+NULL safety proof in one line:
+
+EXISTS checks: "did the WHERE clause find a row?"
+NOT IN checks: "is this value absent from this set?"
+
+NULL in a set = unknown member = uncertain absence = 💀
+NULL in a WHERE result = no match found = clearly absent = ✅
+```
+
+---
+
+## 6️⃣ Internals — Execution Plans (`EXPLAIN`)
+
+Postgres rewrites these into specific join strategies:
+- `EXISTS` → **Semi-Join OR Hash Semi Join**
+- `NOT EXISTS` → **Anti-Join OR Hash Anti Join**
+
+<Tabs>
+  <TabItem label="EXISTS (Semi-Join)" icon="bolt">
+    ```text
+    Nested Loop Semi Join (with index)
+      -> Seq Scan on users u              (Outer)
+      -> Index Scan on orders o           (Inner)
+           Index Cond: (user_id = u.id)
+           (Stop at first row found)
+           
+    Hash Semi Join (without index)
+      -> Seq Scan on users
+      -> Hash (Build from orders table once)
+    ```
+  </TabItem>
+  
+  <TabItem label="NOT EXISTS (Anti-Join)" icon="shield">
+    ```text
+    Nested Loop Anti Join
+      -> Seq Scan on users u              (Outer)
+      -> Index Scan on orders o           (Inner)
+           Index Cond: (user_id = u.id)
+           (If match found → Skip user)
+           
+    Hash Anti Join
+      -> Seq Scan on users
+      -> Hash (Build from orders table once)
+    ```
+  </TabItem>
+</Tabs>
+
+<Code lang="sql" title="EXPLAIN output analysis" code={`-- 1. EXISTS with Index
+EXPLAIN SELECT u.name FROM users u
+WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+-- Output: Nested Loop Semi Join
+-- ✅ Efficient: Stops inner scan as soon as match found.
+
+-- 2. NOT EXISTS with Index
+EXPLAIN SELECT u.name FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+-- Output: Nested Loop Anti Join
+-- ✅ Efficient: Skips outer row immediately if match found.
+-- ✅ NULL-safe: Handles NULLs in orders.user_id correctly.`} />
+
+```sql
+EXPLAIN SELECT u.name
+FROM   users u
+WHERE  EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+
+-- With index on orders.user_id:
+-- Nested Loop Semi Join
+--   -> Seq Scan on users u              ← outer: all users
+--   -> Index Scan on orders o           ← inner: index lookup per user
+--        Index Cond: (user_id = u.id)
+--        (Stop at first row found)
+
+-- Without index:
+-- Hash Semi Join
+--   Hash Cond: (u.id = o.user_id)
+--   -> Seq Scan on users u
+--   -> Hash
+--        -> Seq Scan on orders o        ← build hash once ✅
+```
+
+```
+Semi-Join vs Anti-Join execution:
+
+EXISTS → Semi-Join:
+  For each outer row: probe inner
+  First match found → emit outer row → STOP inner scan ✅
+
+NOT EXISTS → Anti-Join:
+  For each outer row: probe inner
+  First match found → SKIP outer row → STOP inner scan
+  No match found → emit outer row ✅
+
+Both stop at first match — short-circuit for both EXISTS and NOT EXISTS!
+Anti-Join just inverts the decision.
+```
+
+```
+Hash vs Nested Loop choice:
+
+Nested Loop Semi Join chosen when:
+  ✅ Index on inner table's join column
+  ✅ Outer table small (few rows)
+  ✅ Expected few matches per outer row
+
+Hash Semi Join chosen when:
+  ✅ No index on inner table
+  ✅ Both tables large
+  ✅ Many matches expected
+```
+
+```sql
+-- See Anti-Join in EXPLAIN for NOT EXISTS
+EXPLAIN SELECT u.name FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+
+-- Hash Anti Join
+--   Hash Cond: (o.user_id = u.id)
+--   -> Seq Scan on users u
+--   -> Hash
+--        -> Seq Scan on orders o
+-- Note: NULL in orders.user_id → NULL = u.id → no match → correct ✅
+```
+
+---
+
+## 7️⃣ EXISTS vs IN vs JOIN — Full Comparison
+
+<Tabs>
+  <TabItem label="Comparison Matrix" icon="table">
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>EXISTS</th>
+          <th>IN</th>
+          <th>JOIN + DISTINCT</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Membership check</td>
+          <td>✅ Best</td>
+          <td>✅ Good</td>
+          <td>❌ Verbose</td>
+        </tr>
+        <tr>
+          <td>Need cols from both tables</td>
+          <td>❌ No</td>
+          <td>❌ No</td>
+          <td>✅ Only option</td>
+        </tr>
+        <tr>
+          <td>NULL safety (NOT)</td>
+          <td>✅ Safe</td>
+          <td>❌ Trap</td>
+          <td>✅ Safe</td>
+        </tr>
+        <tr>
+          <td>Performance (Modern PG)</td>
+          <td>✅ Optimal</td>
+          <td>✅ Optimal</td>
+          <td>❌ Extra step (Dedup)</td>
+        </tr>
+      </tbody>
+    </table>
+  </TabItem>
+  
+  <TabItem label="Code Examples" icon="code">
+    ```sql
+    -- 1. EXISTS (Best for boolean check)
+    SELECT u.name FROM users u WHERE EXISTS (
+      SELECT 1 FROM orders o WHERE o.user_id = u.id
+    );
+    
+    -- 2. IN (Same plan in modern Postgres)
+    SELECT u.name FROM users u WHERE u.id IN (
+      SELECT user_id FROM orders
+    );
+    
+    -- 3. JOIN (Only if you need order columns)
+    SELECT u.name, o.amount FROM users u
+    JOIN orders o ON u.id = o.user_id;
+    ```
+  </TabItem>
+</Tabs>
+
+```sql
+-- Same question: "which users have delivered orders?"
+-- Three approaches:
+
+-- 1. EXISTS
+SELECT u.name FROM users u
+WHERE EXISTS (
+  SELECT 1 FROM orders o
+  WHERE o.user_id = u.id AND o.status = 'delivered'
+);
+
+-- 2. IN subquery
+SELECT u.name FROM users u
+WHERE u.id IN (
+  SELECT o.user_id FROM orders o
+  WHERE o.status = 'delivered'
+);
+
+-- 3. INNER JOIN + DISTINCT
+SELECT DISTINCT u.name FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE o.status = 'delivered';
+```
+
+```
+Modern Postgres (v12+) comparison:
+
+EXISTS  → Hash/Nested Loop Semi Join
+IN      → Hash/Nested Loop Semi Join  ← same algorithm!
+JOIN+DISTINCT → Hash Join + HashAgg   ← different, usually worse
+
+EXISTS = IN in modern Postgres:
+  The planner rewrites both to semi-joins
+  Identical execution plans in most cases
+  EXISTS preferred for clarity and NULL safety
+
+JOIN+DISTINCT:
+  Creates duplicate rows first (one per matching order)
+  Then deduplicates (extra sort or hash pass)
+  Higher memory, more rows processed
+  Only advantage: can select columns from joined table
+```
+
+```
+┌──────────────────────────┬─────────┬──────────┬────────────────┐
+│ Scenario                 │ EXISTS  │ IN       │ JOIN+DISTINCT  │
+├──────────────────────────┼─────────┼──────────┼────────────────┤
+│ Membership check only    │ ✅ best │ ✅ good  │ ❌ verbose     │
+│ Need cols from both sides│ ❌ no   │ ❌ no    │ ✅ only option │
+│ NULL safety (NOT variant)│ ✅ safe │ ❌ trap  │ ✅ safe        │
+│ Complex inner conditions │ ✅ clear│ ⚠️ ok    │ ✅ clear       │
+│ Performance (modern PG)  │ ✅ same │ ✅ same  │ ❌ extra step  │
+│ Readability (intent)     │ ✅ clear│ ✅ clear │ ❌ misleading  │
+└──────────────────────────┴─────────┴──────────┴────────────────┘
+```
+
+> 🎯 **Real-life SDE:** Use EXISTS/NOT EXISTS as your default for membership checks. Use IN when the set is a literal list or small static subquery — it reads more naturally. Use JOIN only when you need columns from both tables. Never use JOIN+DISTINCT purely for membership.
+
+---
+
+## 9️⃣ Correlated EXISTS — Pattern Deep Dive
+
+```sql
+-- EXISTS is ALWAYS correlated (references outer query)
+-- That's what makes it a membership check per outer row
+
+-- Classic correlated EXISTS
+SELECT d.name AS department
+FROM   departments d
+WHERE  EXISTS (
+  SELECT 1
+  FROM   employees e
+  WHERE  e.dept_id = d.id        -- ← correlated reference ✅
+    AND  e.salary  > 200000
+);
+-- "Which departments have at least one employee earning > 200K?"
+
+-- Multiple EXISTS conditions
+SELECT p.id, p.name
+FROM   products p
+WHERE  EXISTS (
+  SELECT 1 FROM inventory i
+  WHERE  i.product_id = p.id AND i.quantity > 0
+)
+AND NOT EXISTS (
+  SELECT 1 FROM product_recalls pr
+  WHERE  pr.product_id = p.id AND pr.is_active = true
+)
+AND EXISTS (
+  SELECT 1 FROM product_approvals pa
+  WHERE  pa.product_id = p.id AND pa.status = 'approved'
+);
+-- In stock + not recalled + approved ✅ (three membership checks)
+```
+
+```
+Correlated EXISTS execution:
+
+For each outer row (department):
+  Run inner query with that department's id
+  First matching row found → TRUE → include department
+  No matching row found   → FALSE → skip department
+
+Performance profile:
+  Best case:  O(1) per outer row (index scan, first row found fast)
+  Worst case: O(inner_rows) per outer row (full scan, no match)
+  With index: O(n_outer × log n_inner) total ✅
+  Without:    O(n_outer × n_inner) total ❌
+```
+
+```sql
+-- Always ensure inner correlated column is indexed
+CREATE INDEX idx_employees_dept_id ON employees(dept_id);
+CREATE INDEX idx_employees_salary  ON employees(salary);
+
+-- Better: composite index on both correlated columns
+CREATE INDEX idx_employees_dept_salary ON employees(dept_id, salary);
+-- Covers: WHERE dept_id = ? AND salary > ?  → index-only possible ✅
+```
+
+---
+
+## 8️⃣ EXISTS in UPDATE and DELETE
+
+<Code lang="sql" title="Conditional Writes" code={`-- UPDATE: Restock products with no stock locations
+UPDATE products p
+SET    needs_restock = true
+WHERE  NOT EXISTS (
+  SELECT 1 FROM stock_locations sl
+  WHERE  sl.product_id = p.id AND sl.quantity > 0
+);
+
+-- DELETE: Clean up notifications for deleted users
+DELETE FROM notifications n
+WHERE EXISTS (
+  SELECT 1 FROM users u
+  WHERE  u.id = n.user_id AND u.deleted_at IS NOT NULL
+);
+
+-- UPSERT Logic: Update only if not locked
+UPDATE user_preferences up
+SET    theme = 'dark'
+WHERE  up.user_id = 42
+  AND  NOT EXISTS (
+    SELECT 1 FROM preference_locks pl
+    WHERE  pl.user_id = 42 AND pl.locked_at > NOW() - INTERVAL '5 mins'
+  );`} />
+
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Access Control" icon="shield">
+    ```sql
+        -- Return resource only if user has permission
+    SELECT r.id, r.title, r.content
+    FROM   resources r
+    WHERE  r.id = :resource_id
+    AND (
+        r.is_public = true
+        OR r.owner_id = :user_id
+        OR EXISTS (
+        SELECT 1
+        FROM   resource_permissions rp
+        JOIN   user_roles           ur ON rp.role_id = ur.role_id
+        WHERE  ur.user_id    = :user_id
+            AND  rp.resource_id = r.id
+            AND  rp.can_read    = true
+        )
+    );
+    -- Returns content if public OR owned OR permitted ✅
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Multi-Condition Eligibility" icon="rocket">
+    ```sql
+    -- Find users eligible for loyalty reward
+    SELECT u.id, u.name, u.email
+    FROM   users u
+    WHERE  u.deleted_at IS NULL
+    AND  u.created_at < NOW() - INTERVAL '6 months'  -- account ≥ 6 months
+    AND  EXISTS (                                      -- has qualifying orders
+        SELECT 1 FROM orders o
+        WHERE  o.user_id   = u.id
+        AND  o.status    = 'delivered'
+        AND  o.created_at >= NOW() - INTERVAL '30 days'
+        AND  o.amount    >= 1000
+    )
+    AND NOT EXISTS (                                   -- hasn't been rewarded recently
+        SELECT 1 FROM loyalty_rewards lr
+        WHERE  lr.user_id  = u.id
+        AND  lr.awarded_at >= NOW() - INTERVAL '90 days'
+    )
+    AND NOT EXISTS (                                   -- no open disputes
+        SELECT 1 FROM disputes d
+        WHERE  d.user_id = u.id
+        AND  d.status  = 'open'
+    );
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Orphan Cleanup" icon="backspace">
+    ```sql
+    -- Find and delete orphaned records safely
+    -- Using NOT EXISTS to identify what has no parent
+
+    -- Step 1: preview orphans
+    SELECT oi.id, oi.order_id, oi.product_id, oi.amount
+    FROM   order_items oi
+    WHERE  NOT EXISTS (
+    SELECT 1 FROM orders o WHERE o.id = oi.order_id
+    )
+    ORDER BY oi.created_at DESC
+    LIMIT  100;
+
+    -- Step 2: delete them (after confirming preview)
+    DELETE FROM order_items oi
+    WHERE NOT EXISTS (
+    SELECT 1 FROM orders o WHERE o.id = oi.order_id
+    );
+
+    -- Step 3: prevent future orphans with FK constraint
+    ALTER TABLE order_items
+    ADD CONSTRAINT fk_order_items_orders
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+    ON DELETE CASCADE;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Idempotent Insert" icon="check">
+    ```sql
+        -- Insert only if record doesn't already exist
+    -- EXISTS-based idempotency check
+
+    INSERT INTO user_achievements (user_id, achievement_id, earned_at)
+    SELECT :user_id, :achievement_id, NOW()
+    WHERE  NOT EXISTS (
+    SELECT 1 FROM user_achievements
+    WHERE  user_id        = :user_id
+        AND  achievement_id = :achievement_id
+    );
+    -- Returns 0 rows inserted if already exists
+    -- Returns 1 row inserted if new ✅
+    -- No duplicate, no error ← safer than ON CONFLICT for complex checks
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Hierarchical Check" icon="sitemap">
+    ```sql
+        -- Find categories that have at least one published, in-stock product
+    SELECT c.id, c.name, c.slug
+    FROM   categories c
+    WHERE  c.is_active = true
+    AND  EXISTS (
+        SELECT 1
+        FROM   products p
+        WHERE  p.category_id  = c.id
+        AND  p.is_published = true
+        AND  p.deleted_at   IS NULL
+        AND  EXISTS (
+            SELECT 1                    -- nested EXISTS ✅
+            FROM   inventory i
+            WHERE  i.product_id = p.id
+            AND  i.quantity   > 0
+        )
+    )
+    ORDER BY c.sort_order;
+    -- Categories shown in nav only if they have shoppable products ✅
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Pre-Delete Guard" icon="alert">
+    ```sql
+    -- Check if user has active dependencies before deleting
+    SELECT 
+      EXISTS(SELECT 1 FROM orders o WHERE o.user_id=u.id AND o.status IN ('pending','processing')) 
+        AS has_active_orders,
+      EXISTS(SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND s.expires_at > NOW()) 
+        AS has_subscription;
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern 6 — Soft Delete with Cascade Check
+
+```sql
+-- Before soft-deleting a user, check for dependencies
+-- Return error info instead of silently breaking things
+
+SELECT
+  CASE
+    WHEN EXISTS (
+      SELECT 1 FROM orders o
+      WHERE  o.user_id = :user_id AND o.status IN ('pending','processing')
+    ) THEN 'has_active_orders'
+
+    WHEN EXISTS (
+      SELECT 1 FROM subscriptions s
+      WHERE  s.user_id = :user_id AND s.expires_at > NOW()
+    ) THEN 'has_active_subscription'
+
+    WHEN EXISTS (
+      SELECT 1 FROM disputes d
+      WHERE  d.user_id = :user_id AND d.status = 'open'
+    ) THEN 'has_open_disputes'
+
+    ELSE 'safe_to_delete'
+  END AS deletion_status;
+-- App uses this to block or warn before soft-deleting ✅
+```
+
+### Pattern 7 — Change Detection (Audit)
+
+```sql
+-- Find rows that changed between two snapshots
+-- Using EXISTS to detect differences
+
+SELECT
+  curr.id,
+  curr.name,
+  curr.price,
+  prev.price AS old_price,
+  curr.price - prev.price AS price_change
+FROM   products_current curr
+JOIN   products_snapshot prev ON curr.id = prev.id
+WHERE  EXISTS (
+  SELECT 1
+  WHERE  curr.price     IS DISTINCT FROM prev.price      -- price changed
+      OR curr.name      IS DISTINCT FROM prev.name       -- name changed
+      OR curr.category  IS DISTINCT FROM prev.category   -- category changed
+)
+ORDER BY ABS(curr.price - prev.price) DESC;
+-- IS DISTINCT FROM = NULL-safe comparison ✅
+```
+
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE t_users  (id INT PRIMARY KEY, name TEXT);
+CREATE TEMP TABLE t_orders (id INT, user_id INT, amount INT, status TEXT);
+CREATE TEMP TABLE t_reviews(id INT, user_id INT, rating INT);
+
+INSERT INTO t_users  VALUES (1,'Raj'),(2,'Priya'),(3,'Sam'),(4,'Ankit');
+INSERT INTO t_orders VALUES
+  (1,1,500,'delivered'),
+  (2,1,900,'pending'),
+  (3,2,300,'delivered'),
+  (4,NULL,700,'delivered');   -- NULL user_id!
+INSERT INTO t_reviews VALUES (1,1,5),(2,1,4),(3,3,3);
+
+-- 1. Basic EXISTS
+SELECT name FROM t_users u
+WHERE EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id);
+-- Raj, Priya ✅ (Sam has no orders, Ankit has no orders)
+
+-- 2. NOT EXISTS (NULL-safe!) ✅
+SELECT name FROM t_users u
+WHERE NOT EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id);
+-- Sam, Ankit ✅ (NULL in t_orders doesn't cause issue!)
+
+-- 3. NOT IN NULL trap (for comparison)
+SELECT name FROM t_users
+WHERE id NOT IN (SELECT user_id FROM t_orders);
+-- ZERO ROWS 💀 (NULL user_id poisons result)
+
+-- 4. Short-circuit proof
+SELECT EXISTS (SELECT 1/0 FROM t_users WHERE id = 999);
+-- FALSE (no rows) — no division by zero error ✅
+
+SELECT EXISTS (SELECT 1 FROM t_users WHERE id = 1);
+-- TRUE ✅
+
+-- 5. EXISTS vs COUNT(*) > 0
+SELECT name FROM t_users u
+WHERE (SELECT COUNT(*) FROM t_orders o WHERE o.user_id = u.id) > 0;
+-- Same result as EXISTS but slower (reads all orders per user)
+
+-- 6. Multiple EXISTS conditions
+SELECT name FROM t_users u
+WHERE EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id)
+  AND EXISTS (SELECT 1 FROM t_reviews r WHERE r.user_id = u.id);
+-- Raj only (has both orders AND reviews) ✅
+
+-- 7. EXPLAIN: Semi-Join vs Anti-Join
+EXPLAIN SELECT name FROM t_users u
+WHERE EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id);
+-- Nested Loop Semi Join (small table)
+
+EXPLAIN SELECT name FROM t_users u
+WHERE NOT EXISTS (SELECT 1 FROM t_orders o WHERE o.user_id = u.id);
+-- Nested Loop Anti Join ✅
+
+-- 8. EXISTS in UPDATE
+UPDATE t_users SET name = name || ' ✓'
+WHERE EXISTS (
+  SELECT 1 FROM t_orders o
+  WHERE o.user_id = t_users.id AND o.status = 'delivered'
+);
+SELECT * FROM t_users;
+-- Raj ✓, Priya ✓ updated ✅ Sam, Ankit unchanged ✅
+
+-- 9. Conditional logic with EXISTS
+SELECT
+  name,
+  EXISTS(SELECT 1 FROM t_orders  WHERE user_id = u.id) AS has_orders,
+  EXISTS(SELECT 1 FROM t_reviews WHERE user_id = u.id) AS has_reviews
+FROM t_users u;
+-- Returns boolean flags per user ✅
+
+-- 10. SELECT value doesn't matter
+SELECT name FROM t_users u WHERE EXISTS(SELECT NULL FROM t_orders WHERE user_id=u.id);
+SELECT name FROM t_users u WHERE EXISTS(SELECT 42   FROM t_orders WHERE user_id=u.id);
+SELECT name FROM t_users u WHERE EXISTS(SELECT 'x'  FROM t_orders WHERE user_id=u.id);
+-- All three return identical results ✅
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| **What does `EXISTS` return?** | `TRUE` (≥1 row) or `FALSE` (0 rows). Never `NULL`. |
+| **Why `SELECT 1` in `EXISTS`?** | Convention/Clarity. Postgres optimizes `SELECT *` anyway, but `SELECT 1` shows you only care about existence. |
+| **`EXISTS` vs `COUNT(*) > 0`?** | `EXISTS` short-circuits at first match (**O(1)**). `COUNT` reads all rows (**O(n)**). `EXISTS` is faster. |
+| **`NOT EXISTS` vs `NOT IN`?** | `NOT EXISTS` is **NULL-safe**. `NOT IN` returns 0 rows if the subquery has any `NULL`. Always prefer `NOT EXISTS`. |
+| **Does `EXISTS` need an index?** | For performance: **YES**. Without an index on the correlated column, it's a full table scan per outer row. |
+| **Execution Plan node?** | `Semi Join` (EXISTS) or `Anti Join` (NOT EXISTS). |
+| **Can I nest `EXISTS`?** | Yes. Each level evaluates independently. Useful for hierarchical checks (Category → Product → Inventory). |
+
+---
+
+## 🧠 Full Mental Model
+
+```text
+EXISTS / NOT EXISTS — Summary
+
+1. Core Logic:
+   EXISTS(subquery)  → TRUE if ≥ 1 row, FALSE if 0 rows
+   NOT EXISTS(subquery) → TRUE if 0 rows, FALSE if ≥ 1 row
+
+2. Short-Circuit (The Superpower):
+   "Found one? Stop and return!"
+   Makes it faster than COUNT() or MIN() for membership checks.
+
+3. NULL Safety (The Shield):
+   NULL in subquery → "No match found" → Handled safely.
+   Unlike NOT IN where NULL → "Unknown" → Fails.
+
+4. Indexing:
+   MUST index the correlated column (e.g., orders.user_id).
+   Without it → O(N*M) complexity.
+   With it → O(N * log M) complexity.
+
+Golden Rules:
+  ✅ Use EXISTS instead of COUNT(*) > 0
+  ✅ Use NOT EXISTS instead of NOT IN (subquery)
+  ✅ SELECT 1 (for clarity)
+  ✅ Index the join column
+```
+
+```
+EXISTS / NOT EXISTS — Complete Picture
+
+EXISTS(subquery):
+  Run subquery with current outer row's values
+  ≥ 1 row returned → TRUE  → outer row included ✅
+  0 rows returned  → FALSE → outer row skipped  ❌
+  NULL in inner?   → no match → FALSE (NULL-safe!) ✅
+
+NOT EXISTS(subquery):
+  Run subquery with current outer row's values
+  ≥ 1 row returned → FALSE → outer row skipped  ❌
+  0 rows returned  → TRUE  → outer row included ✅
+  NULL in inner?   → no match → TRUE (NULL-safe!) ✅
+
+Execution:
+  Nested Loop Semi/Anti Join (with index) ← best for OLTP
+  Hash Semi/Anti Join (without index)     ← best for analytics
+
+Short-circuit (both EXISTS and NOT EXISTS):
+  Stops scanning inner table at FIRST MATCH
+  Anti-join: stops at first match to EXCLUDE the row
+  EXISTS:    stops at first match to INCLUDE the row
+
+  EXISTS  → "found one → done, include"
+  NOT EXISTS → "found one → done, exclude"
+  Both O(1) best case with index ✅
+
+vs alternatives:
+  EXISTS vs IN:      same plan (modern PG), EXISTS clearer
+  NOT EXISTS vs NOT IN: NOT EXISTS always safer (NULL trap)
+  EXISTS vs JOIN:    EXISTS for membership, JOIN for columns
+
+The golden rules:
+  ✅ EXISTS  instead of COUNT(*) > 0
+  ✅ NOT EXISTS instead of NOT IN (with subquery)
+  ✅ SELECT 1 (convention, not SELECT *)
+  ✅ Index on inner correlated column (mandatory for performance)
+  ✅ Use when question is "does this relationship exist?"
+
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your codebase for `COUNT(*) > 0` and replace with `EXISTS`
+2. ✅ Replace all `NOT IN (SELECT ...)` with `NOT EXISTS`
+3. ✅ Check execution plans to ensure `Semi Join` or `Anti Join` is being used
+4. ✅ Add indexes to correlated columns in `EXISTS` subqueries
+
+Mastering `EXISTS` turns your subqueries from slow bottlenecks into lightning-fast boolean checks. 🐘✨
+</Aside>

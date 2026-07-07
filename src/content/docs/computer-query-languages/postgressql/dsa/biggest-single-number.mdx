@@ -1,0 +1,637 @@
+---
+title: 619. Biggest Single Number
+slug: computer-query-languages/postgresql/dsa/biggest-single-number
+description: PostgreSQL solution with debug-style execution breakdown & query plan analysis
+publishDate: new Date()
+updatedDate: new Date()
+tags: ["SQL", "PostgreSQL", "LeetCode", "Aggregation", "Window-Functions"]
+collection: solutions
+---
+
+
+## 619. Biggest Single Number
+
+### 🎯 Problem
+
+A **single number** is a number that appears exactly once in `MyNumbers`.
+
+Return the **largest single number**. If no such number exists, return `NULL`.
+
+### Sample Input
+
+**MyNumbers**
+
+| num |
+|---:|
+| 8 |
+| 8 |
+| 3 |
+| 3 |
+| 1 |
+| 4 |
+| 5 |
+| 6 |
+
+### Expected Output
+
+| num |
+|---:|
+| 6 |
+
+Single numbers are `1, 4, 5, 6`. The largest one is `6`.
+
+## 🧩 Approaches Overview
+
+1. ✅ **GROUP BY + HAVING + MAX subquery** — find numbers appearing once, then return the largest one. Recommended.
+2. ⚡ **Scalar Subquery + ORDER BY LIMIT** — sort single numbers descending and pick the first one.
+3. 🧠 **Window Function COUNT** — count frequency using `COUNT() OVER`, then take max among rows with count `1`.
+4. **NOT IN self-join** - works but verbose
+*
+## ✅ Approach 1: GROUP BY + HAVING + MAX
+
+```sql
+SELECT MAX(num) AS num
+FROM MyNumbers
+GROUP BY num
+HAVING COUNT(*) = 1;
+
+Wait — this is wrong. `MAX(num)` inside a grouped query gives `num` itself (one value per group). The outer `MAX` needs to wrap the whole thing.
+
+Correct query:
+SELECT
+    MAX(num) AS num
+FROM (
+    SELECT num
+    FROM MyNumbers
+    GROUP BY num
+    HAVING COUNT(*) = 1
+) single_numbers;
+```
+
+### Data Flow Notes
+
+Execution order: `Sub Query` → `Sub Query From MyNumbers` -> `Sub Query GROUP BY num` → `Sub Query HAVING` → `From single_numbers` -> `Outer SELECT`
+
+**Step 1: Sub Query From MyNumbers**
+
+The query starts with all numbers.
+All rows loaded — no filter yet.
+
+```text
+┌─────┐
+│ num │
+├─────┤
+│  8  │
+│  8  │
+│  3  │
+│  3  │
+│  1  │
+│  4  │
+│  5  │
+│  6  │
+└─────┘
+8 rows loaded.
+```
+
+---
+
+**Step 2: Sub Query GROUP BY num**
+
+Rows are grouped by number.
+```text
+Groups formed:
+- `key=8` → rows `[8, 8]`    count=2
+- `key=3` → rows `[3, 3]`    count=2
+- `key=1` → rows `[1]`       count=1
+- `key=4` → rows `[4]`       count=1
+- `key=5` → rows `[5]`       count=1
+- `key=6` → rows `[6]`       count=1
+```
+
+Result after grouping (implicit count tracked for next step):
+
+┌─────┬────────────────┬──────┐
+│ num │ rows in group  |count │
+├─────┼────────────────┼──────┤
+│  8  │   (8, 8)       │   2  │
+│  3  │   (3, 3)       │   2  │
+│  1  │   (1)          │   1  │
+│  4  │   (4)          │   1  │
+│  5  │   (5)          │   1  │
+│  6  │   (6)          │   1  │
+└─────┴────────────────┴──────┘
+6 distinct groups.
+```text
+
+---
+
+**Step 3: HAVING COUNT(*) = 1**
+
+Keep only numbers that appear exactly once.
+Filter applied: `[count = 1]`
+Groups dropped: `8` (count=2), `3` (count=2)
+
+Result:
+```text
+┌─────┐
+│ num │   ← subquery output ("single_numbers")
+├─────┤
+│  1  │
+│  4  │
+│  5  │
+│  6  │
+└─────┘
+4 rows remaining.
+```
+
+---
+
+
+**Step 4: Outer SELECT MAX(num)**
+
+Now choose the largest single number.
+Columns projected: `[MAX(num) AS num]`
+Aggregation computed over filtered set.
+MAX walks all 4 values: 1, 4, 5, 6 → picks **6**.
+
+Final output:
+```text
+┌─────┐
+│ num │
+├─────┤
+│  6  │
+└─────┘
+```
+---
+
+### Important Note
+
+The outer `MAX(num)` is useful because it always returns **one row**.
+
+If there are no single numbers, this part:
+
+```sql
+SELECT num
+FROM MyNumbers
+GROUP BY num
+HAVING COUNT(*) = 1
+```
+
+returns no rows.
+
+```
+After HAVING COUNT(*) = 1:
+┌─────┐
+│ num │  ← empty (no singles)
+└─────┘
+0 rows.
+```
+
+But:
+
+```sql
+SELECT MAX(num)
+FROM empty_result;
+```
+
+returns:
+
+```text
+┌────────┐
+│  num   │
+├────────┤
+│  null  │
+└────────┘
+```
+> 🎯 **This is the key insight:** `MAX()` on an empty set returns `NULL` automatically in Postgres — no COALESCE needed. This is why wrapping with `MAX` is the correct pattern.
+---
+
+That matches the problem requirement.
+
+### PostgreSQL QUERY PLAN EXPLAIN Notes
+
+```text
+Aggregate  (cost=1.20..1.21 rows=1)     ← outer MAX()
+  Function: max(num)
+  -> Subquery Scan on singles
+       -> HashAggregate                  ← GROUP BY num
+            Group Key: num
+            Filter: (count(*) = 1)       ← HAVING applied here
+            -> Seq Scan on mynumbers     ← FROM (no index, small table)
+```
+
+**Node Mapping:**
+- `Seq Scan` → reads all rows from `MyNumbers` (no index needed). FROM MyNumbers (reads all 8 rows)
+- `HashAggregate` → builds in-memory hash table for `GROUP BY` + evaluates `HAVING` groups rows by `num`(builds hash buckets) and counts each group
+- `Filter` → applies the `HAVING` condition to keep only single numbers. HAVING COUNT(*) = 1 (drops duplicates)
+- `Aggregate` → calculates `MAX(num)` from the remaining single numbers
+
+---
+
+### Performance Notes
+- ⏱️ **Time complexity:** `O(N)` — single pass hash aggregation, then `O(1)` max lookup
+- 💾 **Memory usage:** Hash table proportional to distinct values `O(D)`
+- 📇 **Index impact:** No index required; sequential scan is optimal for full aggregation(full scan needed to count occurrences)
+- 📈 **Large data:** Scales well — hash aggregation is O(n) average case
+
+---
+
+### Edge Cases
+- 🔹 **NULL values:** `GROUP BY` treats `NULL` as one group. `COUNT(*)=1` keeps it, `MAX()` ignores it → returns largest non-`NULL`. COUNT(*) counts NULLs as a row → NULL appears as a group MAX ignores NULLs → correct behavior preserved. Not possible (MAX returns one value)
+- 🔹 **Two singles with same value → same num → one group → MAX picks it**
+- 🔹 **Ties:** Irrelevant; we strictly filter `count = 1`
+- 🔹 **Empty table:** Subquery returns `0` rows → outer `MAX()` safely returns `NULL`
+- 🔹 **Skewed data:** One value has 90% of rows → hash table still processes in `O(N)`, negligible impact
+- 🔹 **Negative numbers:** works correctly; largest value is still chosen
+- 🔹 **Duplicate-heavy data:** efficient because duplicates collapse during grouping
+
+---
+
+### LIMITATIONS
+
+- 🐌 **When SLOW:** Extremely high cardinality + low `work_mem` → disk spill for hash table. Very large table with high cardinality → big hash table → increase work_mem to keep in RAM
+- ❌ **When WRONG:** If business logic requires counting `NULL` as a valid single number (use `COUNT(num)`).
+If you forget the outer MAX and just do:
+SELECT num FROM MyNumbers GROUP BY num HAVING COUNT(*)=1
+→ returns multiple rows (all singles), not just the largest
+- 💥 **Breaks at scale:** Billions of rows without partitioning or parallel workers → sequential scan bottlenecks
+
+
+## ⚡ Approach 2: Scalar Subquery + ORDER BY LIMIT
+
+```sql
+-- ❌ WRONG — returns empty set, not NULL when no singles exist
+SELECT num
+FROM   MyNumbers
+GROUP BY num
+HAVING COUNT(*) = 1
+ORDER BY num DESC
+LIMIT 1;
+
+-- ✅ CORRECT — wrap with MAX to guarantee NULL
+SELECT MAX(num) AS num
+SELECT (
+    SELECT num
+    FROM MyNumbers
+    GROUP BY num
+    HAVING COUNT(*) = 1
+    ORDER BY num DESC
+    LIMIT 1
+) t;
+```
+
+---
+
+### ① STEP-BY-STEP DATA FLOW
+
+---
+
+**Step 1: FROM → GROUP BY → HAVING** *(same as Approach 1)*
+
+```
+After HAVING COUNT(*) = 1:
+┌─────┐
+│ num │
+├─────┤
+│  1  │
+│  4  │
+│  5  │
+│  6  │
+└─────┘
+```
+
+---
+
+**Step 2: ORDER BY num DESC**
+
+```
+Sorted descending:
+┌─────┐
+│ num │
+├─────┤
+│  6  │  ← top after sort
+│  5  │
+│  4  │
+│  1  │
+└─────┘
+```
+
+---
+
+**Step 3: LIMIT 1**
+
+```
+┌─────┐
+│ num │
+├─────┤
+│  6  │
+└─────┘
+```
+
+---
+
+**Step 4: NULL problem (Example 2)**
+
+```
+After HAVING: 0 rows (no singles)
+After ORDER BY: still 0 rows
+After LIMIT 1: still 0 rows ← EMPTY, not NULL!
+
+Problem:
+┌─────┐    ← empty result set
+│ num │       not the same as NULL!
+└─────┘
+
+Expected:
+┌──────┐
+│ null │
+└──────┘
+
+Fix: wrap in MAX() — MAX of empty = NULL ✅
+```
+
+---
+
+### ② QUERY PLAN
+
+```
+Limit  (cost=1.22..1.22 rows=1)             ← LIMIT 1
+  -> Sort  (cost=1.20..1.21 rows=5)         ← ORDER BY num DESC
+       Sort Key: num DESC
+       Sort Method: quicksort  Memory: 25kB
+       -> HashAggregate                      ← GROUP BY
+            Group Key: num
+            Filter: (count(*) = 1)           ← HAVING
+            -> Seq Scan on mynumbers         ← FROM
+```
+
+```
+Key difference from Approach 1:
+  Approach 1 → Aggregate (MAX) after subquery
+  Approach 2 → Sort + Limit (Top-N heap sort for small result)
+
+For large "singles" result:
+  Approach 1: MAX is O(n) streaming — no sort needed ✅
+  Approach 2: Sort is O(n log n) — slower but Postgres uses Top-N heap ✅
+```
+
+---
+
+### Notes
+
+This also returns one row because the inner query is used as a scalar subquery.
+
+If the inner query finds no single number, the scalar subquery returns `NULL`.
+
+| Step | Purpose |
+|---|---|
+| `GROUP BY num` | count each number |
+| `HAVING COUNT(*) = 1` | keep only single numbers |
+| `ORDER BY num DESC` | put biggest single number first |
+| `LIMIT 1` | pick only the biggest one |
+
+### Caution
+
+This version is valid, but the direct version below is risky:
+
+```sql
+SELECT num
+FROM MyNumbers
+GROUP BY num
+HAVING COUNT(*) = 1
+ORDER BY num DESC
+LIMIT 1;
+```
+
+Why risky: if there are no single numbers, it returns **zero rows**, not one row containing `NULL`.
+
+### ③ PERFORMANCE ANALYSIS
+
+```
+Time complexity:   O(n log n) due to sort step (vs O(n) for MAX approach)
+Memory:            Sort buffer for distinct single values
+Index impact:      Index on num could help ORDER BY avoid explicit sort
+                   CREATE INDEX ON mynumbers(num DESC)
+Large data:        MAX approach better — no sort of intermediate result
+```
+
+---
+
+### ④ EDGE CASES
+
+```
+Empty result from HAVING → LIMIT 1 returns empty set (NOT NULL) ← the bug
+Fix: always wrap ORDER BY LIMIT approach in MAX() or COALESCE
+```
+
+---
+
+### ⑤ LIMITATIONS
+
+```
+When wrong:  Forgetting outer MAX → returns empty set instead of NULL LeetCode/interviews expect NULL row, not empty result
+
+When slower: Larger distinct count → sort cost increases MAX approach avoids sort entirely ✅
+```
+
+---
+
+
+## 🧠 Approach 3: Window Function COUNT
+
+```sql
+SELECT
+    MAX(num) AS num
+FROM (
+    SELECT
+        num,
+        COUNT(*) OVER (PARTITION BY num) AS frequency
+    FROM MyNumbers
+) t
+WHERE frequency = 1;
+```
+
+---
+
+### STEP-BY-STEP DATA FLOW
+
+Step 1: `FROM MyNumbers`
+
+```
+┌─────┐
+│ num │
+├─────┤
+│  8  │
+│  8  │
+│  3  │
+│  3  │
+│  1  │
+│  4  │
+│  5  │
+│  6  │
+└─────┘
+8 rows — ALL rows kept (no GROUP BY collapse).
+```
+---
+
+Step 2: `SELECT + Window Functions`
+Window function computed: `COUNT(*) OVER (PARTITION BY num)`
+Window function attaches count to EVERY row.
+Rows are NOT collapsed — each row gets its partition's count.
+
+Result with window column:
+```text
+┌─────┬─────┐
+│ num │ cnt │
+├─────┼─────┤
+│  8  │  2  │ ← both 8s see count=2
+│  8  │  2  │
+│  3  │  2  │ ← both 3s see count=2
+│  3  │  2  │
+│  1  │  1  │ ← appears once → cnt=1
+│  4  │  1  │
+│  5  │  1  │
+│  6  │  1  │
+└─────┴─────┘
+8 rows out — same count as input ✅ (window never collapses rows)
+```
+---
+
+Step 3: `WHERE freq = 1 (outer query)`
+Filter applied: `[freq = 1]`
+Rows removed: `4` → `4 remaining.`
+
+Result:
+```text
+┌─────┬──────┐
+│ num │ freq │
+├─────┼──────┤
+│  1  │  1   │
+│  4  │  1   │
+│  5  │  1   │
+│  6  │  1   │
+└─────┴──────┘
+4 rows remain.
+
+```
+
+---
+
+Step: `SELECT MAX(num)`
+Final aggregation.
+
+Final output:
+```text
+┌─────┐
+│ num │
+├─────┤
+│  6  │
+└─────┘
+```
+
+---
+
+### QUERY PLAN (PostgreSQL EXPLAIN)
+
+```text
+Aggregate  (cost=48.10..48.11 rows=1 width=4)
+  ->  Subquery Scan on t  (cost=46.10..47.60 rows=50 width=8)  ← WHERE filter
+        ->  WindowAgg  (cost=46.10..47.35 rows=50 width=8)     ← COUNT() OVER
+              ->  Sort  (cost=46.10..46.35 rows=50 width=4)    ← PARTITION BY sort
+                    ->  Seq Scan on mynumbers  (cost=0.00..22.00 rows=1000 width=4)
+```
+
+**Node Mapping:**
+- `Sort` → pre-sorts for window partitioning
+- `WindowAgg` → streams counts over sorted partitions
+- `Subquery Scan` → applies `WHERE freq = 1`
+- `Aggregate` → final `MAX()`
+
+---
+
+### PERFORMANCE ANALYSIS
+
+- ⏱️ **Time complexity:** `O(N log N)` — requires sort for partitioning
+- 💾 **Memory usage:** Sort buffer + window frame state `O(N)`
+- 📇 **Index impact:** `(num)` index could replace `Sort` node, but window still scans all rows
+- 📈 **Large data:** Slower than hash agg; external merge sort triggers if `work_mem` insufficient. Uses MORE memory than GROUP BY (keeps all rows) For 1M rows with many duplicates → GROUP BY wins
+
+---
+
+### EDGE CASES
+
+- 🔹 **NULL values:** `PARTITION BY num` groups `NULL`s; `COUNT(*)=1` keeps them, `MAX()` skips
+- 🔹 **Ties:** Handled natively via partition logic
+- 🔹 **Empty table:** Returns `NULL`
+- 🔹 **Skewed data:** Sort handles skew gracefully; worst-case `O(N log N)` regardless of distribution
+
+---
+
+### LIMITATIONS
+
+- 🐌 **When SLOW:** Unsorted large datasets requiring disk-based external sort
+- ❌ **When WRONG:** Never; logically identical to Approach 1
+- 💥 **Breaks at scale:** Memory pressure from window frame state on massive partitions
+- When verbose: Overkill for this simple problemWindow functions shine when you need row-level detail alongside aggregates — here GROUP BY is cleaner
+
+---
+
+## 🔄 Variations
+
+### Variation 1: Find the smallest single number
+
+Change only the aggregate:
+
+```sql
+MIN(num) AS num
+```
+
+### Variation 2: Return all single numbers
+
+Remove the outer `MAX()`:
+
+```sql
+SELECT num
+FROM MyNumbers
+GROUP BY num
+HAVING COUNT(*) = 1;
+```
+
+### Variation 3: Return biggest number that appears exactly K times
+
+Change the `HAVING` condition:
+
+```sql
+HAVING COUNT(*) = K
+```
+
+### Variation 4: Count of single numbers
+```sql
+SELECT COUNT(*) AS single_count
+FROM (
+  SELECT num FROM MyNumbers
+  GROUP BY num HAVING COUNT(*) = 1
+) singles;
+```
+
+### Variation 5: Second largest single number
+```sql
+SELECT num
+FROM (
+  SELECT num,
+    DENSE_RANK() OVER (ORDER BY num DESC) AS dr
+  FROM (
+    SELECT num FROM MyNumbers
+    GROUP BY num HAVING COUNT(*) = 1
+  ) singles
+) ranked
+WHERE dr = 2;
+```
+
+## 📊 Approach Comparison
+
+| Approach | Complexity | Memory | Index Usage | Best For |
+|---|---:|---:|---|---|
+| ✅ GROUP BY + HAVING + MAX | `O(N)` | `O(U)` | helpful on `num` | best default solution |
+| ⚡ Scalar Subquery + ORDER BY LIMIT | `O(N + U log U)` | `O(U)` | helpful for sorting | readable top-1 style |
+| 🧠 Window Function COUNT | `O(N)` to `O(N log N)` | `O(N)` | depends on database | when row-level frequency is useful |

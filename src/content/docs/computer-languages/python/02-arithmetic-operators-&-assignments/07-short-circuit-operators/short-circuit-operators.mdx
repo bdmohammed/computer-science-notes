@@ -1,0 +1,1066 @@
+---
+title: Python Short Circuit Operators (and, or)
+slug: computer-languages/python/operators/short-circuit
+description: Master `and`/`or` short-circuiting, truthiness, safe navigation patterns, and the "Walrus" operator for Pythonic conditional logic.
+sidebar:
+  label: "Short Circuit"
+  badge:
+    text: Operators
+    variant: tip
+tags: [python, operators, short-circuit, boolean, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## ⚡ Short Circuit Operators in Python
+
+```text
+and   short circuit AND
+or    short circuit OR
+not   logical NOT
+```
+
+> **Short circuit** means: **skip evaluating the right operand if the result is already determined by the left operand**.
+
+<Code lang="python" title="and — skip right if left is falsy" code={`
+# and → if LEFT is Falsy, RIGHT is NOT evaluated!
+x = 0
+if x != 0 and 10/x > 1:  # 10/x never runs! ✅ no ZeroDivisionError
+    print("safe")
+
+# Because x != 0 is False, the entire 'and' expression is False.
+# Python skips 10/x > 1 → prevents crash!
+`} />
+
+<Code lang="python" title="or — skip right if left is truthy" code={`
+# or → if LEFT is Truthy, RIGHT is NOT evaluated!
+s = None
+if s is None or len(s) == 0:  # len(s) never called if None ✅
+    print("empty or null")
+
+# Because s is None is True, the entire 'or' expression is True.
+# Python skips len(s) == 0 → prevents TypeError!
+`} />
+
+<Aside type="tip">
+**Safety Pattern**: Always put null/validity checks **first** in `and`/`or` expressions:
+```python
+# ✅ Safe: None check first
+if obj is not None and obj.is_valid(): ...
+
+# ✅ Safe: None check first for OR
+if s is None or len(s) == 0: ...
+
+# ❌ Dangerous: method call first
+if obj.is_valid() and obj is not None: ...  # 💥 AttributeError if obj is None!
+```
+</Aside>
+
+---
+
+## 🔬 Short Circuit vs. Bitwise Operators (`&`, `|`)
+
+### Key Differences Table
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>&amp;</code> / <code>|</code></th>
+      <th><code>and</code> / <code>or</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Evaluation</strong></td>
+      <td>Both sides <strong>always</strong> evaluated</td>
+      <td>Right side <strong>optional</strong> (short circuit)</td>
+    </tr>
+    <tr>
+      <td><strong>Performance</strong></td>
+      <td>Lower (always eval both)</td>
+      <td>Higher (may skip right)</td>
+    </tr>
+    <tr>
+      <td><strong>Applicable Types</strong></td>
+      <td>Integers, Booleans, Sets, etc.<br/>(Bitwise ops)</td>
+      <td>Any object<br/>(Uses Truthiness)</td>
+    </tr>
+    <tr>
+      <td><strong>Return Value</strong></td>
+      <td>Result of bitwise operation</td>
+      <td>One of the operands (see below!)</td>
+    </tr>
+    <tr>
+      <td><strong>Primary Use</strong></td>
+      <td>Bitwise math, set intersection/union</td>
+      <td>Conditional logic, safety checks</td>
+    </tr>
+  </tbody>
+</table>
+
+### 🧠 Evaluation Rules
+
+| Operator | When is Right Operand Evaluated? |
+|----------|----------------------------------|
+| `x and y` | ✅ Only if `x` is **Truthy** (if `x` is Falsy, result is `x` — skip `y`) |
+| `x or y` | ✅ Only if `x` is **Falsy** (if `x` is Truthy, result is `x` — skip `y`) |
+| `x & y` | ✅ Always — no short circuit |
+| `x \| y` | ✅ Always — no short circuit |
+
+<Code lang="python" title="Danger: & does NOT short circuit" code={`
+# & and | → BOTH sides always evaluated (no short circuit!)
+x = 0
+try:
+    # 10/x IS evaluated → 💥 ZeroDivisionError!
+    if x != 0 & 10/x > 1: 
+        print("not safe")
+except ZeroDivisionError:
+    print("Crashed because & doesn't short circuit!")
+
+# ✅ Always prefer 'and' for boolean conditions:
+if x != 0 and 10/x > 1:  # Safe: 10/x skipped when x == 0
+    print("safe")
+`} />
+
+<Aside type="caution">
+**Precedence Trap**: `&` and `|` have **higher precedence** than `and`/`or` but **lower** than comparisons (`==`, `<`).  
+This often causes bugs if you mix them without parentheses:
+```python
+# ❌ Ambiguous/Wrong:
+if x > 0 & y < 10:  # Parses as x > (0 & y) < 10 😱
+
+# ✅ Clear:
+if x > 0 and y < 10: ...
+```
+</Aside>
+
+---
+
+## 🔢 Return Values: It’s Not Just Boolean!
+
+> 🚨 **Python Superpower**: `and` and `or` don’t just return `True`/`False`. They return **one of the actual operands**.
+
+### 🟢 `and` returns the first Falsy value, or the last value if all are Truthy.
+
+```python
+print(0 and 5)       # 0 (0 is Falsy, returned immediately)
+print(1 and 5)       # 5 (1 is Truthy, so return second operand)
+print(1 and 2 and 3) # 3 (All Truthy, return last)
+print(1 and 0 and 3) # 0 (0 is first Falsy)
+```
+
+### 🟡 `or` returns the first Truthy value, or the last value if all are Falsy.
+
+```python
+print(0 or 5)        # 5 (0 is Falsy, so check next)
+print(1 or 5)        # 1 (1 is Truthy, returned immediately)
+print(0 or "" or 5)  # 5 (First two Falsy, return last)
+print(0 or "" or []) # [] (All Falsy, return last)
+```
+
+<Code lang="python" title="Side effects reveal evaluation order" code={`
+def check(name):
+    print(f"Checking {name}")
+    return True
+
+# Case 1: and (short circuit: skip right if left Falsy)
+result = False and check("A")  
+# Output: (nothing printed)
+# Result: False
+
+# Case 2: or (short circuit: skip right if left Truthy)
+result = True or check("B")
+# Output: (nothing printed)
+# Result: True
+
+# Case 3: & (NO short circuit)
+# Note: bool & bool works, but returns int (0/1) in some contexts or bool
+# Let's use functions to prove evaluation:
+result = (check("C") & check("D")) 
+# Output: 
+# Checking C
+# Checking D
+# Result: True (1 & 1 = 1 -> True)
+`} />
+
+<Aside type="danger">
+**Interview Trap**: Questions with function calls in `and`/`or` test your understanding of:
+1. Short circuit evaluation order
+2. What value is actually returned (not just True/False)
+3. How skipped expressions affect final state
+
+**Pro Tip**: Avoid side effects in condition expressions — extract to separate statements for clarity.
+</Aside>
+
+---
+
+## 🛡️ Practical Safety Patterns
+
+<CardGrid>
+  <Card title="Pattern: Null-Safe Attribute Access" icon="shield">
+```python
+    # ✅ Safe: None check first with 'and'
+    if user is not None and user.is_active:
+        process(user)
+    
+    # ✅ Safe: None or empty check with 'or'
+    if not input or input.strip() == "":
+        return "Please enter a value"
+    
+    # ❌ Dangerous: attribute access before None check
+    if user.is_active and user is not None:  # 💥 AttributeError if user is None!
+        process(user)
+```
+  </Card>
+  
+  <Card title="Pattern: Defensive Division" icon="approve-check">
+```python
+    # ✅ Safe: check divisor first
+    if divisor != 0 and dividend / divisor > threshold:
+        # Safe to use result
+        pass
+    
+    # ❌ Dangerous: division before check
+    if dividend / divisor > threshold and divisor != 0:  # 💥 if divisor==0!
+        pass
+```
+  </Card>
+
+  <Card title="Pattern: Default Values with `or`" icon="rocket">
+```python
+    # ✅ Pythonic idiom: Use first truthy value
+    # Similar to Java's Optional.orElse() or JS's ||
+    
+    config = user_config or default_config
+    
+    # Chain multiple fallbacks:
+    name = env_name or config_name or "Default User"
+    
+    # ⚠️ Caveat: Fails if valid value is Falsy (0, "", [], False)
+    count = user_count or 10  # If user_count is 0, this becomes 10! 😱
+    
+    # ✅ Fix for Falsy valid values: Use explicit None check
+    count = user_count if user_count is not None else 10
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔁 Logical NOT (`not`) Operator
+
+> The `not` operator **inverts truthiness** — and works on **any type**.
+
+<Code lang="python" title="Logical NOT examples" code={`
+print(not True)    # False
+print(not False)   # True
+
+# Works on any type (checks truthiness):
+print(not 0)       # True  (0 is Falsy)
+print(not 1)       # False (1 is Truthy)
+print(not "")      # True  ("" is Falsy)
+print(not "hi")    # False ("hi" is Truthy)
+print(not [])      # True  ([] is Falsy)
+print(not None)    # True  (None is Falsy)
+
+# Chaining NOTs:
+print(not not True)   # True
+print(not not 0)      # False (converts to bool effectively)
+`} />
+
+<Aside type="note">
+**Idiom**: `not x` is the Pythonic way to check for Falsy values.  
+Unlike Java's `!`, which only works on `boolean`, Python's `not` works on everything.
+</Aside>
+
+---
+
+## 📋 Operator Applicability Summary
+
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Boolean/Truthiness</th>
+      <th>Integral/Bitwise</th>
+      <th>Short Circuit</th>
+      <th>Primary Use</th>
+    </tr>
+  </thead>  
+  <tbody>
+    <tr><td><code>and</code></td><td>✅ Logical AND</td><td>❌ No</td><td>✅ Yes</td><td>Conditional logic, safety checks</td></tr>
+    <tr><td><code>or</code></td><td>✅ Logical OR</td><td>❌ No</td><td>✅ Yes</td><td>Fallbacks, conditional logic</td></tr>
+    <tr><td><code>not</code></td><td>✅ Logical NOT</td><td>❌ No</td><td>N/A</td><td>Invert truthiness</td></tr>
+    <tr><td><code>&amp;</code></td><td>⚠️ Works on bool (returns int/bool)</td><td>✅ Bitwise AND</td><td>❌ No</td><td>Bitwise math, Set intersection</td></tr>
+    <tr><td><code>|</code></td><td>⚠️ Works on bool (returns int/bool)</td><td>✅ Bitwise OR</td><td>❌ No</td><td>Bitwise math, Set union</td></tr>
+    <tr><td><code>^</code></td><td>⚠️ Works on bool</td><td>✅ Bitwise XOR</td><td>N/A</td><td>Bitwise math, Set symmetric diff</td></tr>
+  </tbody>
+</table>
+
+<Code lang="python" title="Quick reference: type compatibility" code={`
+# ✅ Valid combinations:
+b1, b2 = True, False
+i1, i2 = 5, 3
+
+b1 and b2      # ✅ Logical AND
+b1 or b2       # ✅ Logical OR
+not b1         # ✅ Logical NOT
+
+i1 & i2        # ✅ Bitwise AND (result: 1)
+i1 | i2        # ✅ Bitwise OR  (result: 7)
+i1 ^ i2        # ✅ Bitwise XOR (result: 6)
+
+# ⚠️ Bool & Int works but returns Int:
+True & 1       # 1 (int)
+True and 1     # 1 (int, via short circuit)
+
+# ❌ Invalid combinations:
+# 5 and 3      # ✅ Actually valid! Returns 3 (truthiness check)
+# But bitwise ops on non-ints fail:
+# "a" & "b"    # ❌ TypeError: unsupported operand type(s)
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet (Python Edition)
+
+<CardGrid>
+  <Card title="Q: When is the right operand of `and` evaluated?" icon="information">
+    **Only if the left operand is Truthy**.  
+    If left is Falsy, the result is the left operand — right is skipped.
+  </Card>
+  
+  <Card title="Q: When is the right operand of `or` evaluated?" icon="information">
+    **Only if the left operand is Falsy**.  
+    If left is Truthy, the result is the left operand — right is skipped.
+  </Card>
+
+  <Card title="Q: Why prefer `and` over `&` for boolean conditions?" icon="approve-check">
+    1. ✅ **Safety**: Prevents evaluating risky expressions (e.g., None dereference)
+    2. ✅ **Performance**: Skips unnecessary computation
+    3. ✅ **Readability**: `and` clearly signals logical flow; `&` signals bitwise math
+    4. ✅ **Precedence**: `and` has lower precedence than comparisons, making `a < b and c > d` work naturally without parens.
+  </Card>
+
+  <Card title="Q: Can `and` be used with integers?" icon="backspace">
+    **YES ✅** — but it checks **truthiness**, not bits.
+    ```python
+    print(5 and 3)   # 3 (5 is Truthy, so return 3)
+    print(0 and 3)   # 0 (0 is Falsy, so return 0)
+    
+    # For bitwise AND, use &:
+    print(5 & 3)     # 1 (binary 101 & 011 = 001)
+    ```
+  </Card>
+
+  <Card title="Q: What is the output? `x=0; if x != 0 and 10/x > 1: ...`" icon="shield">
+    **Safe execution**.  
+    - `x != 0` → `False`  
+    - Because left is Falsy, `and` short-circuits — `10/x > 1` is **never evaluated**  
+    - No `ZeroDivisionError` — safe!
+  </Card>
+
+  <Card title="Q: Does `not` work on non-boolean types?" icon="approve-check">
+    **YES ✅** — `not` works on **any type** by checking its truthiness.
+    ```python
+    not 0      # True
+    not ""     # True
+    not []     # True
+    not None   # True
+    not "hi"   # False
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA & Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Early Exit with Short Circuit" icon="rocket">
+    Use `or` to skip expensive checks when a simple condition suffices:
+```python
+    def is_valid(input_data):
+        # Quick rejections first (cheap checks)
+        if not input_data or not input_data.get("id"):
+            return False  # Short circuit: skip expensive validation
+        
+        # Only run heavy validation if quick checks pass
+        return expensive_validation(input_data)
+```
+  </Card>
+  
+  <Card title="Pattern: Cascading Fallbacks with `or`" icon="shield">
+    Chain fallback values using short-circuit OR:
+```python
+    # ✅ Pythonic: Use first truthy value
+    config = os.getenv("APP_CONFIG") or config_file or default_config
+    
+    # ⚠️ Watch out for Falsy valid values (like 0):
+    port = user_port or 8080  # If user_port is 0, this becomes 8080! 😱
+    
+    # ✅ Fix: Use explicit None check for numeric defaults
+    port = user_port if user_port is not None else 8080
+```
+  </Card>
+
+  <Card title="Pattern: Guard Clauses with `and`" icon="backspace">
+    Combine preconditions cleanly:
+```python
+    def process(user, order):
+        # All conditions must pass — 'and' short-circuits on first failure
+        if (user is not None 
+            and user.is_active 
+            and order is not None 
+            and order.is_paid
+            and inventory.has_stock(order.item)):
+            
+            ship(order)  # All guards passed — safe to proceed
+```
+  </Card>
+  
+  <Card title="Pattern: The Walrus Operator (`:=`) + Short Circuit" icon="zap">
+    Python 3.8+ allows assignment in conditions, often paired with short-circuiting:
+```python
+    # ✅ Match and use in one step
+    import re
+    text = "Order #12345"
+    if (match := re.search(r"\d+", text)):
+        print(f"Found ID: {match.group()}")  # match is guaranteed to be valid here
+    
+    # ✅ Read file chunk safely
+    while (chunk := file.read(1024)):
+        process(chunk)  # Loop stops when chunk is empty string (Falsy)
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Performance Note**: While short-circuit operators are faster when they skip work, **don't prematurely optimize**. Write clear, safe conditions first:
+```python
+# ✅ Clear and safe:
+if obj is not None and obj.is_valid() and obj.value > 0: ...
+
+# ❌ Over-optimized and hard to read:
+if obj is not None:
+    if obj.is_valid():
+        if obj.value > 0: ...
+```
+Python's interpreter is fast — prioritize readability and correctness.
+</Aside>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Scenario | Use `and` / `or` | Use `&` / `|` | Why? |
+|----------|----------------|---------------|------|
+| Null-safe method call | ✅ `obj is not None and obj.method()` | ❌ | Short circuit prevents AttributeError |
+| Bitwise flag check | ❌ | ✅ `(flags & READ_FLAG) != 0` | Need bitwise operation |
+| Set Intersection | ❌ | ✅ `set_a & set_b` | `&` is overloaded for sets |
+| Performance-critical condition | ✅ (if right side is expensive) | ❌ | Skip unnecessary work |
+| Both sides must run (side effects) | ❌ | ✅ `log() and validate()` (if bool) | Non-short-circuit ensures both execute |
+| Boolean logic in `if`/`while` | ✅ Always | ❌ Rarely | Clarity, safety, performance |
+| Default values | ✅ `val or default` | ❌ | Pythonic idiom for fallbacks |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `and`/`or` for **logical conditions** — they're safer and faster
+2. ✅ Put **None/validity checks first** to leverage short-circuit safety
+3. ✅ Use `&`/`|` for **bitwise operations** on integers or **Set** operations
+4. ✅ Remember: `&`/`|` on booleans **do not short-circuit** — both sides always run
+5. ✅ `not` works on **any type** (checks truthiness)
+6. ✅ Avoid side effects in condition expressions — extract for clarity
+7. ✅ Beware `or` with Falsy valid values (0, "", []) — use explicit `is not None` checks instead
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the output" code={`
+counter = 0
+
+def expensive():
+    global counter
+    counter += 1
+    print(f"expensive() called, counter={counter}")
+    return True
+
+# Q1: Short circuit with and
+counter = 0
+if False and expensive(): pass
+print(f"After and: counter={counter}")  # ?
+
+# Q2: Short circuit with or
+counter = 0
+if True or expensive(): pass
+print(f"After or: counter={counter}")  # ?
+
+# Q3: Non-short-circuit & (on bools)
+counter = 0
+if False & expensive(): pass
+print(f"After &: counter={counter}")  # ?
+
+# Q4: Non-short-circuit | (on bools)
+counter = 0
+if True | expensive(): pass
+print(f"After |: counter={counter}")  # ?
+
+# Q5: Mixed with side effects
+x, y = 5, 10
+if (x := x + 1) > 10 and (y := y + 1) > 15: 
+    x += 1; y += 1
+print(f"x={x}, y={y}")  # ?
+
+# Q6: Logical NOT
+print(not True)        # ?
+print(not not False)   # ?
+print(not 0)           # ?
+
+# Expected Output:
+# After and: counter=0      ← expensive() skipped
+# After or: counter=0       ← expensive() skipped
+# After &: counter=1        ← expensive() called (no short circuit)
+# After |: counter=1        ← expensive() called (no short circuit)
+# x=6, y=10                 ← (x:=6)>10 is False, so y part skipped
+# False
+# False
+# True
+`} />
+
+<Aside type="tip">
+**Pro Interview Answer Framework** for short-circuit questions:
+1. State the evaluation rule (`and` skips right if left Falsy; `or` skips right if left Truthy)
+2. Explain the **safety benefit** (prevents AttributeError, ZeroDivisionError, etc.)
+3. Mention the **performance benefit** (avoids unnecessary computation)
+4. Contrast with `&`/`|` (always eval both, for bitwise/sets)
+5. Note return values: `and`/`or` return operands, not just bools
+6. Give a practical example (None check pattern, default values with `or`)
+
+This demonstrates both theoretical knowledge and real-world coding wisdom! 🎯
+</Aside>
+
+---
+
+## 🗒️ Quick Revision Cheat Sheet
+
+```python
+# ⚡ SHORT CIRCUIT OPERATORS
+
+# 🔗 LOGICAL OPS (Short Circuit)
+x and y  # If x is Falsy, return x. Else return y.
+x or y   # If x is Truthy, return x. Else return y.
+not x    # Invert truthiness of x.
+
+# 🔢 BITWISE OPS (NO Short Circuit)
+x & y    # Bitwise AND (or Set Intersection)
+x | y    # Bitwise OR  (or Set Union)
+x ^ y    # Bitwise XOR (or Set Symmetric Diff)
+~x       # Bitwise NOT
+
+# 🛡️ SAFETY PATTERNS
+# Null-safe access:
+if obj is not None and obj.method(): ...
+
+# Default values (watch out for 0/""):
+val = user_input or "default"
+
+# Explicit None check (safer for numbers):
+val = user_input if user_input is not None else 0
+
+# 🧪 TRUTHINESS CHECKS
+# Falsy: None, False, 0, 0.0, "", [], {}, set()
+# Truthy: Everything else
+
+# ⚠️ COMMON TRAPS
+# ❌ Using & instead of and:
+if x > 0 & y < 10: ...  # Wrong precedence! Use 'and'.
+
+# ❌ Or with valid Falsy value:
+count = 0 or 10  # Returns 10, losing the 0!
+
+# ✅ Walrus operator + Short Circuit:
+if (match := re.search(pat, text)):
+    use(match)  # Safe!
+```
+
+> 🚀 **Final Wisdom**: Python's `and`/`or` are more powerful than Java's `&&`/`||` because they return actual values, enabling idioms like `val = a or b`. However, this power comes with responsibility — always remember that `0`, `""`, and `[]` are Falsy, so `or` might overwrite valid data. When in doubt, use explicit `is not None` checks. 🐍⚡
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# ⚡ Python Short-Circuit Operators
+
+---
+
+## 🧠 Mental Model First
+
+```
+Short-circuit evaluation:
+  Stop evaluating as soon as the result is determined.
+  Do NOT evaluate the remaining operands.
+
+and:  if LEFT is falsy  → return LEFT immediately (right never evaluated)
+or:   if LEFT is truthy → return LEFT immediately (right never evaluated)
+
+This is NOT just an optimization — it's a GUARANTEE in Python.
+Code that relies on side effects of the right operand
+will silently not run if short-circuited.
+```
+
+---
+
+## 🗂️ The Three Operators
+
+```
+┌──────────┬────────────────────────────────────────────────────┐
+│ Operator │ Behavior                                           │
+├──────────┼────────────────────────────────────────────────────┤
+│   and    │ returns first FALSY value, or LAST value if all    │
+│          │ truthy                                             │
+│   or     │ returns first TRUTHY value, or LAST value if all  │
+│          │ falsy                                             │
+│   not    │ always returns True or False (actual bool)         │
+└──────────┴────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔬 Critical Rule — They Return OPERANDS, Not Booleans
+
+```python
+# and / or do NOT return True or False
+# They return one of the OPERANDS
+
+"hello" and "world"     # "world"   ← not True
+"hello" or  "world"     # "hello"   ← not True
+0       and "world"     # 0         ← not False
+0       or  "world"     # "world"   ← not False
+```
+
+> `not` is the exception — it **always** returns a real `bool`.
+
+---
+
+## 1️⃣ `and` — Returns First Falsy or Last Value
+
+```
+RULE:
+  Evaluate left → if FALSY  → return LEFT  (stop)
+  Evaluate left → if TRUTHY → return RIGHT (regardless of its value)
+```
+
+```python
+#  left    right    result      why
+0    and "hello"  # 0          left is falsy → return left
+""   and "hello"  # ""         left is falsy → return left
+None and "hello"  # None       left is falsy → return left
+
+1    and "hello"  # "hello"    left truthy → return right
+True and 0        # 0          left truthy → return right (0 is falsy but still returned)
+True and False    # False       left truthy → return right
+1    and 2        # 2
+"a"  and "b"      # "b"
+```
+
+```
+TRUTH TABLE (conceptual):
+  F and anything  →  F         (right never evaluated)
+  T and F         →  F
+  T and T         →  T (last)
+```
+
+### 🔬 Bytecode
+
+```python
+import dis
+
+def f(a, b):
+    return a and b
+
+dis.dis(f)
+# LOAD_FAST    a
+# JUMP_IF_FALSE_OR_POP   →  (jump to end, keep a on stack)
+# LOAD_FAST    b
+# RETURN_VALUE
+```
+
+```
+If a is falsy:
+  JUMP_IF_FALSE_OR_POP fires
+  b is NEVER loaded
+  a is returned
+
+If a is truthy:
+  a is popped from stack
+  b is loaded and returned
+```
+
+---
+
+## 2️⃣ `or` — Returns First Truthy or Last Value
+
+```
+RULE:
+  Evaluate left → if TRUTHY → return LEFT  (stop)
+  Evaluate left → if FALSY  → return RIGHT (regardless of its value)
+```
+
+```python
+#  left    right    result      why
+1    or  "hello"  # 1          left is truthy → return left
+"a"  or  "b"      # "a"        left is truthy → return left
+
+0    or  "hello"  # "hello"    left falsy → return right
+""   or  "world"  # "world"    left falsy → return right
+None or  False    # False       left falsy → return right (False is falsy but returned)
+0    or  0        # 0          all falsy → return last
+""   or  []       # []         all falsy → return last
+```
+
+```
+TRUTH TABLE (conceptual):
+  T or anything  →  T         (right never evaluated)
+  F or T         →  T
+  F or F         →  F (last)
+```
+
+### 🔬 Bytecode
+
+```python
+def f(a, b):
+    return a or b
+
+dis.dis(f)
+# LOAD_FAST    a
+# JUMP_IF_TRUE_OR_POP    →  (jump to end, keep a on stack)
+# LOAD_FAST    b
+# RETURN_VALUE
+```
+
+---
+
+## 3️⃣ `not` — Always Returns `bool`
+
+```python
+not True     # False
+not False    # True
+not 0        # True
+not 1        # False
+not ""       # True
+not "hello"  # False
+not []       # True
+not [0]      # False   ← non-empty list, even if contains falsy value
+not None     # True
+```
+
+```python
+# not converts to bool first, then negates:
+not x   ≡   bool(x) == False   ≡   not bool(x)
+
+# Double not — convert to bool without negating:
+not not 42    # True    (bool(42))
+not not ""    # False   (bool(""))
+not not []    # False
+```
+
+> `not` does NOT short-circuit — it has only one operand. It always evaluates.
+
+---
+
+## 🔬 Truthiness Rules — What's Falsy
+
+```
+┌─────────────────────────────────────────────┐
+│                FALSY VALUES                 │
+├─────────────────────────────────────────────┤
+│  None                                       │
+│  False                                      │
+│  0   (int)                                  │
+│  0.0 (float)                                │
+│  0j  (complex)                              │
+│  ""  (empty str)                            │
+│  b"" (empty bytes)                          │
+│  []  (empty list)                           │
+│  ()  (empty tuple)                          │
+│  {}  (empty dict or set)                    │
+│  set()                                      │
+│  range(0)                                   │
+│  Any object where __bool__ returns False    │
+│  Any object where __len__ returns 0         │
+│   (if __bool__ not defined)                 │
+└─────────────────────────────────────────────┘
+Everything else is TRUTHY.
+```
+
+```python
+# Custom truthiness:
+class Queue:
+    def __init__(self):
+        self.items = []
+
+    def __bool__(self):
+        return len(self.items) > 0    # empty queue → falsy
+
+q = Queue()
+if q:
+    process(q)    # skipped if empty — clean pattern
+```
+
+---
+
+## 🔬 Chained Short-Circuit — Multiple Operands
+
+```python
+a and b and c and d
+# Evaluates left to right
+# Returns FIRST falsy, or LAST value (d) if all truthy
+
+a or b or c or d
+# Evaluates left to right
+# Returns FIRST truthy, or LAST value (d) if all falsy
+```
+
+```python
+# Evaluation trace:
+def p(name, val):
+    print(f"evaluating {name}")
+    return val
+
+p("a", 1) and p("b", 0) and p("c", 1)
+# "evaluating a"
+# "evaluating b"
+# returns 0      ← c never evaluated
+
+p("a", 0) or p("b", 0) or p("c", 5)
+# "evaluating a"
+# "evaluating b"
+# "evaluating c"
+# returns 5
+```
+
+---
+
+## 🔬 DSA Connection
+
+```
+Short-circuit evaluation is the foundation of:
+
+  Guard clauses:
+    node and node.val > 0     # safe null check before access
+
+  Memoization guards:
+    cache.get(key) or compute(key)
+
+  Default value chain:
+    user.name or user.email or "unknown"
+
+  Safe attribute access (poor man's optional chaining):
+    obj and obj.attr and obj.attr.value
+
+  Recursive base case protection:
+    not node or (node.left and recurse(node.left))
+```
+
+```python
+# Binary tree safe traversal:
+def max_depth(node):
+    if not node:              # short-circuit: None is falsy
+        return 0
+    return 1 + max(
+        max_depth(node.left),
+        max_depth(node.right)
+    )
+
+# Linked list null-safe:
+def get_next_val(node):
+    return node and node.next and node.next.val
+    # returns None if node is None (short-circuit)
+    # returns None if node.next is None (short-circuit)
+    # returns node.next.val otherwise
+```
+
+---
+
+## 🚀 Real-World Production Patterns
+
+### Pattern 1 — Default Value
+
+```python
+# or for defaults:
+name = user_input or "Anonymous"
+config = provided_config or DEFAULT_CONFIG
+port = os.environ.get("PORT") or 8080
+
+# WARNING — empty string and 0 are falsy:
+count = user_count or 10    # 💀 if user_count=0 → uses 10 (wrong!)
+name  = user_name  or "Ali" # 💀 if user_name="" → uses "Ali" (wrong!)
+
+# Fix — use explicit None check:
+count = user_count if user_count is not None else 10
+# or:
+count = 10 if user_count is None else user_count
+```
+
+### Pattern 2 — Guard Clause / Lazy Evaluation
+
+```python
+# Database query — only query if needed:
+def get_user(user_id):
+    return (
+        cache.get(user_id) or
+        db.query(user_id) or          # only if cache miss
+        create_guest_user(user_id)    # only if db miss
+    )
+
+# Short-circuit prevents unnecessary DB calls
+```
+
+### Pattern 3 — Safe Dict/Object Access
+
+```python
+# Without short-circuit (verbose):
+def get_city(user):
+    if user and user.get("address") and user["address"].get("city"):
+        return user["address"]["city"]
+    return None
+
+# With short-circuit (clean):
+def get_city(user):
+    return (
+        user
+        and user.get("address")
+        and user["address"].get("city")
+    )
+```
+
+### Pattern 4 — Assertion / Validation Chain
+
+```python
+def validate(data):
+    return (
+        isinstance(data, dict)          and
+        "name" in data                  and
+        isinstance(data["name"], str)   and
+        len(data["name"]) > 0          and
+        "age" in data                   and
+        isinstance(data["age"], int)    and
+        0 < data["age"] < 150
+    )
+# Short-circuits at first failure
+# No KeyError possible — earlier checks guard later ones
+```
+
+### Pattern 5 — Conditional Function Call
+
+```python
+# Execute function only if condition met:
+debug and log_debug(request)     # log only if debug mode
+verbose and print(f"Processing {item}")
+
+# Ternary replacement (anti-pattern but seen in wild):
+result = condition and value_if_true or value_if_false
+# DANGEROUS — see trap below
+```
+
+---
+
+## 💀 Interview Trap 1 — `or` Default with Falsy Valid Values
+
+```python
+# WRONG — 0 and "" are valid but falsy:
+def connect(host, port=None):
+    port = port or 5432        # if port=0 → uses 5432 (wrong!)
+
+connect("localhost", 0)        # port=0 is valid but silently replaced!
+
+# Fix:
+def connect(host, port=None):
+    port = 5432 if port is None else port
+```
+
+---
+
+## 💀 Interview Trap 2 — Fake Ternary With `and/or`
+
+```python
+# Seen in old Python code (pre-ternary syntax):
+result = condition and true_val or false_val
+
+# BROKEN when true_val is falsy:
+x = True and 0 or "default"
+# → (True and 0) or "default"
+# → 0 or "default"
+# → "default"   ← WRONG, expected 0
+
+# ALWAYS use real ternary:
+result = true_val if condition else false_val
+```
+
+---
+
+## 💀 Interview Trap 3 — Side Effects That Never Run
+
+```python
+def save_to_db(data):
+    print("saving!")
+    return True
+
+# This looks like it always saves:
+result = is_valid(data) and save_to_db(data)
+
+# If is_valid() returns False → save_to_db() NEVER CALLED
+# No error. No warning. Silently skipped.
+# Devs add this as a "guard" and forget save never runs on invalid data.
+```
+
+---
+
+## 💀 Interview Trap 4 — `and`/`or` in Boolean Context Masks Type
+
+```python
+# Function returns "truthy" but not True:
+def find_user(id):
+    return db.get(id)    # returns User object or None
+
+user = find_user(1)
+if user:                 # works — User is truthy, None is falsy
+
+# But:
+result = find_user(1) or find_user(2)
+# returns User object, not True
+# code consuming result expecting bool → type error downstream
+
+# Dangerous pattern:
+results = [find_user(i) or find_user(i+10) for i in range(5)]
+# each element could be a User OR None (last falsy)
+# not a list of bools as you might expect
+```
+
+---
+
+## 💀 Interview Trap 5 — `not in` vs `not ... in`
+
+```python
+x = [1, 2, 3]
+
+not 4 in x      # True  ← parsed as not (4 in x)
+4 not in x      # True  ← same result, preferred syntax
+
+# But precedence can fool you:
+not 1 in x and not 2 in x
+# → (not (1 in x)) and (not (2 in x))
+# → False and False
+# → False
+
+not (1 in x and 2 in x)
+# → not (True and True)
+# → not True
+# → False
+# Same result here but different logic — use parentheses
+```
+
+---

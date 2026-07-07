@@ -1,0 +1,1541 @@
+---
+title: C++ Exception Handling — Compile Errors & Pitfalls
+slug: computer-languages/cpp/exception-handling/compile-errors
+description: Master C++ exception handling compile errors, `noexcept` violations, slicing pitfalls, and the differences from Java's strict checking.
+tags: [cpp, exceptions, compile-errors, noexcept, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔴 C++ Exception Handling Compile Errors & Pitfalls
+
+---
+
+### 🧠 What It Is
+
+Unlike Java, C++ has **very few** exception-related compile errors because it lacks checked exceptions. The compiler generally trusts you. However, modern C++ (C++11/17/20) introduces strict rules around `noexcept`, type safety, and object lifetime that *do* cause compile errors or immediate termination.
+
+Knowing these distinguishes a junior developer (who treats C++ like Java) from a senior engineer (who understands memory and type safety).
+
+---
+
+### 🔬 Complete Catalog — Key Categories
+
+```
+C++ Exception "Errors"
+│
+├── 01. Syntax: try/catch structure
+├── 02. Type Mismatch: Catching non-compatible types
+├── 03. noexcept Violations (Terminate)
+├── 04. Object Slicing (Logical Error/Warning)
+├── 05. Uncaught Exception (Terminate)
+├── 06. Throw in Destructor (Terminate)
+├── 07. Missing Virtual Destructor (Undefined Behavior)
+└── 08. Stack Overflow (Runtime Crash)
+```
+
+<Aside type="note">
+**Java vs C++**: 
+- Java: Compiler enforces handling (`try-catch` or `throws`).
+- C++: Compiler enforces **syntax** and **type compatibility**, but rarely forces handling. Errors often manifest as `std::terminate()` at runtime rather than compile errors.
+</Aside>
+
+---
+
+### 🔬 01 — Syntax: Try Without Catch/Finally?
+
+In C++, a `try` block **must** be followed by at least one `catch` block. There is no standalone `finally`.
+
+```cpp
+// ❌ Compile Error: expected 'catch' before '}'
+void method() {
+    try {
+        riskyOp();
+    }
+}
+
+// ✅ Fix: Add catch
+try { riskyOp(); } catch (...) { handle(); }
+
+// ❌ Compile Error: 'catch' without 'try'
+catch (...) { } 
+```
+
+<Aside type="tip">
+**No Finally**: C++ uses RAII (destructors) instead of `finally`. You cannot write a `finally` block. If you need cleanup, put it in a destructor or use a scope guard.
+</Aside>
+
+---
+
+### 🔬 02 — Type Mismatch & Slicing
+
+C++ is strictly typed. You cannot catch a type that isn't related to the thrown type via inheritance. Also, catching by value causes **slicing**.
+
+```cpp
+class Base : public std::exception { ... };
+class Derived : public Base { ... };
+
+// ❌ Logical Error / Warning: Slicing
+try {
+    throw Derived();
+} catch (Base e) { 
+    // e is a COPY of the Base part. Derived data is LOST.
+    // e.what() might work, but dynamic behavior is gone.
+}
+
+// ✅ Correct: Catch by Reference
+try {
+    throw Derived();
+} catch (const Base& e) { 
+    // Polymorphism preserved.
+}
+
+// ❌ Compile Error: Unrelated Types
+try {
+    throw std::runtime_error("Err");
+} catch (std::logic_error& e) { 
+    // Error: no known conversion from 'std::runtime_error' to 'std::logic_error'
+}
+```
+
+---
+
+### 🔬 03 — noexcept Violations (The Big One)
+
+In C++11 and later, if a function is marked `noexcept` and an exception escapes it, the compiler doesn't give a compile error. Instead, it calls `std::terminate()` immediately at runtime. This is a critical "silent" failure mode.
+
+```cpp
+void safeOp() noexcept {
+    throw std::runtime_error("Fail"); // 💥 Runtime: std::terminate() called!
+}
+
+// ⚠️ Compiler Warning (with -Weffc++ or similar):
+// 'nothrow' function 'safeOp' may throw exception
+```
+
+<Aside type="danger">
+**Why no Compile Error?** 
+Because determining if a complex function tree *never* throws is undecidable in the general case. The compiler allows the code but inserts a check that kills the program if violated.
+</Aside>
+
+---
+
+### 🔬 04 — Unchecked Exceptions (Not an Error)
+
+In Java, failing to catch a checked exception is a compile error. In C++, it is **not**.
+
+```cpp
+void readFile() {
+    // Might throw std::ios_base::failure
+    // Compiler DOES NOT complain if you don't catch it.
+    std::ifstream f("test.txt");
+}
+
+void caller() {
+    readFile(); // If it throws, stack unwinds. If uncaught, terminate().
+}
+```
+
+This is a feature, not a bug, but it trips up Java developers. You must document exceptions manually.
+
+---
+
+### 🔬 05 — Uncaught Exception (Runtime Terminate)
+
+If an exception propagates all the way out of `main()` without being caught, `std::terminate()` is called.
+
+```cpp
+int main() {
+    throw std::runtime_error("Uncaught");
+    return 0;
+}
+// 💥 Runtime: terminate called after throwing an instance of 'std::runtime_error'
+// Abort (core dumped)
+```
+
+You can customize this handler using `std::set_terminate`, but by default, your app crashes hard.
+
+---
+
+### 🔬 06 — Throw in Destructor
+
+If a destructor throws an exception while another exception is already active (during stack unwinding), C++ calls `std::terminate()`.
+
+```cpp
+struct Bad {
+    ~Bad() {
+        throw std::runtime_error("Cleanup failed"); // 💥 Danger
+    }
+};
+
+void test() {
+    Bad b;
+    throw std::runtime_error("Original"); 
+    // When unwinding, ~Bad() throws. 
+    // Two active exceptions -> std::terminate()
+}
+```
+
+✅ **Rule**: Destructors should be `noexcept` (implicit in C++11+). Never let exceptions escape destructors.
+
+---
+
+### 🔬 07 — Missing Virtual Destructor
+
+If you delete a derived class object through a base class pointer, and the base destructor is not virtual, the behavior is **Undefined** (often memory leaks or corruption). This is not always a compile error, but modern compilers warn heavily.
+
+```cpp
+class Base {
+public:
+    ~Base() {} // ❌ Non-virtual
+};
+
+class Derived : public Base {
+    int* data;
+public:
+    ~Derived() { delete data; }
+};
+
+void test() {
+    Base* p = new Derived();
+    delete p; // 💥 Undefined Behavior: Derived destructor not called!
+}
+```
+
+✅ **Fix**: `virtual ~Base() = default;`
+
+---
+
+### 🔬 08 — Stack Overflow
+
+Recursive exceptions or deep nesting can exhaust the stack. This is a runtime crash (SegFault or Stack Overflow Error), not a compile error.
+
+```cpp
+void recurse() {
+    try {
+        recurse();
+    } catch (...) {
+        recurse(); // Infinite loop of throwing/catching -> Stack Exhaustion
+    }
+}
+```
+
+---
+
+### 💻 Real-World Code — Common Pitfalls
+
+```cpp
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+// 1. Slicing Pitfall
+void process(std::exception e) { // ❌ Pass by value
+    std::cout << e.what() << '\n';
+}
+
+// 2. Noexcept Pitfall
+void criticalTask() noexcept {
+    std::vector<int> v;
+    v.at(100); // Throws std::out_of_range
+    // 💥 Terminates immediately
+}
+
+// 3. Proper Pattern
+void safeProcess(const std::exception& e) { // ✅ Pass by ref
+    std::cout << e.what() << '\n';
+}
+
+int main() {
+    try {
+        criticalTask();
+    } catch (...) {
+        // Never reached
+    }
+}
+```
+
+---
+
+## 🔥 Top 10 Exceptions/Crashes in C++
+
+Unlike Java, C++ "exceptions" are often crashes due to Undefined Behavior (UB).
+
+| # | Event | Cause | Fix |
+|---|-------|-------|-----|
+| 1 | `std::terminate` | Uncaught exception or `noexcept` violation | Catch in `main`, respect `noexcept` |
+| 2 | Segmentation Fault | Null dereference, OOB access | Smart pointers, bounds checks |
+| 3 | `std::bad_alloc` | `new` fails (OOM) | Check returns, use containers |
+| 4 | `std::out_of_range` | `.at()` on vector/string | Use indices safely, check size |
+| 5 | `std::invalid_argument` | Bad input to function | Validate inputs |
+| 6 | Double Free | Manual `delete` twice | Use `std::unique_ptr` |
+| 7 | Dangling Reference | Ref to destroyed temp | Extend lifetime, copy |
+| 8 | Stack Overflow | Infinite recursion | Iteration, increase stack |
+| 9 | `std::bad_cast` | `dynamic_cast` ref fail | Check pointers, use `typeid` |
+| 10 | UB (Silent Corruption) | Race conditions, uninitialized vars | Thread sanitizers, init vars |
+
+---
+
+### 01 — std::terminate
+
+**What Triggers It**:
+1. Uncaught exception.
+2. `noexcept` function throws.
+3. Exception during stack unwinding (e.g., destructor throws).
+
+**Prod Scenario**:
+A logger throws inside a `noexcept` network handler. The entire service crashes instantly without a stack trace.
+
+**Fix**:
+Wrap top-level threads in `try/catch(...)`. Ensure destructors swallow errors.
+
+---
+
+### 02 — Segmentation Fault (The "NPE" of C++)
+
+**What Triggers It**:
+```cpp
+int* p = nullptr;
+*p = 10; // 💥 Segfault
+
+std::vector<int> v = {1,2,3};
+v[10] = 1; // 💥 UB (might segfault, might corrupt)
+```
+
+**Fix**:
+Use `std::optional`, smart pointers, and `.at()` for bounds checking.
+
+---
+
+### 03 — std::bad_alloc
+
+**What Triggers It**:
+```cpp
+// Allocating huge array
+int* p = new int[10000000000LL]; // Throws std::bad_alloc if failed
+```
+
+**Fix**:
+Use `std::vector` which handles growth better. Check system limits.
+
+---
+
+### 04 — std::out_of_range
+
+**What Triggers It**:
+```cpp
+std::string s = "Hi";
+char c = s.at(5); // Throws std::out_of_range
+```
+
+**Fix**:
+Check `s.size()` before access.
+
+---
+
+### 05 — std::invalid_argument
+
+**What Triggers It**:
+```cpp
+std::stoi("abc"); // Throws std::invalid_argument
+```
+
+**Fix**:
+Validate string format before conversion.
+
+---
+
+### 06 — Double Free / Use After Free
+
+**What Triggers It**:
+```cpp
+int* p = new int(10);
+delete p;
+delete p; // 💥 UB (Crash or Corruption)
+```
+
+**Fix**:
+`auto p = std::make_unique<int>(10);` (Automatic cleanup).
+
+---
+
+### 07 — Dangling Reference
+
+**What Triggers It**:
+```cpp
+const std::string& ref = std::string("Temp");
+// ref is now dangling. Accessing it is UB.
+```
+
+**Fix**:
+Copy the value: `std::string val = std::string("Temp");`
+
+---
+
+### 08 — Stack Overflow
+
+**What Triggers It**:
+Deep recursion or large stack arrays (`int arr[1000000];`).
+
+**Fix**:
+Allocate large data on heap (`std::vector`). Use iteration.
+
+---
+
+### 09 — std::bad_cast
+
+**What Triggers It**:
+```cpp
+Base& b = derivedObj;
+dynamic_cast<Derived&>(b); // If b is not actually Derived, throws std::bad_cast
+```
+
+**Fix**:
+Use `dynamic_cast<Derived*>` and check for `nullptr`.
+
+---
+
+### 10 — Undefined Behavior (Silent)
+
+**What Triggers It**:
+Race conditions, uninitialized variables, signed integer overflow.
+
+**Fix**:
+Use `-fsanitize=undefined` during testing. Initialize all variables.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — `throw e;` vs `throw;`**
+
+```cpp
+catch (const Base& e) {
+    throw e;   // ❌ SLICING! Creates a copy of Base. Loses Derived info.
+    throw;     // ✅ Rethrows the original exception object.
+}
+```
+
+**🪤 Trap 2 — Catching by Value**
+
+```cpp
+catch (std::exception e) { // ❌ Slicing + Copy Overhead
+    // e is a copy. If it was Derived, it's sliced.
+}
+catch (const std::exception& e) { // ✅ Correct
+    // Polymorphic, no copy.
+}
+```
+
+**🪤 Trap 3 — No Checked Exceptions**
+
+Interviewer: "How do I force the caller to handle this error?"
+You: "C++ doesn't have checked exceptions. You document it, or use `std::expected` (C++23) / `std::optional` to return errors as values."
+
+**🪤 Trap 4 — `noexcept` and Move Constructors**
+
+If a move constructor is not `noexcept`, `std::vector` will use the **copy** constructor instead during reallocation (for strong exception safety). This is a massive performance pitfall.
+
+```cpp
+class MyObj {
+public:
+    MyObj(MyObj&& other) noexcept { ... } // ✅ Enables moves
+};
+```
+
+**🪤 Trap 5 — Exception Specifications Removed**
+
+Old C++ had `void f() throw(int)`. This was **removed** in C++17. Do not use it. Use `noexcept`.
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying Primitive: Zero-Cost Abstraction**
+
+C++ exceptions are typically implemented using **table-driven unwinding**.
+1. **Happy Path**: Zero overhead. No extra instructions.
+2. **Throw Path**: Expensive. The runtime looks up tables to find catch blocks and destructors.
+
+**Stack Unwinding**:
+When an exception is thrown, the runtime walks up the stack. For each frame, it calls destructors for local objects. This is why RAII works. If a destructor throws during this process, `std::terminate()` is called because the runtime cannot handle two exceptions at once.
+
+---
+
+### 📊 Java vs C++ Compile Errors
+
+| Feature | Java | C++ |
+|---------|------|-----|
+| Unhandled Checked Exception | ❌ Compile Error | ✅ Compiles (Runtime Terminate if uncaught) |
+| Try without Catch/Finally | ❌ Compile Error | ❌ Compile Error |
+| Throw Non-Throwable | ❌ Compile Error | ❌ Compile Error (Must be copyable type) |
+| Unreachable Catch | ❌ Compile Error (Checked) | ✅ Compiles (Just dead code) |
+| Throws Broadening | ❌ Compile Error | ✅ Compiles (No throws clause) |
+| Multi-catch Related Types | ❌ Compile Error | N/A (Catch by base ref) |
+
+---
+
+### 🏭 SDE/SRE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| `noexcept` violations kill processes | 🔴 MUST KNOW |
+| Catch by reference to avoid slicing | 🔴 MUST KNOW |
+| Destructors must not throw | 🔴 MUST KNOW |
+| No checked exceptions = Document APIs | 🔴 MUST KNOW |
+| RAII replaces finally | 🔴 MUST KNOW |
+| `std::terminate` hides stack traces | 🟡 GOOD TO KNOW |
+
+---
+
+# ⚠️ C++ Exception Errors & Top Exceptions In Wild
+
+---
+
+# 📁 01 — All Possible Exception Handling Compile Errors
+
+## 📌 C++ Exception Handling Compile Errors — Complete Catalog
+
+---
+
+### Error 1 — Unreachable Catch Block (Dead Handler)
+
+```cpp
+// ❌ Base caught before derived — derived unreachable
+try {
+    throw std::out_of_range("test");
+} catch (const std::exception& e) {    // catches EVERYTHING
+    handle(e);
+} catch (const std::out_of_range& e) { // ❌ NEVER REACHED
+    handle_specific(e);
+}
+
+// Compiler: warning: exception of type 'std::out_of_range'
+//           will be caught by earlier handler
+// GCC:  -Wexceptions
+// Clang: warning: exception type 'std::out_of_range' is caught
+//        by earlier handler of type 'std::exception'
+```
+
+```cpp
+// ❌ catch(...) before specific catch
+try {
+    risky();
+} catch (...) {      // swallows everything
+    handle_all();
+} catch (const std::exception& e) {  // ❌ unreachable
+    handle_std(e);
+}
+```
+
+---
+
+### Error 2 — `throw;` Outside Catch Block
+
+```cpp
+// ❌ Bare throw outside catch — not a compile error but UB → terminate
+void bad_rethrow() {
+    throw;   // UB — no active exception
+             // compiles but terminates at runtime
+}
+
+// ✅ Compiler CAN warn: -Wno-exceptions (GCC/Clang in some contexts)
+// Runtime: std::terminate() called
+```
+
+---
+
+### Error 3 — `noexcept` Violation (Compile-Time Detectable Cases)
+
+```cpp
+// ❌ constexpr + throw — compile error in constant evaluation
+constexpr int bad(int x) {
+    if (x < 0) throw std::invalid_argument("negative");  // ❌ in consteval
+    return x * 2;
+}
+constexpr int r = bad(-1);  // ❌ compile error: throw in constexpr context
+
+// ✅ Runtime evaluation — no compile error (only runtime behavior)
+int r = bad(-1);  // compiles, throws at runtime
+```
+
+---
+
+### Error 4 — Catch by Non-Const Value (Slicing Warning)
+
+```cpp
+// ⚠️ Catch by value — compiles but slices polymorphic exceptions
+class Base : public std::exception { };
+class Derived : public Base { };
+
+try {
+    throw Derived{};
+} catch (Base b) {   // ⚠️ by value — slices Derived to Base
+    // b.what() gives Base version — Derived info lost
+    // Compiler: no error, but major logical bug
+}
+
+// ❌ Catch by rvalue reference — compile error
+try {
+    throw std::runtime_error("test");
+} catch (std::runtime_error&& e) {  // ❌ cannot catch by rvalue ref
+    // Compile error: GCC/Clang reject this
+}
+```
+
+---
+
+### Error 5 — Throw in `noexcept` Context (No Compile Error — Runtime)
+
+```cpp
+// ❌ Compiles but terminates — noexcept is NOT compile-time enforced
+void foo() noexcept {
+    throw std::runtime_error("oops");  // compiles ✅, terminates ❌
+}
+
+// ✅ consteval + throw in constant context = compile error
+consteval int must_be_comptime(int x) {
+    if (x == 0) throw std::invalid_argument("zero");  // ❌ compile error
+    return x;
+}
+
+// Can we detect noexcept violation at compile time?
+// Only indirectly via static_assert + noexcept operator:
+static_assert(noexcept(foo()) == false,
+    "foo should NOT be noexcept if it throws");
+```
+
+---
+
+### Error 6 — Invalid Exception Specification (Deprecated/Removed)
+
+```cpp
+// ❌ Dynamic exception specification — REMOVED in C++17
+void foo() throw(std::runtime_error) { }  // ❌ C++17: compile error
+void bar() throw() { }                    // ❌ C++17: compile error (use noexcept)
+
+// GCC/Clang C++17:
+// error: ISO C++17 does not allow dynamic exception specifications
+// note: use 'noexcept' instead
+
+// ✅ Modern:
+void foo() noexcept(false) { }   // may throw
+void bar() noexcept { }          // won't throw
+```
+
+---
+
+### Error 7 — Catching Incomplete Type
+
+```cpp
+class ForwardDeclared;   // only declared, not defined
+
+try {
+    risky();
+} catch (const ForwardDeclared& e) {  // ❌ compile error
+    handle(e);
+}
+// error: variable 'e' has incomplete type 'ForwardDeclared'
+// Must have complete type to catch by reference
+```
+
+---
+
+### Error 8 — Catching Non-Class Non-Pointer Type Without Match
+
+```cpp
+// ❌ Throw type and catch type mismatch — compiles but never caught
+try {
+    throw 42;                        // throws int
+} catch (const std::exception& e) { // ❌ int ≠ std::exception — not caught
+    std::cout << "caught\n";
+}
+// 42 propagates — terminate() unless outer catch exists
+// No compile error — runtime behavior only
+
+// Implicit conversions NOT applied in catch:
+try { throw (short)5; }
+catch (int i) { }    // ❌ NOT caught — no implicit short→int in catch
+catch (short s) { }  // ✅ caught
+```
+
+---
+
+### Error 9 — Exception in `static` Initializer
+
+```cpp
+// Compiles but has nasty runtime behavior
+static std::string s = []() -> std::string {
+    throw std::runtime_error("static init fails");
+    return "value";
+}();  // ❌ exception during static init
+      // → std::terminate() at program startup
+      // Never reaches main()
+      // No way to catch — static init happens before user code
+```
+
+---
+
+### Error 10 — Destructor Exception Specification Mismatch
+
+```cpp
+class Base {
+public:
+    virtual ~Base() noexcept(false) { }  // may throw
+};
+
+class Derived : public Base {
+public:
+    ~Derived() noexcept { }  // ✅ stronger guarantee — allowed
+};
+
+class Bad : public Base {
+public:
+    ~Bad() noexcept(false) { }   // ✅ same — allowed
+};
+
+// C++11: destructors implicitly noexcept
+// Derived destructor implicitly noexcept even without keyword
+```
+
+---
+
+### Error 11 — `std::terminate` Calling Scenarios (Not Compile Errors — Runtime)
+
+```
+These compile but terminate at runtime:
+┌──────────────────────────────────────────────────────────────────┐
+│  Scenario                                  │ Triggers            │
+├──────────────────────────────────────────────────────────────────┤
+│  Uncaught exception in main()              │ terminate()         │
+│  Exception in noexcept function            │ terminate()         │
+│  Exception in destructor during unwind     │ terminate()         │
+│  Exception escaping thread function        │ terminate()         │
+│  std::rethrow_exception(nullptr)           │ UB → terminate()    │
+│  Bare throw; with no active exception      │ UB → terminate()    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Compile Error Summary Table
+
+| Error | Compile? | Runtime Effect |
+|---|---|---|
+| Base before derived in catch | ✅ + ⚠️ warning | Dead handler — never runs |
+| `catch(T&&)` rvalue ref | ❌ compile error | N/A |
+| `throw()` spec in C++17 | ❌ compile error | N/A |
+| Catch incomplete type | ❌ compile error | N/A |
+| `throw;` outside catch | ✅ compiles | UB → terminate |
+| `throw` in `noexcept` | ✅ compiles | terminate |
+| Throw/catch type mismatch | ✅ compiles | propagates uncaught |
+| `throw` in `consteval` context | ❌ compile error | N/A |
+
+---
+
+# 📁 02 — Top Exceptions In Wild (C++ Equivalents)
+
+---
+
+## 🔴 01 — `NullPointerException` (Java) → Null Dereference (C++)
+
+```
+Java: NullPointerException — thrown when accessing member through null ref
+C++:  NOT an exception — UNDEFINED BEHAVIOR → usually SIGSEGV (crash)
+```
+
+```cpp
+// C++ null dereference — NOT catchable as exception
+int* p = nullptr;
+*p = 42;           // ❌ UB — SIGSEGV — program killed
+                   // NO exception thrown — OS terminates process
+
+// Why no exception? Performance — every dereference would need null check
+// C++ trusts the programmer — checks cost cycles
+
+// How to detect it:
+// ─────────────────────────────────────────────
+// 1. Address Sanitizer (best for dev/test)
+// clang++ -fsanitize=address main.cpp
+// → "AddressSanitizer: SEGV on address 0x0"
+// → shows exact line
+
+// 2. Valgrind
+// valgrind ./program
+// → "Invalid read of size 4"
+
+// 3. Platform signal handler (Linux)
+#include <signal.h>
+#include <csetjmp>
+
+struct sigaction sa;
+sa.sa_handler = [](int sig) {
+    // Signal handler — limited what you can do here
+    // write(STDERR_FILENO, "SIGSEGV caught\n", 15);
+    // _exit(1);
+};
+sigaction(SIGSEGV, &sa, nullptr);
+
+// 4. Defensive check before dereference
+if (ptr != nullptr) {
+    use(*ptr);
+} else {
+    throw std::runtime_error("null pointer dereference prevented");
+}
+
+// 5. Use smart pointers — avoid raw pointers
+std::shared_ptr<int> sp;
+if (sp) {
+    use(*sp);       // ✅ always check before deref
+}
+*sp;                // ❌ still UB — no auto-check
+```
+
+```cpp
+// C++ CLOSEST EQUIVALENT — std::optional prevents null pointer pattern
+std::optional<User> find_user(int id) {
+    // Returns nullopt instead of nullptr
+    if (!exists(id)) return std::nullopt;
+    return users_.at(id);
+}
+
+auto user = find_user(42);
+user->name;               // ❌ UB if empty — like null deref
+user.value().name;        // ✅ throws std::bad_optional_access if empty
+if (user) user->name;     // ✅ safe — explicit check
+```
+
+---
+
+## 🔴 02 — `ClassCastException` (Java) → `std::bad_cast` (C++)
+
+```
+Java: ClassCastException — invalid cast between unrelated types
+C++:  std::bad_cast        — thrown by dynamic_cast<T&> on failure
+      silent UB             — static_cast to wrong type
+```
+
+```cpp
+#include <typeinfo>
+
+class Animal { public: virtual ~Animal() { } };
+class Dog : public Animal { public: void bark() { } };
+class Cat : public Animal { public: void meow() { } };
+
+Animal* a = new Cat();
+
+// ─────────────────────────────────────────────
+// dynamic_cast<T*> — safe, returns nullptr
+// ─────────────────────────────────────────────
+Dog* d = dynamic_cast<Dog*>(a);   // a is Cat — returns nullptr
+if (!d) {
+    throw std::runtime_error("not a Dog");
+    // Or just check and handle
+}
+
+// ─────────────────────────────────────────────
+// dynamic_cast<T&> — throws std::bad_cast ← Java equivalent
+// ─────────────────────────────────────────────
+try {
+    Dog& dog = dynamic_cast<Dog&>(*a);   // a is Cat — throws
+    dog.bark();
+} catch (const std::bad_cast& e) {
+    std::cout << "bad_cast: " << e.what() << "\n";
+    // → "std::bad_cast"
+}
+
+// ─────────────────────────────────────────────
+// static_cast — DANGEROUS — no runtime check
+// ─────────────────────────────────────────────
+Dog* dog = static_cast<Dog*>(a);   // ❌ a is Cat — UB, no exception
+dog->bark();                        // ❌ UB — reading Cat memory as Dog
+
+// ─────────────────────────────────────────────
+// std::bad_cast also thrown by:
+// ─────────────────────────────────────────────
+double d = 3.14;
+std::any any_val = d;
+try {
+    int i = std::any_cast<int>(any_val);  // throws std::bad_any_cast
+} catch (const std::bad_any_cast& e) {
+    std::cout << e.what() << "\n";  // → "bad any_cast"
+}
+```
+
+---
+
+## 🔴 03 — `StackOverflowError` (Java) → Stack Overflow (C++)
+
+```
+Java: StackOverflowError — thrown when stack exhausted (infinite recursion)
+C++:  NOT an exception    — UB / SIGSEGV — stack guard page hit
+      NO catchable exception — OS kills process
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// Infinite recursion — stack overflow
+// ─────────────────────────────────────────────
+int infinite(int n) {
+    return infinite(n + 1);   // no base case — stack overflow
+}
+// → SIGSEGV — stack guard page hit
+// → NOT catchable — no C++ exception mechanism here
+// → Core dump on Linux, crash on Windows
+
+// Why not catchable?
+// Stack is exhausted — nowhere to PUT the exception object
+// Exception handling itself needs stack space
+// → std::terminate() or OS-level crash
+
+// ─────────────────────────────────────────────
+// Detection approaches:
+// ─────────────────────────────────────────────
+// 1. AddressSanitizer
+clang++ -fsanitize=address,undefined main.cpp
+// → "ASAN:DEADLYSIGNAL" / stack-overflow detected
+
+// 2. Valgrind
+valgrind --tool=callgrind ./program
+
+// 3. Platform stack size query (POSIX)
+#include <sys/resource.h>
+struct rlimit rl;
+getrlimit(RLIMIT_STACK, &rl);
+std::cout << "Stack limit: " << rl.rlim_cur << " bytes\n";
+// Default: 8MB Linux, 1MB Windows
+
+// 4. Increase stack size
+ulimit -s unlimited   // Linux shell
+
+// ─────────────────────────────────────────────
+// Prevention patterns:
+// ─────────────────────────────────────────────
+
+// ❌ Recursive DFS — stack overflow for deep graphs
+void dfs(Node* n) {
+    visit(n);
+    for (auto* child : n->children)
+        dfs(child);   // 100K depth → overflow
+}
+
+// ✅ Iterative DFS — explicit stack on heap
+void dfs_iterative(Node* root) {
+    std::stack<Node*> stack;
+    stack.push(root);
+    while (!stack.empty()) {
+        Node* n = stack.top(); stack.pop();
+        visit(n);
+        for (auto* child : n->children)
+            stack.push(child);   // heap stack — no overflow
+    }
+}
+
+// ✅ Tail recursion — compiler converts to loop (-O2)
+int factorial_tail(int n, int acc = 1) {
+    if (n <= 1) return acc;
+    return factorial_tail(n - 1, n * acc);  // tail call — no stack growth
+}
+```
+
+---
+
+## 🔴 04 — `OutOfMemoryError` (Java) → `std::bad_alloc` (C++)
+
+```
+Java: OutOfMemoryError — thrown when heap exhausted
+C++:  std::bad_alloc   — thrown by operator new on failure
+      std::nothrow      — returns nullptr instead of throwing
+```
+
+```cpp
+#include <new>
+
+// ─────────────────────────────────────────────
+// Standard new — throws std::bad_alloc
+// ─────────────────────────────────────────────
+try {
+    // Allocate more than available RAM
+    auto* p = new int[999'999'999'999LL];   // throws
+    use(p);
+} catch (const std::bad_alloc& e) {
+    std::cerr << "Out of memory: " << e.what() << "\n";
+    // → "std::bad_alloc"
+    // Handle: free caches, reduce buffers, fail gracefully
+}
+
+// ─────────────────────────────────────────────
+// nothrow new — returns nullptr on failure
+// ─────────────────────────────────────────────
+auto* p = new(std::nothrow) int[999'999'999'999LL];
+if (!p) {
+    // Allocation failed — handle without exception
+    free_caches();
+    p = new(std::nothrow) int[999'999'999'999LL];  // retry
+    if (!p) {
+        log_critical("Cannot allocate — shutting down");
+        std::terminate();
+    }
+}
+
+// ─────────────────────────────────────────────
+// Custom new_handler — called before bad_alloc thrown
+// ─────────────────────────────────────────────
+void out_of_memory_handler() {
+    static int attempts = 0;
+    if (++attempts < 3) {
+        // Try to free something
+        global_cache.clear();   // free some memory
+        return;                 // retry allocation
+    }
+    // Give up — let bad_alloc throw
+    std::set_new_handler(nullptr);  // restore default (throw immediately)
+}
+
+std::set_new_handler(out_of_memory_handler);
+
+// ─────────────────────────────────────────────
+// Vector growth — silent bad_alloc
+// ─────────────────────────────────────────────
+try {
+    std::vector<int> v;
+    v.reserve(SIZE_MAX);   // throws bad_alloc
+} catch (const std::bad_alloc& e) {
+    handle();
+}
+
+// ─────────────────────────────────────────────
+// bad_array_new_length (C++11)
+// ─────────────────────────────────────────────
+try {
+    auto* p = new int[-1];     // negative size
+    auto* q = new int[SIZE_MAX]; // too large
+} catch (const std::bad_array_new_length& e) {
+    // Derives from std::bad_alloc
+    std::cout << e.what() << "\n";  // "std::bad_array_new_length"
+}
+```
+
+---
+
+## 🔴 05 — `ArrayIndexOutOfBoundsException` (Java) → `std::out_of_range` / UB (C++)
+
+```
+Java: ArrayIndexOutOfBoundsException — always thrown, always safe
+C++:  operator[]    → UB — NO exception, NO check (by design, for speed)
+      .at()         → throws std::out_of_range (checked access)
+```
+
+```cpp
+#include <stdexcept>
+
+std::vector<int> v = {1, 2, 3};
+
+// ─────────────────────────────────────────────
+// operator[] — UNCHECKED — UB if out of bounds
+// ─────────────────────────────────────────────
+v[5] = 42;           // ❌ UB — no exception — reads/writes random memory
+                     // may crash, may corrupt data silently
+                     // like Java arrays without safety net
+
+// ─────────────────────────────────────────────
+// .at() — CHECKED — throws std::out_of_range ← Java equivalent
+// ─────────────────────────────────────────────
+try {
+    v.at(5) = 42;    // ✅ checked — throws
+} catch (const std::out_of_range& e) {
+    std::cerr << "Index out of range: " << e.what() << "\n";
+    // → "vector::_M_range_check: __n (which is 5) >= this->size() (which is 3)"
+}
+
+// ─────────────────────────────────────────────
+// C-array — ALWAYS UB, NEVER exception
+// ─────────────────────────────────────────────
+int arr[3] = {1, 2, 3};
+arr[5] = 42;         // ❌ UB — silent memory corruption
+                     // NO at() equivalent for C arrays
+
+// ─────────────────────────────────────────────
+// std::string — same pattern
+// ─────────────────────────────────────────────
+std::string s = "hello";
+s[99];               // ❌ UB — unchecked
+s.at(99);            // ✅ throws std::out_of_range
+
+// ─────────────────────────────────────────────
+// std::span (C++20) — non-owning view
+// ─────────────────────────────────────────────
+std::span<int> sp(arr, 3);
+sp[5];               // ❌ UB — unchecked
+// no .at() on span — use explicit check:
+if (5 < sp.size()) sp[5];
+
+// ─────────────────────────────────────────────
+// Detection: AddressSanitizer
+// ─────────────────────────────────────────────
+// clang++ -fsanitize=address main.cpp
+// → "heap-buffer-overflow" / "stack-buffer-overflow"
+// → shows exact line and allocation site
+```
+
+---
+
+## 🔴 06 — `ConcurrentModificationException` (Java) → UB / Iterator Invalidation (C++)
+
+```
+Java: ConcurrentModificationException — thrown when container modified during iteration
+C++:  NOT an exception — UNDEFINED BEHAVIOR — iterator invalidation
+      No runtime detection (unless sanitizers used)
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// Iterator invalidation — most common C++ bug
+// ─────────────────────────────────────────────
+std::vector<int> v = {1, 2, 3, 4, 5};
+
+// ❌ Erase during range-for — UB
+for (auto it = v.begin(); it != v.end(); ++it) {
+    if (*it % 2 == 0)
+        v.erase(it);   // ❌ invalidates it — ++it is UB
+}
+
+// ❌ push_back during iteration — may realloc → all iterators invalid
+for (auto& x : v) {
+    v.push_back(x * 2);  // ❌ realloc → range-for's internal end() dangling
+}
+
+// ─────────────────────────────────────────────
+// ✅ Fixes — erase returns next valid iterator
+// ─────────────────────────────────────────────
+for (auto it = v.begin(); it != v.end(); ) {
+    if (*it % 2 == 0)
+        it = v.erase(it);   // ✅ erase returns next valid
+    else
+        ++it;
+}
+
+// ✅ Erase-remove idiom — most idiomatic
+v.erase(
+    std::remove_if(v.begin(), v.end(),
+        [](int x){ return x % 2 == 0; }),
+    v.end()
+);
+
+// ─────────────────────────────────────────────
+// std::list — iterator stability (erase only invalidates erased node)
+// ─────────────────────────────────────────────
+std::list<int> l = {1, 2, 3, 4, 5};
+for (auto it = l.begin(); it != l.end(); ) {
+    if (*it % 2 == 0)
+        it = l.erase(it);   // ✅ other iterators still valid
+    else
+        ++it;
+}
+
+// ─────────────────────────────────────────────
+// Map — safe to erase current element only
+// ─────────────────────────────────────────────
+std::map<int, std::string> m = {{1,"a"},{2,"b"},{3,"c"}};
+for (auto it = m.begin(); it != m.end(); ) {
+    if (it->first % 2 == 0)
+        it = m.erase(it);   // ✅ returns next valid iterator
+    else
+        ++it;
+}
+
+// ─────────────────────────────────────────────
+// Concurrent access — data race (C++ undefined behavior)
+// ─────────────────────────────────────────────
+// Thread A: reading vector
+// Thread B: pushing to same vector — race condition → UB
+// Fix: std::shared_mutex, concurrent containers, or immutable data
+```
+
+---
+
+## 🔴 07 — `IllegalArgumentException` (Java) → `std::invalid_argument` (C++)
+
+```
+Java: IllegalArgumentException — argument violates method contract
+C++:  std::invalid_argument   — direct equivalent in std::logic_error hierarchy
+```
+
+```cpp
+#include <stdexcept>
+
+// ─────────────────────────────────────────────
+// std::invalid_argument — exact Java equivalent
+// ─────────────────────────────────────────────
+double sqrt_safe(double x) {
+    if (x < 0.0)
+        throw std::invalid_argument(
+            "sqrt requires non-negative: " + std::to_string(x));
+    return std::sqrt(x);
+}
+
+try {
+    sqrt_safe(-1.0);
+} catch (const std::invalid_argument& e) {
+    std::cerr << e.what() << "\n";
+    // → "sqrt requires non-negative: -1.000000"
+}
+
+// ─────────────────────────────────────────────
+// Standard library throws invalid_argument:
+// ─────────────────────────────────────────────
+try {
+    std::stoi("not_a_number");   // throws invalid_argument
+    std::stod("");               // throws invalid_argument
+    std::bitset<8>("012");       // throws invalid_argument (non 0/1 char)
+    std::regex("(unclosed");     // throws std::regex_error
+} catch (const std::invalid_argument& e) {
+    std::cerr << e.what() << "\n";
+}
+
+// ─────────────────────────────────────────────
+// Custom validation with rich context
+// ─────────────────────────────────────────────
+class Config {
+public:
+    void set_port(int port) {
+        if (port < 1 || port > 65535)
+            throw std::invalid_argument(
+                "Port must be 1-65535, got: " + std::to_string(port));
+        port_ = port;
+    }
+    void set_timeout(int ms) {
+        if (ms <= 0)
+            throw std::invalid_argument(
+                "Timeout must be positive, got: " + std::to_string(ms));
+        timeout_ms_ = ms;
+    }
+private:
+    int port_       = 8080;
+    int timeout_ms_ = 5000;
+};
+
+// ─────────────────────────────────────────────
+// Precondition checking — assert vs exception
+// ─────────────────────────────────────────────
+// For public API: throw invalid_argument (callers can handle)
+// For internal code: assert (bugs — should never happen)
+void public_api(int x) {
+    if (x < 0)
+        throw std::invalid_argument("x must be non-negative");
+}
+
+void internal_impl(int x) {
+    assert(x >= 0 && "internal bug: x must be non-negative");
+}
+```
+
+---
+
+## 🔴 08 — `IllegalStateException` (Java) → `std::logic_error` / Custom (C++)
+
+```
+Java: IllegalStateException  — object in wrong state for operation
+C++:  std::logic_error        — closest standard equivalent
+      Custom exception         — better: StateException, InvalidStateException
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// Object state machine — illegal state
+// ─────────────────────────────────────────────
+class Connection {
+public:
+    enum class State { DISCONNECTED, CONNECTING, CONNECTED, CLOSED };
+
+    void send(const std::string& data) {
+        if (state_ != State::CONNECTED)
+            throw std::logic_error(
+                "Cannot send: connection is " + state_to_str(state_));
+        socket_.write(data);
+    }
+
+    void connect(const std::string& host) {
+        if (state_ != State::DISCONNECTED)
+            throw std::logic_error(
+                "Already " + state_to_str(state_) + " — cannot connect");
+        state_ = State::CONNECTING;
+        do_connect(host);
+        state_ = State::CONNECTED;
+    }
+
+    void close() {
+        if (state_ == State::CLOSED)
+            throw std::logic_error("Already closed");
+        state_ = State::CLOSED;
+    }
+
+private:
+    State state_ = State::DISCONNECTED;
+    std::string state_to_str(State s) { /* ... */ }
+};
+
+// ─────────────────────────────────────────────
+// Custom IllegalStateException equivalent
+// ─────────────────────────────────────────────
+class IllegalStateException : public std::logic_error {
+    std::string current_state_;
+    std::string required_state_;
+public:
+    IllegalStateException(std::string op,
+                          std::string current,
+                          std::string required)
+        : std::logic_error("Cannot '" + op + "': "
+                          + "current state='" + current + "' "
+                          + "required state='" + required + "'")
+        , current_state_(std::move(current))
+        , required_state_(std::move(required)) { }
+
+    const std::string& current()  const noexcept { return current_state_;  }
+    const std::string& required() const noexcept { return required_state_; }
+};
+
+// ─────────────────────────────────────────────
+// Standard library: std::future illegal state
+// ─────────────────────────────────────────────
+std::future<int> f;
+try {
+    f.get();   // future has no shared state — throws std::future_error
+} catch (const std::future_error& e) {
+    // std::future_error IS-A std::logic_error
+    std::cout << e.what() << "\n";
+    std::cout << e.code() << "\n";  // std::future_errc::no_state
+}
+```
+
+---
+
+## 🔴 09 — `UnsupportedOperationException` (Java) → `= delete` / `std::logic_error` (C++)
+
+```
+Java: UnsupportedOperationException — operation not supported (immutable collections)
+C++:  = delete                       — compile-time prevention (better)
+      std::logic_error               — runtime signaling
+      Pure virtual = 0               — forces implementation in derived
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// = delete — compile-time "unsupported" (best)
+// ─────────────────────────────────────────────
+class ReadOnlyBuffer {
+    std::vector<uint8_t> data_;
+public:
+    // Reading — supported
+    const uint8_t& operator[](size_t i) const { return data_[i]; }
+    size_t size() const { return data_.size(); }
+
+    // Writing — NOT supported — compile-time error
+    uint8_t& operator[](size_t i) = delete;    // ❌ compile error if called
+    void push_back(uint8_t) = delete;           // ❌ compile error if called
+    void clear() = delete;                       // ❌ compile error if called
+};
+
+ReadOnlyBuffer buf;
+buf[0];            // ✅ const access
+buf[0] = 42;       // ❌ compile error: use of deleted function
+buf.push_back(1);  // ❌ compile error: use of deleted function
+// Java throws at runtime — C++ catches at compile time
+
+// ─────────────────────────────────────────────
+// Runtime "unsupported" — for polymorphic hierarchies
+// ─────────────────────────────────────────────
+class UnsupportedOperationException : public std::logic_error {
+    std::string operation_;
+public:
+    explicit UnsupportedOperationException(std::string op)
+        : std::logic_error("Operation not supported: " + op)
+        , operation_(std::move(op)) { }
+    const std::string& operation() const noexcept { return operation_; }
+};
+
+class AbstractCollection {
+public:
+    virtual void add(int val) {
+        throw UnsupportedOperationException("add");
+        // Derived can override — base says "unsupported"
+    }
+    virtual void remove(int val) {
+        throw UnsupportedOperationException("remove");
+    }
+    virtual int get(size_t i) const = 0;
+};
+
+class ImmutableList : public AbstractCollection {
+    std::vector<int> data_;
+public:
+    // add() and remove() NOT overridden → throws UnsupportedOperationException
+    int get(size_t i) const override { return data_.at(i); }
+};
+
+// ─────────────────────────────────────────────
+// Better C++ pattern: interfaces segregation
+// ─────────────────────────────────────────────
+class IReadable {
+public:
+    virtual int get(size_t i) const = 0;
+    virtual ~IReadable() = default;
+};
+
+class IWritable {
+public:
+    virtual void add(int val) = 0;
+    virtual void remove(int val) = 0;
+    virtual ~IWritable() = default;
+};
+
+// Immutable: only IReadable — no UnsupportedOperationException needed
+class ImmutableList : public IReadable {
+    int get(size_t i) const override { return data_.at(i); }
+    std::vector<int> data_;
+};
+// add() simply doesn't exist — no runtime exception needed
+```
+
+---
+
+## 🔴 10 — `NoClassDefFoundError` (Java) → Linker Errors / `dlsym` Failure (C++)
+
+```
+Java: NoClassDefFoundError — class found at compile time, missing at runtime
+C++:  Linker error          — "undefined reference" (compile/link time)
+      dlopen/dlsym failure  — shared library not found (runtime)
+      NOT an exception       — linker/OS level error
+```
+
+```cpp
+// ─────────────────────────────────────────────
+// Static linking — caught at LINK time (not runtime)
+// ─────────────────────────────────────────────
+// Equivalent of NoClassDefFoundError at link time:
+// error: undefined reference to 'MyClass::doWork()'
+// This is IMPOSSIBLE at runtime — linker catches it
+
+// ─────────────────────────────────────────────
+// Dynamic loading — runtime equivalent
+// ─────────────────────────────────────────────
+#include <dlfcn.h>  // POSIX
+
+// Runtime dynamic library loading — closest to NoClassDefFoundError
+void* handle = dlopen("libplugin.so", RTLD_LAZY);
+if (!handle) {
+    // Library not found — std::runtime_error equivalent
+    throw std::runtime_error(
+        std::string("Cannot load library: ") + dlerror());
+}
+
+// Symbol not found — like "method not found"
+using WorkFn = void(*)();
+WorkFn work = reinterpret_cast<WorkFn>(dlsym(handle, "do_work"));
+if (!work) {
+    throw std::runtime_error(
+        std::string("Symbol not found: ") + dlerror());
+}
+
+work();   // call the dynamically loaded function
+dlclose(handle);
+
+// ─────────────────────────────────────────────
+// C++ equivalent pattern — type-safe plugin loading
+// ─────────────────────────────────────────────
+class PluginLoader {
+public:
+    template<typename FnPtr>
+    FnPtr load_symbol(void* handle, const char* name) {
+        auto sym = dlsym(handle, name);
+        if (!sym)
+            throw std::runtime_error(
+                "Symbol '" + std::string(name) + "' not found: "
+                + dlerror());
+        return reinterpret_cast<FnPtr>(sym);
+    }
+
+    void* load_library(const std::string& path) {
+        void* h = dlopen(path.c_str(), RTLD_LAZY);
+        if (!h)
+            throw std::runtime_error(
+                "Cannot load '" + path + "': " + dlerror());
+        return h;
+    }
+};
+
+// Windows equivalent
+#include <windows.h>
+HMODULE h = LoadLibrary("plugin.dll");
+if (!h) {
+    DWORD err = GetLastError();
+    throw std::runtime_error("LoadLibrary failed: " + std::to_string(err));
+}
+auto fn = GetProcAddress(h, "create_plugin");
+if (!fn) throw std::runtime_error("GetProcAddress failed");
+```
+
+---
+
+## 📊 Java → C++ Exception Mapping Table
+
+| Java Exception | C++ Equivalent | Catchable? | Type |
+|---|---|---|---|
+| `NullPointerException` | UB → SIGSEGV | ❌ Not catchable | UB / Signal |
+| `ClassCastException` | `std::bad_cast` | ✅ | Exception |
+| `StackOverflowError` | UB → SIGSEGV | ❌ Not catchable | UB / Signal |
+| `OutOfMemoryError` | `std::bad_alloc` | ✅ | Exception |
+| `ArrayIndexOutOfBoundsException` | `std::out_of_range` (`.at()`) / UB (`[]`) | ✅ / ❌ | Exception / UB |
+| `ConcurrentModificationException` | UB → data race | ❌ Not catchable | UB |
+| `IllegalArgumentException` | `std::invalid_argument` | ✅ | Exception |
+| `IllegalStateException` | `std::logic_error` / custom | ✅ | Exception |
+| `UnsupportedOperationException` | `= delete` / custom | Compile / Runtime | Both |
+| `NoClassDefFoundError` | Linker error / `dlopen` failure | Link / ✅ | Both |
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```
+"Can C++ catch a null pointer dereference like Java catches NullPointerException?"
+```
+> ❌ No. In C++, null dereference is **Undefined Behavior** — the compiler can do anything. In practice, the OS delivers SIGSEGV. You can install a signal handler but it cannot safely unwind the stack or convert to a C++ exception (very platform-specific and fragile). The correct C++ answer: **prevent** null dereference via `std::optional`, smart pointer checks, and assertions — don't try to catch it.
+
+**Trap 2:**
+```cpp
+std::vector<int> v = {1, 2, 3};
+v[10];       // throws std::out_of_range?
+v.at(10);    // throws std::out_of_range?
+```
+> `v[10]` → **UB** — no exception, no check, reads random memory. `v.at(10)` → **throws `std::out_of_range`**. This distinction is critical — `operator[]` is unchecked by design for performance, `.at()` is checked. Many C++ bugs come from using `[]` thinking it throws.
+
+**Trap 3:**
+```
+"Is iterator invalidation caught at runtime in C++ like Java's ConcurrentModificationException?"
+```
+> Only with special tooling. Standard C++ gives no runtime detection — it's UB. BUT: GCC's `_GLIBCXX_DEBUG` mode and Clang's `-fsanitize=address` can detect some iterator invalidation. Some library implementations (MSVC STL in debug mode) add runtime checks. In production builds: no detection — silent corruption. Java's fail-fast iterators are genuinely safer for this specific case.
+
+**Trap 4:**
+```cpp
+// Which throws std::bad_alloc?
+auto* p1 = new int[SIZE_MAX];
+auto* p2 = new(std::nothrow) int[SIZE_MAX];
+auto* p3 = new int[-1];
+```
+> `p1` → `std::bad_alloc` (or `std::bad_array_new_length` on some platforms). `p2` → returns `nullptr` — no exception (`std::nothrow`). `p3` → `std::bad_array_new_length` (C++11) — negative size for array new.
+
+**Trap 5:**
+```cpp
+class Singleton {
+    Singleton() = default;
+public:
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
+};
+Singleton s1;
+Singleton s2 = s1;   // throws UnsupportedOperationException?
+```
+> ❌ **Compile error** — not a runtime exception. `= delete` makes the copy constructor ill-formed — the compiler rejects it at compile time. This is **superior** to Java's `UnsupportedOperationException` which is a runtime failure. C++ catches the mistake before the program ever runs.
+
+---

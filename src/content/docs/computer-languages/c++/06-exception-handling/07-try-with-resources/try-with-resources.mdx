@@ -1,0 +1,1062 @@
+---
+title: C++ RAII & Resource Management (No `try-with-resources`)
+slug: computer-languages/cpp/resource-management/raii-vs-try-with-resources
+description: Why C++ doesn't need `try-with-resources`, how RAII replaces it, and patterns for safe resource cleanup.
+sidebar:
+  label: "RAII & Cleanup"
+  badge:
+    text: Core Concept
+    variant: tip
+tags: [cpp, raii, try-with-resources, destructor, exception-safety, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🚫 There is No `try-with-resources` in C++
+
+---
+
+### 🧠 What It Is
+
+C++ **does not have a `try-with-resources` statement**. Instead, it relies on a fundamental language feature called **RAII** (Resource Acquisition Is Initialization).
+
+In Java, you wrap resources in a `try(...)` block to ensure `close()` is called. In C++, you wrap resources in **objects** whose **destructors** automatically release the resource when the object goes out of scope—whether normally or via an exception.
+
+> **Key Insight**: `try-with-resources` is explicit manual cleanup syntax. RAII is implicit automatic cleanup tied to object lifetime. RAII is generally considered safer and less verbose because it's impossible to forget.
+
+---
+
+### 🔬 Syntax Comparison
+
+```java
+// Java: Explicit try-with-resources
+try (Connection conn = db.getConnection();
+     Statement stmt = conn.createStatement()) {
+    stmt.execute("SELECT * FROM users");
+} // conn.close() and stmt.close() called automatically
+```
+
+```cpp
+// C++: Implicit RAII
+{
+    Connection conn(db.getConnection()); // Constructor acquires
+    Statement stmt(conn.createStatement()); // Constructor acquires
+    
+    stmt.execute("SELECT * FROM users");
+} // stmt.~Statement() and conn.~Connection() called automatically here!
+```
+
+<Aside type="note">
+**Why no `try-with-resources`?** 
+Bjarne Stroustrup argued that binding resource lifetime to object lifetime (RAII) is more robust than a special syntax block. If you move the resource object, the cleanup moves with it. In `try-with-resources`, the resource is stuck in the block.
+</Aside>
+
+---
+
+### 🔬 Execution Flow — RAII vs Try-With-Resources
+
+When an exception is thrown in C++, **Stack Unwinding** occurs. The runtime walks up the stack, calling destructors for all local objects. This is exactly what `finally` or `try-with-resources` does in Java, but it happens for **every** object, automatically.
+
+```text
+Java Flow (try-with-resources):
+  try (Resource r) { throw E; } 
+  → r.close() runs 
+  → propagate E
+
+C++ Flow (RAII):
+  { 
+      Resource r; 
+      throw E; 
+  } 
+  → r.~Resource() runs (Unwinding) 
+  → propagate E
+```
+
+<Code lang="cpp" title="RAII in Action" code={`
+#include <iostream>
+#include <stdexcept>
+#include <fstream>
+
+void processFile(const std::string& name) {
+    std::ifstream file(name); // RAII: Opens file
+    
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open " + name);
+    }
+    
+    std::string line;
+    std::getline(file, line);
+    
+    if (line.empty()) {
+        throw std::runtime_error("Empty file");
+    }
+    
+    std::cout << line << "\\n";
+    
+} // file.~ifstream() called here automatically, closing the handle.
+  // Even if an exception was thrown above!
+
+int main() {
+    try {
+        processFile("data.txt");
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << '\\n';
+    }
+    return 0;
+}
+`} />
+
+---
+
+### 💻 Real-World Code — Database Transaction
+
+In Java, you might use `try-with-resources` to close connections. In C++, you use a **Transaction Guard** class.
+
+<Code lang="cpp" title="Transaction RAII Pattern" code={`
+class Transaction {
+    DBConnection& conn;
+    bool committed = false;
+public:
+    explicit Transaction(DBConnection& c) : conn(c) {
+        conn.begin();
+    }
+    
+    void commit() {
+        conn.commit();
+        committed = true;
+    }
+    
+    ~Transaction() {
+        if (!committed) {
+            conn.rollback(); // Automatic rollback if exception occurred!
+        }
+        // Connection itself is likely managed by another RAII wrapper (shared_ptr or similar)
+    }
+};
+
+void transferMoney(DBConnection& db, int from, int to, double amount) {
+    Transaction tx(db); // Begin transaction
+    
+    db.withdraw(from, amount); // Might throw
+    db.deposit(to, amount);    // Might throw
+    
+    tx.commit(); // Mark as successful
+} // If withdraw/deposit threw, dtor rolls back automatically.
+`} />
+
+🔴 **What breaks if done wrong:** If you use raw pointers and manually `delete` or `close` in a `catch` block, and an exception happens before that line, you leak. RAII handles partial construction safely.
+
+---
+
+### 🔬 Simulating `try-with-resources` (If You Really Must)
+
+Sometimes you need to manage a resource that isn't wrapped in a class (e.g., a C-style FILE*). You can create a simple generic "ScopeGuard" or use `std::unique_ptr` with a custom deleter.
+
+<Code lang="cpp" title="Generic ScopeGuard / Finally Helper" code={`
+#include <functional>
+#include <memory>
+
+// Simple ScopeGuard using unique_ptr trick
+template<typename Func>
+auto make_guard(Func&& f) {
+    return std::unique_ptr<void, std::function<void(void*)>>(
+        nullptr, 
+        [f=std::forward<Func>(f)](void*) { f(); }
+    );
+}
+
+void demo() {
+    FILE* f = fopen("data.txt", "r");
+    if (!f) throw std::runtime_error("Open failed");
+    
+    // Ensure fclose is called when 'guard' goes out of scope
+    auto guard = make_guard([f]() {
+        if (f) fclose(f);
+    });
+    
+    // Use f...
+    if (error_condition) {
+        throw std::runtime_error("Processing error");
+    }
+    
+} // fclose(f) called here automatically via guard destructor
+`} />
+
+<Aside type="tip">
+**Best Practice**: Don't write your own guards if you can avoid it. Wrap C resources in proper RAII classes (like `std::ifstream` wraps `FILE*`). Use `std::unique_ptr<T, Deleter>` for smart pointer-based cleanup.
+</Aside>
+
+---
+
+### 🔬 Multiple Resources — Order of Cleanup
+
+In Java `try(A; B)`, `B` is closed before `A` (LIFO). 
+In C++, local objects are destroyed in **reverse order of construction** (also LIFO).
+
+```cpp
+void foo() {
+    ResourceA a; // Constructed first
+    ResourceB b; // Constructed second
+    
+    // ... work ...
+    
+} // b.~ResourceB() called FIRST
+  // a.~ResourceA() called SECOND
+```
+
+This matches the dependency logic: if `B` depends on `A`, `B` must be destroyed before `A` is torn down.
+
+---
+
+### 🔬 Exception Suppression?
+
+Java `try-with-resources` has a complex mechanism for **Suppressed Exceptions** (if `close()` throws while an exception is already active). 
+
+In C++, if a destructor throws while another exception is active (unwinding), the program calls `std::terminate()` immediately. 
+
+✅ **Rule**: Destructors must **NEVER** throw. Handle errors inside the destructor (log them), but do not let them escape. This avoids the need for suppression logic entirely.
+
+```cpp
+~MyResource() {
+    try {
+        close_handle();
+    } catch (...) {
+        // Log error, but DO NOT throw.
+        std::cerr << "Failed to close resource\\n";
+    }
+}
+```
+
+---
+
+### 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Thinking `delete` is like `close()`" icon="error">
+    ```cpp
+    void foo() {
+        int* p = new int(10);
+        try {
+            doWork();
+        } catch (...) {
+            delete p; 
+            throw; 
+        }
+        delete p;
+    }
+    ```
+    This is verbose and error-prone. If `doWork` throws a different exception, or if you add a new return path, you leak.
+    ✅ **Fix**: `auto p = std::make_unique<int>(10);`
+  </Card>
+  
+  <Card title="Trap 2: Throwing from Destructor" icon="shield">
+    If a destructor throws while another exception is active, `std::terminate()` is called.
+    ✅ **Fix**: Catch all exceptions in the destructor and log them. Never throw.
+  </Card>
+
+  <Card title="Trap 3: Partial Construction" icon="caution">
+    If a constructor throws, the destructor for that object is **NOT** called. However, destructors **are** called for any fully constructed member variables.
+    ✅ **Fix**: Rely on member RAII. Don't put raw cleanup in the class destructor if members handle it.
+  </Card>
+
+  <Card title="Trap 4: Moving Resources" icon="information">
+    In Java, you can't easily move a resource out of a `try-with-resources` block. In C++, you can `std::move` an RAII object. The cleanup responsibility moves with the object.
+    ✅ **Benefit**: RAII is more flexible than `try-with-resources`.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### Stack Unwinding
+
+When an exception is thrown, the C++ runtime looks at the stack frames. For each frame, it checks what local objects exist. It calls their destructors in reverse order of construction. This is **deterministic**.
+
+Java's `try-with-resources` is a bytecode instruction block that is jumped to. C++'s RAII is a semantic guarantee enforced by the compiler generating destructor calls at every exit point (return, throw, end of scope).
+
+### Zero-Cost Abstraction
+
+Like `try-catch`, RAII has **zero overhead** when no exception occurs. The destructor call is just a normal function call inserted by the compiler at the end of the scope. There is no runtime check "is there a finally block?".
+
+---
+
+### 📊 Decision Guide
+
+| Situation | Java Pattern | C++ Pattern |
+|-----------|---------|----------------|
+| Close File/Socket | `try-with-resources` | RAII Wrapper Class (`std::ifstream`) |
+| Release Lock | `try-with-resources` | `std::lock_guard` (RAII) |
+| Free Memory | `try-with-resources` (rarely) | `std::unique_ptr` / `std::shared_ptr` |
+| Log Entry/Exit | `try-finally` | `ScopeGuard` (Lambda in destructor) |
+| Complex Cleanup | `try-with-resources` | Custom RAII Class |
+
+---
+
+### 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct A {
+    ~A() { std::cout << "A "; }
+};
+
+struct B {
+    ~B() { std::cout << "B "; }
+};
+
+void foo() {
+    A a;
+    try {
+        B b;
+        throw std::runtime_error("err");
+    } catch (...) {
+        std::cout << "Catch ";
+        throw; // Rethrow
+    }
+}
+
+int main() {
+    try {
+        foo();
+    } catch (...) {
+        std::cout << "Outer ";
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: B A Catch Outer 
+
+Explanation:
+1. foo() creates 'a', then 'b'.
+2. Exception thrown.
+3. Stack unwinds in foo():
+   - 'b' destroyed → prints "B ".
+   - Control jumps to catch in foo().
+4. Catch prints "Catch ".
+5. Catch rethrows.
+6. Stack unwinds further:
+   - 'a' destroyed → prints "A ".
+7. Control jumps to outer catch.
+8. Outer prints "Outer ".
+```
+</details>
+
+---
+
+# 🔧 C++ Exception Enhancements — Complete Deep Dive
+
+---
+
+## 📌 First — Java Has These, C++ Has Better Equivalents
+
+```java
+// Java try-with-resources
+try (FileReader f = new FileReader("file.txt")) {
+    process(f);
+}   // f.close() called automatically
+
+// Java multi-catch
+try { risky(); }
+catch (IOException | SQLException e) { handle(e); }
+```
+
+```cpp
+// C++ has NO try-with-resources syntax
+// C++ has NO multi-catch syntax (IOException | SQLException)
+// C++ has BETTER mechanisms that subsume both
+```
+
+---
+
+# 📁 01 — `try-with-resources` Equivalent
+
+## 📌 Why Java Needed It
+
+```java
+// Java — before try-with-resources (Java 6):
+FileReader f = null;
+try {
+    f = new FileReader("file.txt");
+    process(f);
+} catch (IOException e) {
+    handle(e);
+} finally {
+    if (f != null) try { f.close(); } catch (IOException e) { }
+}
+// Verbose, error-prone, easy to forget close()
+```
+
+```java
+// Java try-with-resources (Java 7+):
+try (FileReader f = new FileReader("file.txt")) {
+    process(f);
+}   // f.close() auto-called — cleaner, but still a special syntax
+```
+
+---
+
+### C++ Approach — RAII (Superior)
+
+RAII doesn't need special syntax. **Every C++ object IS a resource manager.**
+
+```cpp
+// C++ — no special syntax needed
+{
+    std::ifstream f("file.txt");   // RAII — opens in ctor
+    process(f);
+}   // RAII — closes in dtor: ✅ normal exit
+    //                        ✅ exception
+    //                        ✅ early return
+    //                        ✅ break/continue
+    // No syntax required — automatic by design
+```
+
+---
+
+### Single Resource — RAII
+
+```cpp
+// ─────────────────────────────────────────────
+// File resource
+// ─────────────────────────────────────────────
+{
+    std::ifstream file("data.csv");
+    if (!file) throw std::runtime_error("cannot open data.csv");
+    parse_csv(file);
+}   // file.~ifstream() → closes automatically
+
+// ─────────────────────────────────────────────
+// Mutex resource
+// ─────────────────────────────────────────────
+{
+    std::lock_guard<std::mutex> lock(mtx_);   // acquires
+    modify_shared_state();
+}   // lock.~lock_guard() → releases automatically
+
+// ─────────────────────────────────────────────
+// Network connection
+// ─────────────────────────────────────────────
+{
+    TcpConnection conn("example.com", 443);   // connects in ctor
+    conn.send(request);
+    auto resp = conn.receive();
+}   // conn.~TcpConnection() → disconnects automatically
+```
+
+---
+
+### Multiple Resources — RAII (Java's `try (A a; B b; C c)`)
+
+```java
+// Java try-with-resources — multiple
+try (Connection conn = db.getConnection();
+     PreparedStatement stmt = conn.prepareStatement(sql);
+     ResultSet rs = stmt.executeQuery()) {
+    process(rs);
+}   // rs, stmt, conn closed in reverse order
+```
+
+```cpp
+// C++ — scope does it naturally, LIFO destruction guaranteed
+{
+    DatabaseConnection conn(db_url);          // resource 1 — acquired
+    PreparedStatement  stmt(conn, sql);       // resource 2 — acquired
+    ResultSet          rs = stmt.execute();   // resource 3 — acquired
+
+    process(rs);
+
+}   // LIFO destruction:
+    // rs.~ResultSet()         ← destroyed first
+    // stmt.~PreparedStatement ← destroyed second
+    // conn.~DatabaseConnection← destroyed third
+    // Reverse construction order — guaranteed by C++ standard
+
+// Exception during construction:
+{
+    DatabaseConnection conn(db_url);    // ✅ constructed
+    PreparedStatement  stmt(conn, sql); // ❌ throws!
+    ResultSet          rs = stmt.execute(); // never reached
+}   // conn.~DatabaseConnection() CALLED — conn was fully constructed
+    // stmt destructor NOT called — never fully constructed
+    // rs destructor NOT called — never constructed
+```
+
+---
+
+### Custom Resource RAII Wrapper
+
+```cpp
+// Wrap any C resource in RAII
+template<typename Handle, typename Deleter>
+class UniqueResource {
+    Handle  handle_;
+    Deleter deleter_;
+    bool    active_ = true;
+
+public:
+    UniqueResource(Handle h, Deleter d)
+        : handle_(h), deleter_(std::move(d)) { }
+
+    ~UniqueResource() {
+        if (active_) {
+            try { deleter_(handle_); }
+            catch (...) { /* swallow — dtor must not throw */ }
+        }
+    }
+
+    // Non-copyable
+    UniqueResource(const UniqueResource&) = delete;
+    UniqueResource& operator=(const UniqueResource&) = delete;
+
+    // Movable
+    UniqueResource(UniqueResource&& o) noexcept
+        : handle_(o.handle_), deleter_(std::move(o.deleter_)) {
+        o.active_ = false;
+    }
+
+    Handle  get()     const { return handle_; }
+    Handle  release() { active_ = false; return handle_; }
+    operator Handle() const { return handle_; }
+};
+
+// Factory
+template<typename H, typename D>
+UniqueResource<H, D> make_unique_resource(H handle, D deleter) {
+    return {handle, std::move(deleter)};
+}
+
+// ─────────────────────────────────────────────
+// Usage — wrap any C-style resource
+// ─────────────────────────────────────────────
+
+// FILE*
+{
+    auto file = make_unique_resource(
+        fopen("data.txt", "r"),
+        [](FILE* f){ if (f) fclose(f); }
+    );
+    if (!file.get()) throw std::runtime_error("cannot open file");
+    read_data(file.get());
+}   // fclose() called automatically
+
+// POSIX fd
+{
+    auto fd = make_unique_resource(
+        ::open("/dev/input", O_RDONLY),
+        [](int f){ if (f >= 0) ::close(f); }
+    );
+    if (fd.get() < 0) throw std::system_error(errno, std::generic_category());
+    read_from_fd(fd.get());
+}   // close() called automatically
+
+// SQLite
+{
+    sqlite3* raw_db;
+    sqlite3_open("app.db", &raw_db);
+    auto db = make_unique_resource(raw_db, sqlite3_close);
+    sqlite3_exec(db.get(), "SELECT ...", nullptr, nullptr, nullptr);
+}   // sqlite3_close() called automatically
+```
+
+---
+
+### `std::unique_ptr` as `try-with-resources`
+
+```cpp
+// std::unique_ptr with custom deleter — standard RAII tool
+auto db_deleter = [](sqlite3* db) { sqlite3_close(db); };
+auto file_deleter = [](FILE* f) { if (f) fclose(f); };
+
+// Java: try (var db = openDB(); var f = openFile()) { }
+// C++:
+{
+    std::unique_ptr<sqlite3, decltype(db_deleter)>
+        db(open_db("app.db"), db_deleter);
+
+    std::unique_ptr<FILE, decltype(file_deleter)>
+        log(fopen("log.txt", "w"), file_deleter);
+
+    // Use both resources
+    write_log(log.get(), "opened db");
+    query_db(db.get());
+
+}   // log closed, then db closed — LIFO
+```
+
+---
+
+### Scope Guard — For Non-Owning Cleanup
+
+```cpp
+// When resource doesn't have RAII wrapper
+// Java: try (...) { } → close() called
+// C++: scope_exit → arbitrary cleanup called
+
+class scope_exit {
+    std::function<void()> fn_;
+    bool active_ = true;
+public:
+    explicit scope_exit(std::function<void()> f) : fn_(std::move(f)) { }
+    ~scope_exit() { if (active_) try { fn_(); } catch (...) { } }
+    void dismiss() { active_ = false; }
+
+    scope_exit(const scope_exit&) = delete;
+    scope_exit(scope_exit&&) = default;
+};
+
+// Usage
+void process_transaction(Database& db) {
+    db.begin();
+    scope_exit rollback_guard([&]{ db.rollback(); });  // always rollback
+
+    do_work(db);
+
+    db.commit();
+    rollback_guard.dismiss();   // commit succeeded — cancel rollback
+}   // If exception: rollback() called
+    // If normal: dismiss() cancelled rollback, commit already happened
+```
+
+---
+
+### `try-with-resources` Patterns Side-by-Side
+
+```
+Java try-with-resources      →   C++ RAII equivalent
+─────────────────────────────────────────────────────────────────
+try (A a = new A()) { }      →   { A a; /* use */ }
+try (A a; B b) { }           →   { A a; B b; /* use */ }
+AutoCloseable interface       →   destructor ~T()
+close() method                →   destructor ~T()
+close() exception suppressed  →   dtor catches internally
+reverse close order           →   LIFO destruction (guaranteed by C++)
+explicit release()            →   unique_ptr::release()
+```
+
+---
+
+# 📁 02 — Multi-catch Block Equivalent
+
+## 📌 Java Multi-catch
+
+```java
+// Java 7+ — catch multiple exception types in one block
+try { risky(); }
+catch (IOException | SQLException | NetworkException e) {
+    log(e.getMessage());   // single handler for three types
+}
+```
+
+**C++ has NO `|` multi-catch syntax.** Five patterns replace it:
+
+---
+
+### Pattern 1 — Common Base Class (Best)
+
+```cpp
+// If exceptions share a base → catch the base
+class AppException : public std::exception { };
+class DatabaseError : public AppException   { };
+class NetworkError  : public AppException   { };
+class CacheError    : public AppException   { };
+
+try {
+    risky();
+} catch (const AppException& e) {
+    // Catches DatabaseError, NetworkError, CacheError
+    // AND any future AppException derived type
+    log(e.what());
+}
+```
+
+---
+
+### Pattern 2 — Catch-All + `rethrow_if_nested` Inspection
+
+```cpp
+try {
+    risky();
+} catch (...) {
+    auto ep = std::current_exception();
+    try {
+        std::rethrow_exception(ep);
+    } catch (const DatabaseError& e) {
+        handle_db(e);
+        return;
+    } catch (const NetworkError& e) {
+        handle_net(e);
+        return;
+    }
+    // If neither matched — rethrow original
+    std::rethrow_exception(ep);
+}
+```
+
+---
+
+### Pattern 3 — Handler Lambda (Most Flexible)
+
+```cpp
+// Define handler once — apply to multiple catches
+auto handle_infra_error = [&](const std::exception& e) {
+    metrics_.increment("infra_errors");
+    log_error("Infrastructure failure: ", e.what());
+    alert_on_call(e.what());
+};
+
+try {
+    risky();
+} catch (const DatabaseError& e)  { handle_infra_error(e); }
+catch (const NetworkError& e)     { handle_infra_error(e); }
+catch (const CacheError& e)       { handle_infra_error(e); }
+// Same handler, multiple catch blocks
+// Different from Java multi-catch only in syntax — same semantics
+```
+
+---
+
+### Pattern 4 — `std::variant` + `std::visit` (Modern)
+
+```cpp
+// Closed set of exception types — variant-based dispatch
+using ServiceError = std::variant
+    DatabaseError,
+    NetworkError,
+    CacheError,
+    ValidationError
+>;
+
+// All error types in one variant — visit dispatches
+auto handle_error = [](const ServiceError& err) {
+    std::visit([](const auto& e) {
+        using T = std::decay_t<decltype(e)>;
+
+        if constexpr (std::is_same_v<T, DatabaseError>) {
+            retry_with_replica();
+        } else if constexpr (std::is_same_v<T, NetworkError>) {
+            use_cached_response();
+        } else if constexpr (std::is_same_v<T, CacheError>) {
+            bypass_cache();
+        } else if constexpr (std::is_same_v<T, ValidationError>) {
+            return_400(e.field());
+        }
+    }, err);
+};
+```
+
+---
+
+### Pattern 5 — Template Handler (Type Erasure)
+
+```cpp
+// Handle a list of exception types with one function
+template<typename... ExTypes, typename Handler>
+bool catch_any(Handler&& h) {
+    try {
+        std::rethrow_exception(std::current_exception());
+    } catch (...) { }
+    // More elegant with fold expressions:
+    return false;
+}
+
+// Practical implementation:
+template<typename Handler, typename... ExTypes>
+struct MultiCatch {
+    Handler handler;
+
+    void operator()() const {
+        try {
+            std::rethrow_exception(std::current_exception());
+        } catch (...) {
+            try_catch_impl<ExTypes...>();
+        }
+    }
+
+private:
+    template<typename First, typename... Rest>
+    void try_catch_impl() const {
+        try {
+            std::rethrow_exception(std::current_exception());
+        } catch (const First& e) {
+            handler(e);
+        } catch (...) {
+            if constexpr (sizeof...(Rest) > 0)
+                try_catch_impl<Rest...>();
+            else
+                throw;
+        }
+    }
+};
+
+// Usage
+try {
+    risky();
+} catch (...) {
+    MultiCatch<decltype(handler), DatabaseError, NetworkError, CacheError>{handler}();
+}
+```
+
+---
+
+### Real Production Multi-catch Pattern
+
+```cpp
+class OrderService {
+    MetricsClient& metrics_;
+    Logger&        logger_;
+    AlertSystem&   alerts_;
+
+    // Shared handler for infrastructure errors
+    void handle_infra(const std::exception& e,
+                      const std::string& op) {
+        metrics_.increment("infra.error", {{"op", op}});
+        logger_.error("Infrastructure error in {}: {}", op, e.what());
+        alerts_.page_on_call("infra", e.what());
+    }
+
+    // Shared handler for client errors
+    HttpResponse handle_client(const std::exception& e,
+                               int http_code) {
+        return HttpResponse{http_code, json{
+            {"error", e.what()}
+        }.dump()};
+    }
+
+public:
+    HttpResponse create_order(const HttpRequest& req) {
+        try {
+            auto order  = parse_order(req.body());
+            auto result = process_order(order);
+            return HttpResponse{201, result.to_json()};
+
+        // ─── Client errors (4xx) ───────────────────────
+        } catch (const ValidationException& e) {
+            return handle_client(e, 400);
+
+        } catch (const AuthorizationException& e) {
+            return handle_client(e, 403);
+
+        } catch (const NotFoundException& e) {
+            return handle_client(e, 404);
+
+        } catch (const PaymentDeclinedException& e) {
+            return handle_client(e, 402);
+
+        // ─── Infrastructure errors (503) ───────────────
+        // Multi-catch equivalent: DatabaseError | NetworkError | CacheError
+        } catch (const DatabaseException& e) {
+            handle_infra(e, "create_order.db");
+            return HttpResponse{503, R"({"error":"service_unavailable"})"};
+
+        } catch (const NetworkException& e) {
+            handle_infra(e, "create_order.net");
+            return HttpResponse{503, R"({"error":"service_unavailable"})"};
+
+        } catch (const CacheException& e) {
+            handle_infra(e, "create_order.cache");
+            return HttpResponse{503, R"({"error":"service_unavailable"})"};
+
+        // ─── Unknown errors (500) ──────────────────────
+        } catch (const std::exception& e) {
+            logger_.critical("UNHANDLED in create_order: {}", e.what());
+            alerts_.page_on_call("critical", e.what());
+            return HttpResponse{500, R"({"error":"internal_error"})"};
+
+        } catch (...) {
+            logger_.critical("NON-STD exception in create_order");
+            return HttpResponse{500, R"({"error":"internal_error"})"};
+        }
+    }
+};
+```
+
+---
+
+### Cleaner Multi-catch — C++17 `if constexpr` + Template
+
+```cpp
+// Elegant multi-catch with shared logic
+template<typename... Handlers>
+struct overloaded : Handlers... {
+    using Handlers::operator()...;
+};
+template<typename... Handlers>
+overloaded(Handlers...) -> overloaded<Handlers...>;
+
+auto handle = overloaded{
+    [](const DatabaseError& e)  { retry_db(e.query()); },
+    [](const NetworkError& e)   { use_fallback(e.host()); },
+    [](const CacheError& e)     { bypass_cache(); },
+    [](const std::exception& e) { log_and_rethrow(e); }
+};
+
+try {
+    risky();
+} catch (const DatabaseError& e) { handle(e); }
+catch (const NetworkError& e)    { handle(e); }
+catch (const CacheError& e)      { handle(e); }
+catch (const std::exception& e)  { handle(e); }
+```
+
+---
+
+## 🔬 Under the Hood — RAII vs try-with-resources
+
+```
+Java try-with-resources bytecode:
+  iconst_0                    ; null check needed
+  invokevirtual close()       ; explicit close() call
+  athrow                      ; rethrow if close() threw
+  ; Multiple suppressed exceptions tracked — overhead
+
+C++ RAII compiled code:
+  [destructor inlined at scope exit]
+  ; If destructor is trivial → ZERO extra instructions
+  ; If destructor is non-trivial → call site added in exception table
+  ; Exception table entry: "if exception in range [X, Y] → call ~T()"
+  ; NO runtime overhead on happy path — table consulted only on exception
+```
+
+```
+Performance comparison (hot path — no exception):
+  Java try-with-resources:  null checks + virtual close() dispatch
+  C++ RAII:                 ZERO instructions (trivial dtor)
+                            or ONE call (non-trivial dtor, inlined)
+
+Performance comparison (exception path):
+  Java: exception object + suppression list + close() call
+  C++:  exception table lookup + destructor call
+  Similar cost — both pay on exception path only
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Database transaction manager — try-with-resources + multi-catch combined:**
+
+```cpp
+class TransactionScope {
+    DatabaseConnection& conn_;
+    bool committed_ = false;
+
+public:
+    explicit TransactionScope(DatabaseConnection& c)
+        : conn_(c) {
+        conn_.execute("BEGIN");
+    }
+
+    void commit() {
+        conn_.execute("COMMIT");
+        committed_ = true;
+    }
+
+    ~TransactionScope() {    // the "try-with-resources close()"
+        if (!committed_) {
+            try {
+                conn_.execute("ROLLBACK");
+            } catch (const std::exception& e) {
+                // Swallow — destructor must not throw
+                logger_.error("Rollback failed: {}", e.what());
+            }
+        }
+    }
+
+    // Non-copyable, non-movable — RAII handle
+    TransactionScope(const TransactionScope&) = delete;
+    TransactionScope& operator=(const TransactionScope&) = delete;
+};
+
+// Usage: try-with-resources pattern
+HttpResponse PaymentController::transfer(const TransferRequest& req) {
+    try {
+        TransactionScope txn(db_);   // ← "try-with-resources"
+
+        // Operations that may throw
+        debit_account(req.from, req.amount);
+        credit_account(req.to, req.amount);
+        record_transfer(req);
+
+        txn.commit();
+        return HttpResponse{200, "transfer complete"};
+
+    // Multi-catch equivalent: InsufficientFunds | AccountFrozen
+    } catch (const InsufficientFundsException& e) {
+        // txn auto-rolled back by ~TransactionScope
+        return HttpResponse{422, e.what()};
+
+    } catch (const AccountFrozenException& e) {
+        // txn auto-rolled back
+        return HttpResponse{403, e.what()};
+
+    } catch (const DatabaseException& e) {
+        // txn auto-rolled back
+        alert_team(e.what());
+        return HttpResponse{503, "service unavailable"};
+
+    } catch (...) {
+        // txn auto-rolled back — unknown error
+        return HttpResponse{500, "internal error"};
+    }
+    // ~TransactionScope() called in ALL paths:
+    //   normal return after commit: committed_=true → no rollback
+    //   exception path: committed_=false → rollback
+}
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```
+"C++ try-with-resources equivalent?"
+```
+> RAII — destructors. Any class whose destructor releases a resource IS a try-with-resources equivalent. `std::ifstream`, `std::lock_guard`, `std::unique_ptr` — all are RAII. The advantage: no special syntax needed, works everywhere, composes naturally, zero overhead on happy path. Java needed try-with-resources BECAUSE it has a GC that doesn't call `close()` deterministically. C++ destructors ARE deterministic — so the feature is built into the language itself.
+
+**Trap 2:**
+```cpp
+{
+    RAII_A a;   // ctor may throw
+    RAII_B b;   // ctor may throw
+    RAII_C c;   // ctor may throw
+}
+// If b's ctor throws — which destructors run?
+```
+> `a`'s destructor runs (a was fully constructed). `b`'s destructor does NOT run (never fully constructed). `c`'s destructor does NOT run (never constructed). Destruction is guaranteed only for **fully constructed** objects.
+
+**Trap 3:**
+```cpp
+// Is this equivalent to Java multi-catch?
+catch (const std::exception& e) {
+    // handles DatabaseError AND NetworkError
+}
+```
+> **Yes and no.** If `DatabaseError` and `NetworkError` both derive from `std::exception`, this catches both — same as `catch (DatabaseError | NetworkError e)` in Java. BUT it also catches EVERYTHING else derived from `std::exception`. Java multi-catch is for **exactly those types**. C++'s common-base-catch is for **that type and all its derivatives**. Use a specific common base (`AppException`) rather than `std::exception` for precision.
+
+**Trap 4:**
+```cpp
+// Does scope_exit run if exception thrown during its own construction?
+auto guard = scope_exit([]{
+    cleanup();
+    throw std::runtime_error("in guard");  // what happens?
+});
+throw std::runtime_error("original");
+```
+> Stack unwinds: `guard`'s destructor calls `cleanup()` then throws. Two concurrent exceptions → `std::terminate()`. Scope guard MUST swallow exceptions in its destructor. Always `try { fn_(); } catch (...) { }` inside the destructor.
+
+**Trap 5:**
+```
+"Why doesn't C++ have multi-catch (IOException | SQLException)?"
+```
+> Because the common-base-class pattern covers most real cases. When `DatabaseError` and `NetworkError` both derive from `AppException`, catching `AppException` IS multi-catch. For truly unrelated types, the handler-lambda pattern achieves the same result. The committee considered multi-catch — it was rejected because it adds syntax without adding expressiveness that base classes don't already provide. Additionally, templates and overloaded visitors handle the closed-set case more powerfully than Java's fixed syntax.
+
+---

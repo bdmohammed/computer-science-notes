@@ -1,0 +1,968 @@
+---
+title: Python Advanced Exception Rethrowing
+slug: computer-languages/python/exception-handling/advanced-rethrowing
+description: Master exception chaining (`raise ... from`), suppression (`from None`), and context preservation in Python. Learn how to debug complex error trails like a pro.
+sidebar:
+  label: "Advanced Rethrowing"
+  badge:
+    text: Best Practices
+    variant: tip
+tags: [python, exceptions, raise-from, chaining, debugging, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔄 Rethrowing in Python
+
+> In Java, you wrap exceptions to preserve the cause (`new Ex("msg", e)`).  
+> In Python, we use **Exception Chaining** via the `raise ... from ...` syntax.  
+> This creates a linked list of errors, allowing you to see exactly *what* failed and *why*.
+
+### 🔬 The Three Forms of Rethrowing
+
+```python
+# 1. Implicit Chaining (Automatic)
+try:
+    open("missing.txt")
+except FileNotFoundError:
+    raise ConfigError("Config missing") 
+    # Python automatically sets __context__
+
+# 2. Explicit Chaining (Recommended)
+try:
+    db.connect()
+except ConnectionError as e:
+    raise ServiceDownError("DB Unreachable") from e
+    # Sets __cause__ explicitly
+
+# 3. Suppression (Hide the noise)
+try:
+    cleanup()
+except CleanupError:
+    raise FinalResult("Done") from None
+    # Hides the CleanupError entirely
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `__context__`: "This happened *while* handling that." (Implicit)  
+- `__cause__`: "This happened *because* of that." (Explicit `from`)  
+- `from None`: "Ignore what happened before."
+</Aside>
+
+---
+
+## 💻 Real-World Code: Layered Architecture
+
+In a layered app (Controller → Service → Repository), you often want to translate low-level errors into domain-specific ones without losing the root cause.
+
+<Code lang="python" title="✅ Proper Chaining in Layers" code={`
+class RepositoryError(Exception): pass
+class ServiceError(Exception): pass
+
+def get_data(id):
+    try:
+        return db.query(id)  # Might raise DBAPIError
+    except DBAPIError as e:
+        # Translate to domain error, keep chain
+        raise RepositoryError(f"Failed to fetch {id}") from e
+
+def process_data(id):
+    try:
+        return get_data(id)
+    except RepositoryError as e:
+        raise ServiceError("Processing failed") from e
+
+# Usage
+try:
+    process_data(1)
+except ServiceError as e:
+    print(e.__cause__)       # RepositoryError
+    print(e.__cause__.__cause__) # DBAPIError (Root Cause)
+`} />
+
+When you print this exception, Python displays:
+```text
+ServiceError: Processing failed
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  ...
+RepositoryError: Failed to fetch 1
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  ...
+DBAPIError: Connection refused
+```
+
+---
+
+## ⚠️ Common Pitfalls & Traps
+
+<CardGrid>
+  <Card title="Trap 1: Losing the Context" icon="error">
+    ```python
+    try:
+        risky_op()
+    except ValueError as e:
+        raise AppError("Failed") 
+        # ❌ Bad Practice
+        # The original 'e' is lost if not chained.
+        # Use: raise AppError("Failed") from e
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Accidental Suppression" icon="warning">
+    ```python
+    try:
+        do_something()
+    except Exception:
+        pass # ❌ Silent failure!
+        
+    # Or worse:
+    except Exception:
+        raise OtherError() # ❌ Loses original context
+    ```
+  </Card>
+
+  <Card title="Trap 3: Infinite Recursion in Chaining" icon="shield">
+    ```python
+    # Don't do this:
+    try:
+        raise A()
+    except A:
+        raise B() from A() # Creates new instance, ok
+    # But ensure you aren't referencing the same object 
+    # in a way that creates circular refs in logging tools.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 `raise ... from None`
+
+Sometimes, the original error is irrelevant implementation detail. For example, if you catch a `KeyError` during a lookup and decide to return a default, or if you catch a cleanup error that shouldn't distract from the main result.
+
+```python
+def get_user_config(user_id):
+    try:
+        return cache[user_id]
+    except KeyError:
+        # KeyError is an implementation detail of the cache.
+        # The user just sees "Config Not Found".
+        raise ConfigNotFoundError(user_id) from None
+```
+
+This results in a clean traceback showing **only** `ConfigNotFoundError`.
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: How do you preserve the original exception?
+    A: Use `raise NewError() from old_error`.
+    
+    Q: What is the difference between __context__ and __cause__?
+    A: __context__ is implicit (during handling). __cause__ is explicit (from).
+    ```
+  </Card>
+  
+  <Card title="Debugging" icon="rocket">
+    ```text
+    Q: How do you find the root cause programmatically?
+    A: Traverse e.__cause__ or e.__context__ until None.
+    
+    Q: What does `from None` do?
+    A: It suppresses the display of the previous exception context.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+try:
+    try:
+        raise ValueError("Inner")
+    except ValueError:
+        raise TypeError("Outer") from None
+except TypeError as e:
+    print(e.__cause__)
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+None
+```
+*Reason: `from None` explicitly sets the `__cause__` attribute to `None`, suppressing the `ValueError`.*
+</details>
+
+> 🚀 **Final Wisdom**: Always chain your exceptions unless you have a very good reason not to. `raise ... from ...` is the single most important tool for debugging complex Python applications. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔄 Python Advanced — Rethrowing Exceptions
+
+---
+
+## 🧠 Mental Model First
+
+```
+RETHROWING = catching an exception, then raising it again
+             (same exception OR a new one wrapping the original)
+
+WHY rethrow?
+  ├── Log before propagating      (observe but don't handle)
+  ├── Add context to exception    (enrich with more info)
+  ├── Translate exception type    (hide internal details)
+  ├── Partial cleanup then raise  (cleanup + propagate)
+  └── Re-raise after finally      (guaranteed cleanup)
+
+THREE forms:
+┌─────────────────────────────────────────────────────────────────┐
+│  raise              ← re-raise EXACT same exception + traceback │
+│  raise e            ← re-raise with MODIFIED traceback          │
+│  raise New from e   ← new exception, original as __cause__      │
+│  raise New from None← new exception, suppress original          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Bare `raise` — Pure Re-raise
+
+```python
+# Bare raise: re-raises the CURRENTLY active exception
+# traceback is PRESERVED — points to original raise site
+
+def c():
+    raise ValueError("from c")     # ← traceback points HERE
+
+def b():
+    try:
+        c()
+    except ValueError:
+        print("b: logging error")
+        raise                        # ← re-raise: traceback UNCHANGED
+
+def a():
+    try:
+        b()
+    except ValueError as e:
+        print(f"a: caught {e}")
+        import traceback
+        traceback.print_exc()
+
+a()
+```
+
+```
+b: logging error
+a: caught from c
+Traceback (most recent call last):
+  File "...", line 12, in a
+    b()
+  File "...", line 7, in b
+    c()
+  File "...", line 2, in c
+    raise ValueError("from c")    ← still points to c(), not b()
+ValueError: from c
+```
+
+### 🔬 Bare `raise` Bytecode
+
+```python
+import dis
+
+def f():
+    try:
+        risky()
+    except ValueError:
+        log()
+        raise
+
+dis.dis(f)
+```
+
+```
+  PUSH_EXC_INFO
+  ...
+  RERAISE  0        ← opcode: re-raise active exception
+                       preserves __traceback__ completely
+                       no new frame added to traceback
+```
+
+---
+
+## 2️⃣ `raise e` — Re-raise With Modified Traceback
+
+```python
+def b():
+    try:
+        c()
+    except ValueError as e:
+        raise e                  # ← different from bare raise!
+                                 # traceback RESET to THIS line
+```
+
+```
+# Bare raise:
+Traceback:
+  File "b.py", line 7,  in b: c()
+  File "b.py", line 2,  in c: raise ValueError("from c")
+                         ← original raise site preserved
+
+# raise e:
+Traceback:
+  File "b.py", line 8,  in b: raise e   ← traceback points HERE
+                                           original site in c() LOST
+```
+
+```python
+# Proof:
+def c():
+    raise ValueError("from c")
+
+def b_bare():
+    try: c()
+    except ValueError: raise          # original traceback
+
+def b_rebind():
+    try: c()
+    except ValueError as e: raise e   # truncated traceback
+
+import traceback
+
+try: b_bare()
+except: print("BARE:"); traceback.print_exc()
+
+try: b_rebind()
+except: print("\nREBIND:"); traceback.print_exc()
+```
+
+```
+BARE:
+  File "x.py", line 12, in b_bare: c()
+  File "x.py", line 2,  in c: raise ValueError("from c")
+ValueError: from c
+
+REBIND:
+  File "x.py", line 16, in b_rebind: raise e
+ValueError: from c                    ← c() frame GONE from traceback!
+```
+
+> **Rule:** Always use bare `raise` when re-raising the same exception. `raise e` loses traceback frames — makes debugging harder.
+
+---
+
+## 3️⃣ `raise New from Original` — Explicit Chaining
+
+```python
+# Translate exception type — preserve original as cause:
+def load_config(path: str) -> dict:
+    try:
+        with open(path) as f:
+            import json
+            return json.load(f)
+
+    except FileNotFoundError as e:
+        raise ConfigError(
+            f"Config file not found: {path}"
+        ) from e                          # ← __cause__ = e
+
+    except json.JSONDecodeError as e:
+        raise ConfigError(
+            f"Malformed config at line {e.lineno}"
+        ) from e                          # ← __cause__ = e
+```
+
+```
+Output:
+  FileNotFoundError: [Errno 2] No such file: 'config.json'
+
+  The above exception was the direct cause of the following exception:
+
+  ConfigError: Config file not found: config.json
+```
+
+### 🔬 Chaining Attributes
+
+```python
+try:
+    try:
+        raise ValueError("original")
+    except ValueError as e:
+        raise RuntimeError("wrapper") from e
+except RuntimeError as e:
+    print(e.__cause__)              # ValueError: original    ← explicit
+    print(e.__context__)            # ValueError: original    ← implicit (same here)
+    print(e.__suppress_context__)   # True  ← 'from' sets this True
+
+    # Walk the full chain:
+    current = e
+    depth   = 0
+    while current:
+        print(f"{'  ' * depth}{type(current).__name__}: {current}")
+        current = current.__cause__ or (
+            current.__context__ if not current.__suppress_context__ else None
+        )
+        depth += 1
+```
+
+---
+
+## 4️⃣ `raise New from None` — Suppress Chain
+
+```python
+# Hide internal implementation details from caller:
+class UserRepository:
+    def find(self, user_id: int) -> dict:
+        try:
+            return self._db.query(
+                "SELECT * FROM users WHERE id = %s", (user_id,)
+            )[0]
+        except IndexError:
+            raise KeyError(user_id) from None
+            # ← hides IndexError (internal detail)
+            # caller sees clean KeyError, not IndexError + "during handling..."
+
+    def get_or_default(self, user_id: int, default: dict) -> dict:
+        try:
+            row = self._db.execute(f"SELECT * FROM users WHERE id={user_id}")
+            return dict(row)
+        except psycopg2.ProgrammingError as e:
+            raise DatabaseError("Query failed") from None
+            # ← psycopg2 is internal — caller shouldn't see it
+```
+
+```python
+# COMPARE:
+
+# With chain:
+try:
+    raise RuntimeError("new") from ValueError("old")
+except RuntimeError as e:
+    print(e.__suppress_context__)   # True
+    print(e.__cause__)              # ValueError: old   ← visible in traceback
+
+# With from None:
+try:
+    try:
+        raise ValueError("internal detail")
+    except ValueError:
+        raise RuntimeError("public error") from None
+except RuntimeError as e:
+    print(e.__suppress_context__)   # True
+    print(e.__cause__)              # None  ← hidden
+    print(e.__context__)            # ValueError  ← stored but not displayed
+```
+
+---
+
+## 5️⃣ Rethrow Patterns in Production
+
+### Pattern 1 — Log and Re-raise
+
+```python
+import logging
+import functools
+
+log = logging.getLogger(__name__)
+
+def log_errors(func):
+    """Decorator: log exception then re-raise unchanged."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            log.error(
+                f"{func.__name__} failed: {type(e).__name__}: {e}",
+                exc_info=True       # includes full traceback in log
+            )
+            raise                   # ← bare raise: traceback preserved
+    return wrapper
+
+@log_errors
+def process_payment(amount: float, token: str) -> dict:
+    return gateway.charge(amount, token)
+```
+
+---
+
+### Pattern 2 — Enrich and Re-raise
+
+```python
+def enrich_exception(exc: Exception, **context) -> Exception:
+    """Add context to exception without changing type."""
+    for k, v in context.items():
+        setattr(exc, k, v)          # attach extra attributes
+    return exc
+
+
+def process_batch(items: list) -> list:
+    for i, item in enumerate(items):
+        try:
+            validate_and_transform(item)
+        except ValidationError as e:
+            # Enrich with position info before re-raising:
+            e.batch_index = i
+            e.item        = item
+            raise          # ← bare raise, traceback unchanged
+
+
+# Or use add_note() (Python 3.11+):
+def process_batch_v2(items: list) -> list:
+    for i, item in enumerate(items):
+        try:
+            validate_and_transform(item)
+        except ValidationError as e:
+            e.add_note(f"Failed at batch index {i}: {item!r}")
+            raise          # ← bare raise with note attached
+```
+
+---
+
+### Pattern 3 — Translate Layer Boundary
+
+```python
+# Infrastructure layer raises DB-specific exceptions.
+# Service layer translates to domain exceptions.
+# Never leak infrastructure details to domain/API layer.
+
+import psycopg2
+
+class UserRepository:
+    def save(self, user: dict) -> int:
+        try:
+            cursor = self._db.cursor()
+            cursor.execute(
+                "INSERT INTO users (name, email) VALUES (%s, %s)",
+                (user["name"], user["email"])
+            )
+            self._db.commit()
+            return cursor.lastrowid
+
+        except psycopg2.IntegrityError as e:
+            self._db.rollback()
+            if "unique" in str(e).lower():
+                raise DuplicateUserError(
+                    f"User with email {user['email']!r} already exists"
+                ) from e         # ← chained: DBA can see psycopg2 cause
+            raise DatabaseError("Integrity constraint violated") from e
+
+        except psycopg2.OperationalError as e:
+            self._db.rollback()
+            raise DatabaseError(
+                f"Database connection failed"
+            ) from e
+
+        except Exception as e:
+            self._db.rollback()
+            raise DatabaseError(
+                f"Unexpected error saving user"
+            ) from e             # ← always chain unexpected errors
+
+# Service layer:
+class UserService:
+    def __init__(self, repo: UserRepository):
+        self._repo = repo
+
+    def register(self, name: str, email: str) -> dict:
+        try:
+            user_id = self._repo.save({"name": name, "email": email})
+            return {"id": user_id, "name": name, "email": email}
+
+        except DuplicateUserError:
+            raise                       # ← let domain exception propagate
+        except DatabaseError as e:
+            raise ServiceUnavailableError(
+                "Registration temporarily unavailable"
+            ) from e                    # ← translate to API-level error
+```
+
+---
+
+### Pattern 4 — Conditional Re-raise
+
+```python
+def retry_on(exceptions, times=3, delay=1.0):
+    """Re-raise if all retries exhausted."""
+    import time, functools
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(1, times + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exc = e
+                    if attempt < times:
+                        print(f"Attempt {attempt} failed: {e}. Retrying...")
+                        time.sleep(delay * attempt)
+                    else:
+                        print(f"All {times} attempts failed.")
+            raise last_exc              # ← re-raise last exception after exhaustion
+        return wrapper
+    return decorator
+
+
+@retry_on((ConnectionError, TimeoutError), times=3, delay=0.5)
+def fetch_data(url: str) -> dict:
+    return requests.get(url, timeout=5).json()
+```
+
+---
+
+### Pattern 5 — Cleanup Then Re-raise
+
+```python
+def process_file(path: str) -> dict:
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w") as tmp:
+            # Complex processing...
+            result = transform(path)
+            tmp.write(json.dumps(result))
+        os.replace(tmp_path, path)         # atomic rename
+        return result
+
+    except Exception:
+        # Cleanup temp file before re-raising:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass                           # ignore cleanup errors
+        raise                              # ← re-raise original, unchanged
+
+
+# With context manager (cleaner):
+from contextlib import contextmanager
+
+@contextmanager
+def atomic_write(path: str):
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            yield f                        # write here
+        os.replace(tmp_path, path)         # commit
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise                              # ← re-raise original
+
+
+def process_file_v2(path: str) -> None:
+    with atomic_write(path) as f:
+        result = transform(path)
+        json.dump(result, f)
+```
+
+---
+
+### Pattern 6 — Exception Accumulator (Rethrow After Loop)
+
+```python
+def process_all(items: list) -> tuple[list, list]:
+    """
+    Process all items — collect failures, re-raise at end.
+    Never bail early — process everything first.
+    """
+    results  = []
+    failures = []
+
+    for i, item in enumerate(items):
+        try:
+            results.append(transform(item))
+        except (ValueError, TypeError) as e:
+            failures.append((i, item, e))   # collect failure info
+
+    if failures:
+        # Create ExceptionGroup with all failures (Python 3.11+):
+        exceptions = [
+            type(exc)(f"Item {i} ({item!r}): {exc}")
+            for i, item, exc in failures
+        ]
+        raise ExceptionGroup(
+            f"Batch failed: {len(failures)}/{len(items)} items",
+            exceptions
+        )
+
+    return results, []
+
+
+# Caller handles group:
+try:
+    results, _ = process_all([1, "bad", 2, None, 3])
+except* ValueError as eg:
+    print(f"Value errors: {eg.exceptions}")
+except* TypeError as eg:
+    print(f"Type errors: {eg.exceptions}")
+```
+
+---
+
+## 6️⃣ Traceback Manipulation
+
+### Preserving Traceback Across Threads
+
+```python
+import sys
+import threading
+
+class PropagatingThread(threading.Thread):
+    """Thread that re-raises exceptions in the calling thread."""
+
+    def __init__(self, target, *args, **kwargs):
+        super().__init__(target=target, *args, **kwargs)
+        self._exc_info = None
+
+    def run(self):
+        try:
+            super().run()
+        except Exception:
+            self._exc_info = sys.exc_info()   # capture (type, val, tb)
+
+    def join(self, timeout=None):
+        super().join(timeout)
+        if self._exc_info:
+            exc_type, exc_val, exc_tb = self._exc_info
+            raise exc_val.with_traceback(exc_tb)   # ← re-raise with original tb
+
+
+def risky_work():
+    raise ValueError("from thread")
+
+t = PropagatingThread(target=risky_work)
+t.start()
+
+try:
+    t.join()
+except ValueError as e:
+    import traceback
+    traceback.print_exc()   # traceback includes thread's frames
+```
+
+### `with_traceback()` — Attach Custom Traceback
+
+```python
+# Manually set traceback on exception:
+try:
+    raise ValueError("original")
+except ValueError as e:
+    import sys
+    tb = sys.exc_info()[2]          # current traceback
+    new_exc = RuntimeError("wrapped")
+    raise new_exc.with_traceback(tb)   # ← attach original traceback to new exception
+```
+
+---
+
+## 🔬 Internals — How `raise` Modifies Traceback
+
+```
+raise ValueError("error")          # in function c()
+
+CPython RAISE_VARARGS:
+  1. Set exc.__traceback__ = current frame f_c
+  2. Stack unwind → move to b()
+  3. b() has except clause → check isinstance
+  4. Match found → execute except block
+  5. After except: exc.__traceback__ still points to c()
+
+bare raise (RERAISE opcode):
+  → pushes current active exception back
+  → __traceback__ UNCHANGED — still points to c()
+  → no new frame added
+
+raise e (RAISE_VARARGS with instance):
+  → creates new raise at THIS line
+  → __traceback__ RESET to current frame (b())
+  → original frame (c()) NO LONGER in traceback
+
+raise X from e:
+  → creates new exception X
+  → sets X.__cause__ = e
+  → sets X.__suppress_context__ = True
+  → X.__traceback__ starts from THIS line
+  → e.__traceback__ preserved inside e
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Rethrowing in recursive algorithms:
+class RecursionDepthError(Exception):
+    def __init__(self, algorithm: str, depth: int, cause: Exception = None):
+        super().__init__(f"{algorithm} exceeded safe depth ({depth})")
+        self.algorithm = algorithm
+        self.depth     = depth
+        if cause:
+            self.__cause__ = cause
+
+
+def safe_dfs(graph: dict, node: int, visited: set,
+             depth: int = 0, max_depth: int = 1000) -> list:
+    if depth > max_depth:
+        raise RecursionDepthError("DFS", depth)
+
+    visited.add(node)
+    result = [node]
+
+    for neighbor in graph.get(node, []):
+        if neighbor not in visited:
+            try:
+                result.extend(
+                    safe_dfs(graph, neighbor, visited, depth + 1, max_depth)
+                )
+            except RecursionDepthError:
+                raise              # ← bare re-raise: traceback points to original depth
+            except RecursionError as e:
+                raise RecursionDepthError(
+                    "DFS", depth, cause=e
+                ) from e           # ← translate Python RecursionError to domain error
+    return result
+```
+
+---
+
+## 💀 Interview Trap 1 — `raise e` Loses Traceback Frames
+
+```python
+def deep_error():
+    raise RuntimeError("deep")
+
+def middle():
+    try:
+        deep_error()
+    except RuntimeError as e:
+        raise e              # 💀 traceback truncated here!
+
+def top():
+    try:
+        middle()
+    except RuntimeError:
+        import traceback
+        traceback.print_exc()
+
+top()
+# Traceback (most recent call last):
+#   File "x.py", line 11, in top: middle()
+#   File "x.py", line 8,  in middle: raise e    ← deep_error() GONE!
+# RuntimeError: deep
+
+# Fix:
+def middle_fixed():
+    try:
+        deep_error()
+    except RuntimeError:
+        raise               # ✅ bare raise — deep_error() preserved in traceback
+```
+
+---
+
+## 💀 Interview Trap 2 — Exception Variable Deleted Before Re-raise
+
+```python
+def process():
+    try:
+        risky()
+    except ValueError as e:
+        saved_code = e.code          # ← save attributes before they're gone
+        cleanup()
+        raise                        # ← e is still alive during raise
+
+
+# Python deletes 'e' AFTER except block exits:
+try:
+    raise ValueError("test")
+except ValueError as e:
+    pass
+
+# After block:
+try:
+    raise e        # 💥 NameError: name 'e' is not defined
+except NameError:
+    print("e was deleted!")
+
+# Fix — use bare raise inside except block:
+try:
+    raise ValueError("test")
+except ValueError:
+    # do stuff
+    raise          # ✅ bare raise while still inside except
+```
+
+---
+
+## 💀 Interview Trap 3 — Losing Exception in `finally`
+
+```python
+def f():
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise RuntimeError("from except")
+    finally:
+        raise KeyError("from finally")   # 💀 REPLACES RuntimeError!
+
+try:
+    f()
+except KeyError as e:
+    print(e)                # "from finally"
+    print(e.__context__)    # RuntimeError: from except
+    # ValueError completely lost! RuntimeError only in __context__
+    # Proper chain: ValueError → RuntimeError → KeyError
+    # But ValueError is lost because RuntimeError was not yet "raised"
+    # when finally ran
+
+# Rule: NEVER raise in finally
+```
+
+---
+
+## 💀 Interview Trap 4 — Re-raise Outside `except`
+
+```python
+def broken():
+    exc = None
+    try:
+        risky()
+    except ValueError as e:
+        exc = e
+        # handle...
+
+    # OUTSIDE except block:
+    if exc:
+        raise exc           # ← raise e form: traceback from original site LOST
+        # raise              # 💥 RuntimeError: no active exception
+
+# Fix — re-raise inside except:
+def fixed():
+    try:
+        risky()
+    except ValueError as e:
+        # handle...
+        raise               # ← still inside except, bare raise works
+```
+
+---

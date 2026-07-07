@@ -1,0 +1,544 @@
+---
+title: PostgreSQL Installation & psql CLI Basics
+slug: computer-query-languages/postgresql/foundations/installation-psql-cli
+description: Step-by-step installation guide, essential psql commands, meta-command cheat sheet, and production-ready CLI workflows.
+sidebar:
+  label: "Installation & CLI"
+  badge:
+    text: Getting Started
+    variant: tip
+tags: [postgresql, installation, psql, cli, dev-setup, terminal, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 🚀 PostgreSQL Installation & psql CLI Basics
+
+> **PostgreSQL** ships with `psql` — its official, highly capable terminal client. Think of it as your direct line to the database engine for administration, debugging, and query execution.
+
+<Aside type="tip">
+**Mental Model**: `psql` is to PostgreSQL what `bash` is to Linux.  
+It's an interactive REPL with auto-completion, query formatting, timing, variable substitution, and powerful `\` meta-commands. Master it, and you'll debug production issues 10x faster.
+</Aside>
+
+---
+
+## 📦 Installation Guide
+
+<Tabs>
+  <TabItem label="macOS (Recommended)" icon="apple">
+    <Steps>
+      1. Install via Homebrew:
+            ```bash
+            brew install postgresql@16
+            brew link --overwrite postgresql@16
+            ```
+      2. Start the Service:
+            ```bash
+            # Auto-start on login
+            brew services start postgresql@16
+            
+            # Check status
+            brew services list
+            ```
+      3. Initialize & Connect:
+            ```bash
+            # Create default database (usually done automatically by Homebrew)
+            createdb $(whoami)
+            
+            # Connect as your macOS user
+            psql postgres
+            ```
+    </Steps>
+  </TabItem>
+  
+  <TabItem label="Ubuntu/Debian" icon="linux">
+    <Steps>
+      1. Add Official Repo & Install:
+            ```bash
+            sudo apt update
+            sudo apt install postgresql postgresql-contrib
+            ```
+      2. Start & Enable Service:
+            ```bash
+            sudo systemctl enable postgresql
+            sudo systemctl start postgresql
+            sudo systemctl status postgresql
+            ```
+      3. Switch to postgres User & Connect:
+            ```bash
+            sudo -i -u postgres
+            psql
+            # You're now in the psql prompt as superuser
+            ```
+    </Steps>
+  </TabItem>
+
+  <TabItem label="Windows" icon="windows">
+    <Steps>
+      1. Download Installer:
+            Visit [postgresql.org/download/windows](https://www.postgresql.org/download/windows/) and run the **BigSQL** or **EnterpriseDB** installer.  
+            ✅ Check: "Add PostgreSQL to PATH" during setup.
+      2. Set Password & Finish:
+            During installation, you'll set a password for the `postgres` superuser. Keep it safe.
+      3. Connect via Command Prompt/PowerShell:
+            ```bash
+            psql -U postgres -h localhost
+            # Enter password when prompted
+            ```
+    </Steps>
+  </TabItem>
+
+  <TabItem label="Docker (Best for Dev)" icon="container">
+    <Steps>
+      1. Run Postgres Container:
+            ```bash
+            docker run -d \
+            --name pg-dev \
+            -e POSTGRES_PASSWORD=devpass \
+            -e POSTGRES_USER=devuser \
+            -e POSTGRES_DB=myapp \
+            -p 5432:5432 \
+            -v pgdata:/var/lib/postgresql/data \
+            postgres:16-alpine
+            ```
+      2. Connect via psql:
+            ```bash
+            docker exec -it pg-dev psql -U devuser -d myapp
+            ```
+      3. Stop/Start Later:
+            ```bash
+            docker stop pg-dev
+            docker start pg-dev
+            ```
+    </Steps>
+  </TabItem>
+  <TabItem label="On Cloud" icon="container">
+    <Steps>
+      1. Choose a Provider:
+            - [AWS RDS](https://aws.amazon.com/rds/postgresql/)
+            - [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres)
+            - [Azure Database for PostgreSQL](https://azure.microsoft.com/en-us/services/postgresql/)
+      2. Create Instance:
+            Follow provider docs to create a PostgreSQL instance. Note connection details (host, port, username, password).
+      3. Connect via psql:
+            ```bash
+            psql "postgresql://username:password@host:port/dbname?sslmode=require"
+            ```
+    </Steps>
+  </TabItem>
+</Tabs>
+
+<Aside type="caution">
+**Version Note**: Always specify a major version (`@16`, `:16-alpine`). Avoid `latest` in production — upgrades between major versions require explicit migration (`pg_upgrade`).
+</Aside>
+
+---
+
+## 🔧 Post-Installation Setup
+
+### 👤 Create Application User & Database
+
+<Code lang="sql" title="Recommended: Create dedicated app user (never use superuser in apps!)" code={`
+-- Run inside psql as postgres superuser
+CREATE USER app_user WITH PASSWORD 'secure_password_here';
+CREATE DATABASE app_db OWNER app_user;
+
+-- Switch to it
+\c app_db
+
+
+-- Grant additional privileges if needed
+GRANT ALL PRIVILEGES ON DATABASE app_db TO app_user;`} />
+
+<Code lang="bash" title="Alternative: CLI tools" code={`# From terminal
+createuser --interactive app_user
+createdb -O app_user app_db`} />
+
+### 🔑 Test Connection
+
+<Code lang="bash" title="Connect as new user" code={`psql -U app_user -d app_db -h localhost -p 5432
+# Prompt: app_db=>  (note the =>, means non-superuser)
+\conninfo
+# Output: You are connected to database "app_db" as user "app_user" ...`} />
+
+---
+
+## 🖥️ psql CLI Deep Dive
+
+### 🔗 Connection Syntax
+
+```bash
+psql [OPTIONS] [DBNAME [USERNAME]]
+
+# Common patterns:
+psql -d mydb                     # Connect to default user on localhost
+psql -U admin -d production      # Specify user & DB
+psql -h db.example.com -p 5433   # Remote host & custom port
+psql "postgresql://user:pass@host:port/dbname?sslmode=require"
+
+# Connect as default postgres superuser
+psql -U postgres
+
+# Connect to a specific database
+psql -U postgres -d myapp_db
+
+# Connect to remote server
+psql -h 192.168.1.10 -p 5432 -U postgres -d myapp_db
+
+# One-liner: host, port, user, db
+psql "postgresql://postgres:password@localhost:5432/myapp_db"
+```
+
+<Aside type="note">
+**Prompt Meaning**:
+- `dbname=#` → Connected as **superuser** (`postgres` or `admin`)
+- `dbname=>` → Connected as **regular user**
+- The prompt changes to `dbname-#` or `dbname->` when you're in a multi-line statement.
+
+What each flag means:
+  -h  → host     (default: localhost)
+  -p  → port     (default: 5432)
+  -U  → username (default: postgres)
+  -d  → database (default: same as username)
+
+> 🎯 **Real-life SDE:** The connection string format
+> `postgresql://user:password@host:port/dbname`
+> is what you put in your `.env` file in Node.js / Django / Spring apps.
+</Aside>
+
+
+
+### 📝 Basic Usage Flow
+
+<Code lang="sql" title="Interactive session" code={`app_db=> SELECT version();
+app_db=> \dt                 -- List tables
+app_db=> SELECT * FROM users LIMIT 5;
+app_db=> \timing on          -- Show query execution time
+app_db=> SELECT count(*) FROM orders;
+app_db=> \timing off
+app_db=> \q                  -- Quit psql`} />
+
+### 🎯 Essential `\` Meta-Commands
+
+Meta-commands **only work in `psql`**, not in application code. They start with `\`.
+
+<CardGrid>
+  <Card title="DB Commands" icon="information">
+    ```bash
+    \l               → List all databases
+    \l+              → list databases with size info
+    \c dbname        → Connect to another database
+    ```
+  </Card>
+
+  <Card title="Table Commands" icon="information">
+    ```bash
+    \l               → List all databases
+    \l+              → list databases with size info
+    \c dbname        → Connect to another database
+    \d [pattern]     → Describe tables/views/sequences/types/constraints (e.g., \d users)
+    \dt              → list all tables in current db
+    \dt+             → list tables with size & description
+    \di              → List indexes
+    \ds              → List sequences
+    \df              → List functions
+    \dn              → List schemas
+    ```
+  </Card>
+  
+  <Card title="DB Commands" icon="information">
+    ```bash
+    \du              → list all users/roles
+    ```
+  </Card>
+
+  <Card title="Query Execution & Formatting" icon="rocket">
+    ```bash
+    \x [on|off|auto] → Toggle expanded output (great for wide rows)
+    \timing [on|off] → Show query execution time
+    \g [file]        → Execute query & optionally save output
+    \i filename.sql  → Execute SQL from file
+    \o filename      → Redirect query output to file
+    \echo text       → Print text to terminal
+    ```
+  </Card>
+
+  <Card title="Help & Debugging" icon="shield">
+    ```bash
+    \?               → Help with psql meta-commands
+    \h [COMMAND]     → Help with SQL syntax (e.g., \h CREATE TABLE)
+    \d+ table        → Show table details + storage stats + descriptions
+    \conninfo        → Show current connection details
+    \encoding        → Show client encoding
+    \q               → Quit psql
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Pro Tip**: `\d+` is your best friend in production. It shows:
+- Column types & constraints
+- Indexes attached to the table
+- Table size on disk
+- `TOAST` table info (for large columns)
+- Row estimates & vacuum stats
+</Aside>
+
+---
+
+## 🛠️ CLI Productivity Hacks
+
+### 🔧 Customize Your Prompt (`~/.psqlrc`)
+
+Create `~/.psqlrc` to auto-load settings every time you open `psql`:
+
+<Code lang="bash" title="~/.psqlrc" code={String.raw`
+-- Show query timing automatically
+\timing on
+
+-- Better prompt format: user@db>
+\set PROMPT1 '%n@%/%R%# '
+
+-- Auto-expand output when rows are wide
+\x auto
+
+-- Set page size for large outputs
+\pset pager always
+
+-- Ignore trailing whitespace in history
+\set HISTCONTROL ignorespace`} />
+
+### 🔑 Safe Password Handling
+
+<CardGrid>
+  <Card title="✅ Use Environment Variables" icon="approve-check">
+    ```bash
+    export PGPASSWORD='your_password'
+    psql -U app_user -d mydb
+    unset PGPASSWORD  # Clear after use
+    ```
+  </Card>
+  
+  <Card title="✅ Use ~/.pgpass File" icon="shield">
+    ```bash
+    # ~/.pgpass format: hostname:port:database:username:password
+    localhost:5432:mydb:app_user:secure_pass
+    *.example.com:5432:*:app_user:secure_pass
+    
+    # Secure permissions!
+    chmod 600 ~/.pgpass
+    
+    # psql reads it automatically
+    psql -U app_user -d mydb -h localhost
+    ```
+  </Card>
+
+  <Card title="❌ Never Do This" icon="error">
+    ```bash
+    # Hardcoded in shell history
+    psql "postgresql://user:pass@host/db"
+    
+    # Visible in `ps` output
+    psql -U user -W password -d db
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 📊 psql vs Application Code — When to Use What
+
+| Task | Best Tool | Why |
+|------|-----------|-----|
+| Ad-hoc queries, debugging, schema inspection | `psql` | Fast, interactive, formatting, `\d+`, `\timing` |
+| Running migrations | Framework CLI (`prisma migrate`, `flyway`, `alembic`) | Versioned, rollback-safe, CI/CD friendly |
+| Application data access | ORM / Query Builder / `pg` driver | Connection pooling, parameterization, type safety |
+| Bulk data import/export | `\copy` or `COPY` | Faster than app-level loops, handles CSV/JSON natively |
+
+<Code lang="sql" title="psql \copy vs COPY" code={`-- \copy: Runs on CLIENT machine (permissions of your OS user)
+\copy users FROM '~/data/users.csv' WITH (FORMAT csv, HEADER true);
+
+-- COPY: Runs on SERVER (requires SUPERUSER or pg_read_server_files)
+COPY users FROM '/var/lib/postgresql/data/users.csv' WITH (FORMAT csv, HEADER true);
+
+-- Pro tip: \copy is safer for most developers
+\copy (SELECT id, email FROM users WHERE active = true) TO 'active_users.csv' CSV HEADER;`} />
+
+---
+
+## 🎯 Interview & Production Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do I connect to a remote Postgres securely?" icon="shield">
+    ```bash
+    # Recommended: SSH tunnel + local psql
+    ssh -L 5433:localhost:5432 user@db-server
+    psql -h localhost -p 5433 -U app_user -d mydb
+    
+    # Or use SSL directly (if configured)
+    psql "postgresql://user:pass@db-host:5432/mydb?sslmode=require"
+    ```
+  </Card>
+  
+  <Card title="Q: How do I export query results to CSV?" icon="rocket">
+    ```bash
+    # Inside psql:
+    \copy (SELECT * FROM orders WHERE created_at > '2024-01-01') 
+          TO 'orders_2024.csv' WITH (FORMAT csv, HEADER true)
+    
+    # From terminal:
+    psql -U app_user -d mydb -c "\copy (SELECT ...) TO stdout CSV HEADER" > out.csv
+    ```
+  </Card>
+
+  <Card title="Q: How do I see what indexes a table uses?" icon="information">
+    ```sql
+    \di+ table_name      -- List indexes on table
+    \d table_name        -- Shows indexes in table description
+    SELECT indexname, indexdef 
+    FROM pg_indexes 
+    WHERE tablename = 'table_name';
+    ```
+  </Card>
+
+  <Card title="Q: How do I run a multi-line query cleanly?" icon="approve-check">
+    ```bash
+    app_db=> SELECT 
+    app_db->     id, 
+    app_db->     name,
+    app_db->     created_at
+    app_db-> FROM users
+    app_db-> WHERE status = 'active'
+    app_db-> ORDER BY created_at DESC
+    app_db-> LIMIT 10; ← only runs when it sees this
+    
+    Tip: Use \x auto to avoid horizontal scrolling for wide results
+    psql waits for semicolon before running the query, so you can format it nicely.
+    ```
+  </Card>
+
+  <Card title="Q:Expanded display for wide tables?" icon="approve-check">
+    ```bash
+    \x        -- toggle expanded mode
+
+    -- Normal mode:
+    --  id | name  | email
+    -- ----+-------+--------
+    --   1 | Rahul | r@g.com
+
+    -- Expanded mode (\x on):
+    -- -[ RECORD 1 ]-----
+    -- id    | 1
+    -- name  | Rahul
+    -- email | r@g.com
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the output/behavior" code={`Q1: What does this command do?
+\copy (SELECT id, email FROM users) TO 'users.csv' CSV HEADER
+
+Q2: You run \dt but see "Did not find any relations." What's wrong?
+A) PostgreSQL is down
+B) You're connected to the wrong database or schema
+C) psql requires sudo
+D) Tables are case-sensitive
+
+Q3: How do you enable query timing permanently in psql?
+A) Run "SET timing = on;" in SQL
+B) Add "\timing on" to ~/.psqlrc
+C) Use psql --timing flag
+D) Both B and C
+
+Q4: What's the difference between \d and \dt?
+A) \d shows tables, \dt shows everything
+B) \d shows tables/views/sequences, \dt shows tables only
+C) \d is deprecated, use \di
+D) No difference
+
+Q5: How do you safely run a SQL file without exposing credentials in bash history?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+Q1: Exports query results to 'users.csv' in CSV format with column headers. Runs on client machine.
+
+Q2: B) You're connected to the wrong database or schema. 
+   → Fix: \c correct_db or \dn+ to check schemas, then \d public.*
+
+Q3: D) Both B and C work. ~/.psqlrc is recommended for persistent dev setup.
+
+Q4: B) \d describes tables/views/sequences matching pattern. \dt lists tables only.
+
+Q5: Use environment variables or ~/.pgpass:
+   PGPASSWORD=pass psql -U user -d db -f script.sql
+   OR store creds in ~/.pgpass and run: psql -f script.sql
+
+Q6: How do I run a .sql file directly?
+    ```bash
+        # From terminal (outside psql)
+        psql -U postgres -d myapp_db -f setup.sql
+    ```
+
+Q7: How do I search through command history?
+    ```bash
+        # Inside psql, use arrow keys
+        ↑ / ↓     → previous/next command
+        Ctrl+R    → reverse search through history
+    ```
+</details>
+
+Run Queries Efficiently
+```bash
+# One-liner
+psql -U postgres -d appdb -c "SELECT version();"
+
+# Execute migration/debug script
+psql -U postgres -d appdb -f schema_fix.sql
+
+# Export results to CSV (real-life reporting)
+psql -U postgres -d appdb -c "\copy (SELECT id, email FROM users LIMIT 10) TO 'users.csv' CSV HEADER"
+```
+
+🧩 How CLI Maps to Architecture (SDE Lens)
+[psql CLI] 
+   ↓ sends SQL over TCP/Unix
+[Postmaster] → authenticates → forks [Backend Process]
+   ↓
+[Parser → Planner → Executor] → returns rows
+   ↓
+[psql formats & prints] + [timing/expanded output]
+🔍 Interview Q: "App says slow, but DB CPU is low. How do you debug?"
+✅ Connect via psql → \timing on → run query → compare app vs DB time → if DB fast → network/ORM issue. If DB slow → EXPLAIN ANALYZE.
+
+---
+
+## 🎯 SDE Interview Relevance
+
+| Concept | Why It Matters |
+|---|---|
+| Connection string | Every backend app needs this in `.env` |
+| `\d tablename` | First thing you run in a new codebase to understand schema |
+| `\timing` | Quick perf check during debugging |
+| `psql -f file.sql` | Running migrations in CI/CD pipelines |
+| `\x` expanded mode | Reading wide result sets without horizontal scroll pain |
+
+---
+
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Add `\timing on` and `\x auto` to your `~/.psqlrc` today
+2. ✅ Practice `\d+`, `\di`, `\df` on your project's database
+3. ✅ Use `\copy` for quick data exports instead of app-level scripts
+4. ✅ Explore `pg_stat_activity` and `pg_stat_user_tables` via `psql` for monitoring
+5. ✅ Read `man psql` — it's surprisingly well-documented!
+
+Mastering `psql` turns database debugging from a chore into a superpower. 🐘⚡
+</Aside>

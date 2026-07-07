@@ -1,0 +1,905 @@
+---
+title: JSX
+slug: react/fundamental/jsx
+tags: ["react", "javascript", "frontend", "components", "react-architecture"]
+---
+
+# 🔬 JSX
+
+---
+
+## What JSX Actually Is
+
+> **JSX is not HTML. JSX is not a browser feature. JSX does not exist at runtime.**
+
+JSX(JavaScript XML) is **syntactic sugar** — a syntax extension for JavaScript that gets **compiled away** before any browser ever sees it.
+
+```jsx
+// What YOU write (JSX)
+const element = <button className="btn">Click me</button>;
+
+// What ACTUALLY runs (JavaScript)
+const element = React.createElement('button', { className: 'btn' }, 'Click me');
+```
+
+The browser has zero knowledge of JSX.  
+By the time your code reaches the browser, every `<` and `>` is gone.
+
+---
+
+## Why JSX exists?
+
+Before JSX, React code looked like:
+```js
+React.createElement(
+  "h1",
+  null,
+  "Hello World"
+);
+😵 Hard to read.
+```
+
+JSX solves readability
+```html
+<div>
+  <header>
+    <h1>Dashboard</h1>
+  </header>
+</div>
+```
+
+---
+
+## 🔄 The Full Compilation Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR SOURCE CODE                         │
+│                                                             │
+│   function App() {                                          │
+│     return <div className="app"><h1>Hello</h1></div>;       │
+│   }                                                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                    Babel / SWC / esbuild
+                    (build time, not runtime)
+                           │
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   COMPILED OUTPUT                           │
+│                                                             │
+│   import { jsx as _jsx } from 'react/jsx-runtime';          │
+│                                                             │
+│   function App() {                                          │
+│     return _jsx('div', {                                    │
+│       className: 'app',                                     │
+│       children: _jsx('h1', { children: 'Hello' })           │
+│     });                                                     │
+│   }                                                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                    runs in browser
+                           │
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   RUNTIME OUTPUT                            │
+│              (plain JavaScript object)                      │
+│                                                             │
+│   {                                                         │
+│     $$typeof: Symbol(react.element),                        │
+│     type: 'div',                                            │
+│     key: null,                                              │
+│     ref: null,                                              │
+│     props: {                                                │
+│       className: 'app',                                     │
+│       children: {                                           │
+│         $$typeof: Symbol(react.element),                    │
+│         type: 'h1',                                         │
+│         props: { children: 'Hello' },                       │
+│         key: null,                                          │
+│         ref: null                                           │
+│       }                                                     │
+│     }                                                       │
+│   }                                                         │
+└─────────────────────────────────────────────────────────────┘
+
+
+JSX
+ ↓
+Babel/SWC
+ ↓
+React.createElement()
+ ↓
+React Element Object
+ ↓
+Virtual DOM Tree
+ ↓
+Real DOMx`
+```
+
+**This plain object is a React Element.**  
+Not a DOM node. Not rendered yet. Just a description.  
+React reads this description later and decides what to do with the real DOM.
+
+---
+
+## 📦 Old Transform vs New Transform
+
+React 17 introduced the **new JSX transform.** This is one of the most commonly misunderstood changes.
+
+### Old Transform (pre React 17)
+
+```jsx
+// Source
+import React from 'react'; // ← REQUIRED or JSX breaks
+
+function Button() {
+  return <button>Click</button>;
+}
+
+// Compiled to:
+import React from 'react';
+
+function Button() {
+  return React.createElement('button', null, 'Click');
+  // React must be in scope — that's why the import was mandatory
+}
+```
+
+### New Transform (React 17+)
+
+```jsx
+// Source — NO React import needed
+function Button() {
+  return <button>Click</button>;
+}
+
+// Compiled to:
+import { jsx as _jsx } from 'react/jsx-runtime'; // auto-injected by compiler
+
+function Button() {
+  return _jsx('button', { children: 'Click' });
+  // react/jsx-runtime is imported automatically
+  // You never write this import — the compiler adds it
+}
+```
+
+### What Changed and Why
+
+| | Old Transform | New Transform |
+|---|---|---|
+| React in scope | **Required** | Not required |
+| Import | Manual `import React` | Auto-injected by compiler |
+| Function called | `React.createElement` | `jsx` / `jsxs` from `react/jsx-runtime` |
+| Bundle size | Slightly larger | Slightly smaller (optimized runtime) |
+| Since | React 0.13 | **React 17+** |
+| Performance | Baseline | Marginally better (static children hint) |
+
+```
+jsx  → used when children is a single element
+jsxs → used when children is an array (static)
+      ("s" = static, React can optimize)
+```
+
+---
+
+## 🔬 `React.createElement` — Internals
+
+```js
+React.createElement(
+  type,     // string ('div') OR function (MyComponent)
+  props,    // object of attributes/props OR null
+  ...children // rest args — all child elements
+)
+```
+
+### Every form it takes:
+
+```jsx
+// 1. No props, no children
+<div />
+React.createElement('div', null)
+
+// 2. Props, no children
+<div className="app" id="root" />
+React.createElement('div', { className: 'app', id: 'root' })
+
+// 3. Props + one child
+<div className="app">Hello</div>
+React.createElement('div', { className: 'app' }, 'Hello')
+
+// 4. Props + multiple children
+<div>
+  <h1>Title</h1>
+  <p>Body</p>
+</div>
+React.createElement(
+  'div',
+  null,
+  React.createElement('h1', null, 'Title'),
+  React.createElement('p', null, 'Body')
+)
+
+// 5. Component (uppercase) — function reference passed
+<MyButton variant="primary">Click</MyButton>
+React.createElement(MyButton, { variant: 'primary' }, 'Click')
+//                  ↑
+//                  function reference, not string
+```
+
+---
+
+## 📋 What a React Element Actually Is
+
+```js
+// The object React.createElement returns:
+{
+  $$typeof: Symbol(react.element),  // ← critical — explained below
+  type: 'div',                      // string or function
+  key: null,                        // reconciler identity
+  ref: null,                        // direct DOM/instance access
+  props: {
+    className: 'app',
+    children: 'Hello'               // single child → value
+                                    // multiple children → array
+  },
+  _owner: null,                     // dev-only: which component created this
+  _store: {}                        // dev-only: validation
+}
+```
+
+### The `$$typeof` Symbol — XSS Protection
+
+This is one of the most important details nobody talks about.
+
+```
+Why does React put Symbol(react.element) on every element?
+
+ATTACK SCENARIO WITHOUT IT:
+  1. User submits input: '{"type":"script","props":{"src":"evil.js"}}'
+  2. Your app does: const el = JSON.parse(userInput);
+  3. You render: return <div>{el}</div>
+  4. React renders it as a real element
+  5. Script tag injected → XSS attack
+
+WHY Symbol PREVENTS IT:
+  Symbols CANNOT be serialized to JSON.
+  JSON.stringify({ key: Symbol() }) → '{}' (Symbol dropped)
+  JSON.parse() can NEVER produce a Symbol.
+
+  So if an object has no $$typeof Symbol →
+  React refuses to render it as an element.
+  Attacker-controlled JSON can never be a valid React element.
+```
+
+```js
+// React's internal check (simplified):
+function isValidElement(object) {
+  return (
+    typeof object === 'object' &&
+    object !== null &&
+    object.$$typeof === REACT_ELEMENT_TYPE  // Symbol check
+  );
+}
+```
+
+> 🔐 **Security note:** `dangerouslySetInnerHTML` bypasses this entirely. That's why it's named "dangerous."
+```js
+<div
+  dangerouslySetInnerHTML={{
+    __html: userInput
+  }}
+/>
+
+Now React trusts your HTML.
+
+React automatically escapes values.
+safe:
+const name =
+  '<script>alert("hack")</script>';
+
+return <h1>{name}</h1>;
+
+<h1>
+<script>alert("hack")</script>
+</h1>
+
+Shown as text.
+
+Not executed.
+
+This prevents many XSS attacks.
+
+```
+---
+
+## 📜 JSX Rules — Why Each Rule Exists
+
+Every JSX rule exists for a specific reason. Not arbitrary syntax:
+
+### Rule 1: One Root Element
+
+```jsx
+// ❌ Invalid JSX
+function App() {
+  return (
+    <h1>Title</h1>
+    <p>Body</p>
+  );
+}
+
+// ✅ Valid
+function App() {
+  return (
+    <div>
+      <h1>Title</h1>
+      <p>Body</p>
+    </div>
+  );
+}
+```
+
+**Why:** `React.createElement` returns **one object.** A function can only return one value. Two sibling JSX elements = two return values = invalid JavaScript.
+
+---
+
+### Rule 2: Fragments — When You Don't Want a Wrapper DOM Node
+
+```jsx
+// ✅ Fragment — no extra DOM node
+function App() {
+  return (
+    <>
+      <h1>Title</h1>
+      <p>Body</p>
+    </>
+  );
+}
+
+// Compiles to:
+React.createElement(
+  React.Fragment,  // type = Fragment, not a real DOM node
+  null,
+  React.createElement('h1', null, 'Title'),
+  React.createElement('p', null, 'Body')
+)
+```
+
+**When does the wrapper DOM node matter?**
+
+```jsx
+// Parent expects <td> children — adding <div> wrapper breaks HTML
+function TableRow({ cells }) {
+  return (
+    <tr>
+      {cells.map(cell => (
+        // ❌ <div><td>...</td></div> → invalid HTML, browser breaks table
+        // ✅ <><td>...</td></> → no wrapper, valid HTML
+        <React.Fragment key={cell.id}>
+          <td>{cell.label}</td>
+          <td>{cell.value}</td>
+        </React.Fragment>
+      ))}
+    </tr>
+  );
+}
+// Note: <> shorthand can't take a key prop — use React.Fragment when key needed
+```
+
+---
+
+### Rule 3: className, not class
+
+```jsx
+// ❌
+<div class="container">
+
+// ✅
+<div className="container">
+```
+
+**Why:** `class` is a **reserved keyword** in JavaScript (used for class declarations). Since JSX compiles to JS objects, using `class` would conflict. React chose `className` to mirror the DOM property `element.className`.
+
+---
+
+### Rule 4: htmlFor, not for
+
+```jsx
+// ❌
+<label for="email">Email</label>
+
+// ✅
+<label htmlFor="email">Email</label>
+```
+
+**Why:** Same reason — `for` is a reserved JS keyword (used in for loops).
+
+---
+
+### Rule 5: camelCase attributes
+
+```jsx
+// ❌ HTML style
+<div onclick="..." tabindex="2" stroke-width="2">
+
+// ✅ JSX style
+<div onClick={...} tabIndex={2} strokeWidth={2}>
+```
+
+**Why:** JSX props become JavaScript object keys. JavaScript object keys with hyphens require quotes — `{ stroke-width: 2 }` is invalid. camelCase is valid JS. Exception: `data-*` and `aria-*` attributes keep their hyphenated form because they're HTML standards.
+
+```jsx
+// data-* and aria-* are exceptions — hyphens kept
+<div
+  data-testid="cart-badge"
+  aria-label="Cart items count"
+  aria-live="polite"
+>
+```
+
+---
+
+### Rule 6: Self-closing tags
+
+```jsx
+// ❌ HTML allows this — JSX doesn't
+<img src="...">
+<input type="text">
+
+// ✅ JSX requires explicit self-close
+<img src="..." />
+<input type="text" />
+```
+
+**Why:** JSX is XML-strict. Every element must be properly closed.
+
+---
+
+### Rule 7: Uppercase = Component, Lowercase = DOM Element
+
+```jsx
+// 'button' → string passed to createElement → DOM element
+<button>Click</button>
+React.createElement('button', null, 'Click')
+
+// 'Button' → function reference passed → React component
+<Button>Click</Button>
+React.createElement(Button, null, 'Click')
+```
+
+**This is how React tells components from native DOM elements.**  
+The transformer checks the first letter's case at compile time.
+
+```jsx
+// ⚠️ Trap — dynamic component must be uppercase variable
+const components = { primary: PrimaryButton, secondary: SecondaryButton };
+
+function App({ type }) {
+  // ❌ lowercase → React treats 'components[type]' as unknown DOM tag
+  return <components[type] />;
+
+  // ✅ assign to uppercase variable first
+  const Component = components[type];
+  return <Component />;
+}
+```
+
+---
+
+## 🧮 Expressions in JSX
+
+JSX accepts **JavaScript expressions** inside `{}`.  
+Not statements — expressions only.
+
+```jsx
+function ProductCard({ product, discount, isLoggedIn }) {
+  return (
+    <div>
+      {/* ✅ Expression: variable */}
+      <h2>{product.name}</h2>
+
+      {/* ✅ Expression: arithmetic */}
+      <p>${product.price * (1 - discount)}</p>
+
+      {/* ✅ Expression: ternary */}
+      {isLoggedIn ? <BuyButton /> : <LoginPrompt />}
+
+      {/* ✅ Expression: && short-circuit */}
+      {product.inStock && <span>In Stock</span>}
+
+      {/* ✅ Expression: function call */}
+      <p>{formatDate(product.createdAt)}</p>
+
+      {/* ✅ Expression: array.map */}
+      <ul>
+        {product.tags.map(tag => (
+          <li key={tag}>{tag}</li>
+        ))}
+      </ul>
+
+      {/* ❌ Statement: if — NOT allowed */}
+      {if (isLoggedIn) { return <BuyButton />; }}
+
+      {/* ❌ Statement: for loop — NOT allowed */}
+      {for (let i = 0; i < 3; i++) { <span>{i}</span> }}
+    </div>
+  );
+}
+```
+
+**Why only expressions?**  
+Expressions produce a value. `{}` in JSX needs to produce a value — it slots into a function call argument. Statements don't produce values and can't appear there.
+
+---
+
+## ⚠️ JSX Children — All Forms and Edge Cases
+
+```jsx
+// 1. String literal
+<p>Hello World</p>
+// children = "Hello World"
+
+// 2. Expression
+<p>{user.name}</p>
+// children = user.name (string/number/element)
+
+// 3. Multiple children → array
+<div>
+  <span>A</span>
+  <span>B</span>
+</div>
+// children = [ReactElement, ReactElement]
+
+// 4. Nested components
+<Card>
+  <CardHeader title="Hello" />
+  <CardBody>Content</CardBody>
+</Card>
+// children = [ReactElement, ReactElement]
+
+// 5. Mixed
+<div>
+  Hello
+  <span>{name}</span>
+  !
+</div>
+// children = ["Hello", ReactElement, "!"]
+```
+
+### What React ignores as children:
+
+```jsx
+// These render NOTHING — React ignores them
+{false}
+{null}
+{undefined}
+{true}  // true does NOT render
+
+// ⚠️ TRAP — 0 renders as "0" — NOT ignored
+{0 && <Spinner />}
+// When list.length is 0 → renders "0" on screen, not nothing
+// Fix:
+{list.length > 0 && <Spinner />}
+// Or:
+{list.length ? <Spinner /> : null}
+```
+
+---
+
+## 🔁 JSX to Element to DOM — Full Lifecycle
+
+```
+┌──────────────────────────────────────────────────┐
+│   STEP 1: You write JSX                          │
+│                                                  │
+│   <UserCard name="Alice" role="Admin" />         │
+└─────────────────────┬────────────────────────────┘
+                      │ compiler (build time)
+                      ↓
+┌──────────────────────────────────────────────────┐
+│   STEP 2: Compiled to createElement call         │
+│                                                  │
+│   _jsx(UserCard, { name: 'Alice',                │
+│                    role: 'Admin' })              │
+└─────────────────────┬────────────────────────────┘
+                      │ runtime — function called
+                      ↓
+┌──────────────────────────────────────────────────┐
+│   STEP 3: Returns React Element (plain object)   │
+│                                                  │
+│   {                                              │
+│     $$typeof: Symbol(react.element),             │
+│     type: UserCard,    ← function reference      │
+│     props: { name: 'Alice', role: 'Admin' },     │
+│     key: null, ref: null                         │
+│   }                                              │
+└─────────────────────┬────────────────────────────┘
+                      │ React reads this object
+                      ↓
+┌──────────────────────────────────────────────────┐
+│   STEP 4: React calls UserCard(props)            │
+│                                                  │
+│   UserCard({ name: 'Alice', role: 'Admin' })     │
+│   → returns more JSX → more React Elements       │
+└─────────────────────┬────────────────────────────┘
+                      │ recursive
+                      ↓
+┌──────────────────────────────────────────────────┐
+│   STEP 5: Full element tree built (Virtual DOM)  │
+│                                                  │
+│   { type: 'div', props: {                        │
+│       children: [                                │
+│         { type: 'img', props: {...} },           │
+│         { type: 'h2',  props: {...} },           │
+│         { type: 'p',   props: {...} }            │
+│       ]                                          │
+│   }}                                             │
+└─────────────────────┬────────────────────────────┘
+                      │ ReactDOM reads tree
+                      ↓
+┌──────────────────────────────────────────────────┐
+│   STEP 6: ReactDOM creates real DOM nodes        │
+│                                                  │
+│   document.createElement('div')                  │
+│   document.createElement('img')                  │
+│   div.appendChild(img)                           │
+│   ...                                            │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔗 DSA / Internals Connection
+
+JSX produces a **tree of plain objects.** This is the Virtual DOM.
+
+```
+Tree structure produced by nested JSX:
+
+              { type: App }
+                    │
+              { type: 'div' }
+             /       |       \
+    {type:'nav'} {type:'main'} {type:'footer'}
+                      │
+              {type: ProductList}
+               /    |    |    \
+              P     P    P     P   ← { type: Product }
+
+Traversal: React uses DFS (depth-first)
+  → recurse into children first
+  → build fiber tree from this element tree
+  → diff fiber tree on re-render
+```
+
+The element object tree is **not the fiber tree.** It's a blueprint.  
+React builds the fiber tree (linked list) from this blueprint during reconciliation — Phase 10.
+
+---
+
+## ⚠️ Silent Bugs & Failure Cases
+
+### Bug 1: Object rendered directly
+
+```jsx
+const user = { name: 'Alice', age: 25 };
+
+// ❌ Objects are not valid React children
+return <div>{user}</div>;
+// Error: Objects are not valid as a React child
+
+// ✅
+return <div>{user.name}</div>;
+```
+
+### Bug 2: Function not called
+
+```jsx
+// ❌ Renders the function's source code as string (or nothing)
+return <div>{formatPrice}</div>;
+
+// ✅ Call it
+return <div>{formatPrice(product.price)}</div>;
+```
+
+### Bug 3: JSX spread overwrites explicit props
+
+```jsx
+const defaults = { type: 'button', disabled: false };
+
+// ❌ If defaults.disabled is true, it overwrites your false
+<button {...defaults} disabled={false}>
+
+// Spread order matters — later props win
+// ✅ Put explicit props AFTER spread
+<button {...defaults} disabled={false}>  // explicit wins
+// ❌
+<button disabled={false} {...defaults}>  // spread wins
+```
+
+### Bug 4: Key on Fragment shorthand
+
+```jsx
+// ❌ <> shorthand can't take props
+{items.map(item => (
+  <key={item.id}> {/* syntax error */}
+    <dt>{item.term}</dt>
+    <dd>{item.def}</dd>
+  </>
+))}
+
+// ✅ Use React.Fragment explicitly when key is needed
+{items.map(item => (
+  <React.Fragment key={item.id}>
+    <dt>{item.term}</dt>
+    <dd>{item.def}</dd>
+  </React.Fragment>
+))}
+```
+
+### Bug 5: Props named `key` or `ref`
+
+```jsx
+// ❌ key and ref are RESERVED — they are NOT in props
+function Card({ key }) {  // key is always undefined here
+  console.log(key);       // undefined — React strips it
+}
+
+<Card key="123" /> // key never reaches Card's props
+
+// ✅ Use a different prop name if you need the value inside
+<Card id="123" itemKey="123" />
+```
+
+### Bug 6:
+```js
+<div>
+  {count && <Badge />}
+</div>
+
+count = 0
+
+o/p:
+<div>0</div>
+
+safer:
+{
+  count > 0 &&
+  <Badge />
+}
+```
+
+---
+
+## 🏭 Production Relevance
+
+### TypeScript + JSX — Production Pattern
+
+```tsx
+// Production: type your props explicitly
+interface ButtonProps {
+  label: string;
+  variant: 'primary' | 'secondary' | 'danger';
+  disabled?: boolean;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  children?: React.ReactNode; // anything React can render
+}
+
+function Button({ label, variant, disabled = false, onClick }: ButtonProps) {
+  return (
+    <button
+      className={`btn btn--${variant}`}
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={label}
+    >
+      {label}
+    </button>
+  );
+}
+```
+
+### JSX in Testing
+
+```tsx
+// JSX in tests — identical to source code
+import { render, screen } from '@testing-library/react';
+
+test('button renders with label', () => {
+  render(<Button label="Buy Now" variant="primary" onClick={jest.fn()} />);
+  expect(screen.getByRole('button', { name: 'Buy Now' })).toBeInTheDocument();
+});
+// JSX works in tests because Jest uses same Babel/SWC transform
+```
+
+---
+
+## 🎤 Interview Section
+
+### Common Questions
+
+**Q: What is JSX?**
+> *"JSX is a syntax extension to JavaScript that lets you write HTML-like syntax in your JS files. It's purely compile-time — Babel or SWC transforms every JSX expression into a `React.createElement` or `jsx()` call before the browser runs it. The output is a plain JavaScript object called a React Element."*
+
+---
+
+**Q: Why can't you use `if` statements inside JSX?**
+> *"Because JSX `{}` interpolation only accepts expressions — values that evaluate to something. `if` is a statement, not an expression — it doesn't produce a value. You can use ternary operators or `&&` short-circuits instead, as they are expressions."*
+
+---
+
+**Q: What's the difference between a React Element and a React Component?**
+> *"A component is a function you define. A React Element is the plain JS object returned by calling `React.createElement` with that function as the type. When you write `<MyButton />`, that's not calling `MyButton` — it's creating an element object `{ type: MyButton, props: {} }`. React reads that object and calls `MyButton()` itself during the render phase."*
+
+---
+
+### Senior-Level Questions
+
+**Q: Why did React introduce the new JSX transform in React 17?**
+> Three reasons:
+> 1. Eliminate the need to `import React` in every file — better DX
+> 2. Allow compilers to optimize — `jsx` vs `jsxs` signals whether children are static
+> 3. Enable future performance improvements in the runtime without touching user code
+
+---
+
+**Q: What is `$$typeof` and why does React use a Symbol for it?**
+> *"It's a security mechanism against XSS. React checks that every element object has `$$typeof: Symbol(react.element)` before rendering it. Symbols cannot be serialized to JSON — `JSON.parse()` can never produce a Symbol. So even if an attacker injects a malicious JSON object shaped like a React element, it will never have a valid `$$typeof` Symbol and React will refuse to render it."*
+
+---
+
+### ⚠️ Interview Traps
+
+**Trap 1:** *"Do you need to import React to use JSX?"*
+
+Wrong: *"Yes, always."*  
+Correct: *"Not with the new JSX transform (React 17+). The compiler auto-imports from `react/jsx-runtime`. You only need `import React` if you use `React.` APIs directly — `React.memo`, `React.createContext`, etc."*
+
+---
+
+**Trap 2:** *"`{0 && <Component />}` — what renders?"*
+
+Wrong: *"Nothing."*  
+Correct: *"The number `0` renders as text. `&&` short-circuits with the falsy value itself, not `false`. Since `0` is falsy but renderable, React outputs it. Use `{count > 0 && <Component />}` to prevent this."*
+
+---
+
+**Trap 3:** *"Can you access the `key` prop inside a component?"*
+
+Wrong: *"Yes, via `props.key`."*  
+Correct: *"No. `key` and `ref` are stripped by React before props are passed to the component. They're not part of the props object. They're consumed by React's reconciler. If you need the value inside, pass it as a separate prop: `id={item.id} key={item.id}`."*
+
+---
+
+## 📊 SDE Relevance Rating
+
+| Topic | Rating |
+|---|---|
+| JSX = syntactic sugar, compiles away | 🔴 MUST KNOW |
+| `React.createElement` signature | 🔴 MUST KNOW |
+| React Element shape (plain object) | 🔴 MUST KNOW |
+| New JSX transform (no React import) | 🔴 MUST KNOW |
+| `$$typeof` Symbol + XSS protection | 🟡 GOOD TO KNOW (senior) |
+| Uppercase = component rule + why | 🔴 MUST KNOW |
+| `{0 && ...}` renders 0 trap | 🔴 MUST KNOW |
+| `key` / `ref` not in props | 🔴 MUST KNOW |
+| `jsxs` vs `jsx` optimization | 🟡 GOOD TO KNOW |
+
+---
+
+## 🗺️ Where This Leads
+
+```
+JSX → createElement → React Element (Phase 0.4 — now)
+                │
+                ↓
+What is the React Element tree?     ← Phase 1.1 (Virtual DOM)
+                │
+                ↓
+How does React turn Elements → DOM? ← Phase 1.3 (First render cycle)
+                │
+                ↓
+How does React diff old vs new?     ← Phase 10.3 (Reconciliation)
+```
+
+---

@@ -1,0 +1,1369 @@
+---
+title: C++ Bitwise Operators
+slug: computer-languages/cpp/arithmetic-operators/bitwise-operators
+description: Complete guide to &, |, ^, ~, <<, >> — binary math, unsigned types, 2's complement (C++20 guaranteed), std::bitset, shift tricks, and DSA patterns.
+sidebar:
+  label: "Bitwise"
+  badge:
+    text: Operators
+    variant: tip
+tags: [cpp, operators, bitwise, binary, dsa, interview, performance, c++20, unsigned]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔢 Bitwise Operators in C++
+
+```text
+Bitwise Operators
+│
+├── Bitwise Logic
+│   ├── &    AND                                 // both bits 1
+│   ├── |    OR                                  // at least one bit 1
+│   ├── ^    XOR (exclusive OR)                  // bits differ
+│   └── ~    NOT (bitwise complement)            // flip all bits
+│
+├── Shift Operators
+│   ├── <<   left shift (multiply by 2ⁿ)
+│   └── >>   right shift (⚠️ signed: implementation-defined pre-C++20)
+│
+├── C++20 Bit Operations Library
+│   ├── std::rotl / std::rotr   — rotate left/right
+│   ├── std::countl_zero / countr_zero — count leading/trailing zeros
+│   ├── std::popcount           — count set bits (replaces Integer.bitCount)
+│   └── std::bit_cast           — type-safe bit reinterpretation
+│
+└── Compound Assignment
+    ├── &= |= ^= <<= >>=  — same semantics as Java
+```
+
+<Aside type="note">
+**🔑 Key Rule**: Bitwise operators work on **integral types only** (`int`, `unsigned`, `long`, `char`, `std::byte`, `std::bitset`).  
+❌ They **cannot** be applied to `bool` for `~`, `<<`, `>>` (but `&`, `|`, `^` work on `bool` with promotion to `int`).  
+✅ **C++ Advantage**: Native `unsigned` types (`uint32_t`, etc.) make logical right shift trivial — no `>>>` needed!
+</Aside>
+
+---
+
+## 🔬 Boolean Bitwise Operators (`&`, `|`, `^`) — Same as Java
+
+Unlike `&&` and `||`, the single-character `&` and `|` **do not short-circuit** — both operands are always evaluated.
+
+```text
+AND (&)          OR (|)           XOR (^)          NOT (~)
+A  B  A&B        A  B  A|B        A  B  A^B        A  ~A
+0  0   0         0  0   0         0  0   0          0   1
+0  1   0         0  1   1         0  1   1          1   0
+1  0   0         1  0   1         1  0   1
+1  1   1         1  1   1         1  1   0
+
+AND: both must be 1     → masking
+OR:  either can be 1    → setting bits
+XOR: exactly one is 1   → toggling, difference
+NOT: flip every bit     → complement
+```
+
+<Code lang="cpp" title="Boolean bitwise truth tables — C++" code={`
+#include <iostream>
+
+int main() {
+    // AND (&): both must be true
+    std::cout << std::boolalpha;
+    std::cout << (true & true) << '\\n';    // true
+    std::cout << (true & false) << '\\n';   // false
+    std::cout << (false & false) << '\\n';  // false
+
+    // OR (|): at least one true
+    std::cout << (true | false) << '\\n';   // true
+    std::cout << (false | false) << '\\n';  // false
+
+    // XOR (^): exactly one true (bits differ)
+    std::cout << (true ^ false) << '\\n';   // true
+    std::cout << (true ^ true) << '\\n';    // false
+    std::cout << (false ^ false) << '\\n';  // false
+
+    // ⚠️ Non-short-circuit behavior (same trap as Java):
+    auto check = []() { std::cout << "evaluated\\n"; return false; };
+    
+    if (false & check()) { }  // "evaluated" prints! (check() runs even though false)
+    if (false && check()) { } // "evaluated" does NOT print (short-circuits)
+    
+    return 0;
+}
+`} />
+
+<Aside type="caution">
+**When to use `&`/`|` on booleans in C++**: Rarely. Prefer `&&`/`||` for efficiency and clarity. Use `&`/`|` only when you **need both sides evaluated** (e.g., for side effects or flag accumulation).
+
+✅ **Modern C++**: Use `std::bitset` or integer flags for bit-level boolean logic — more efficient and expressive.
+</Aside>
+
+---
+
+## 🔢 Integral Bitwise Operations — Binary Examples (C++)
+
+```text
+a  = 0000 1010   (10)
+b  = 0000 1100   (12)
+─────────────────────
+&  = 0000 1000   (8)
+|  = 0000 1110   (14)
+^  = 0000 0110   (6)
+~a = 1111 0101   (-11)  ← two's complement (guaranteed in C++20!)
+```
+> 🔑 `~n = -(n+1)` always in two's complement systems. `~0 = -1`, `~5 = -6`, `~(-1) = 0`. Useful identity for bit tricks.
+
+<Code lang="cpp" title="Bitwise AND, OR, XOR, NOT — C++" code={`
+#include <iostream>
+#include <cstdint>  // for fixed-width types
+
+int main() {
+    int a = 5;  // binary: 0101
+    int b = 3;  // binary: 0011
+
+    // AND (&): 1 only if both bits are 1
+    std::cout << (a & b) << '\\n';  // 0101 & 0011 = 0001 → 1
+
+    // OR (|): 1 if any bit is 1
+    std::cout << (a | b) << '\\n';  // 0101 | 0011 = 0111 → 7
+
+    // XOR (^): 1 if bits differ
+    std::cout << (a ^ b) << '\\n';  // 0101 ^ 0011 = 0110 → 6
+
+    // NOT (~): flip all bits (two's complement)
+    std::cout << ~a << '\\n';       // ~0101 = ...11111010 → -6
+
+    // ✅ Modern C++: use unsigned for bit manipulation!
+    uint32_t ua = 5u;
+    std::cout << (~ua) << '\\n';    // 4294967290 (0xFFFFFFFA) — no sign confusion!
+
+    return 0;
+}
+`} />
+
+### 🧠 Visual Bitwise Table — C++
+
+| a (5) | b (3) | a & b | a \| b | a ^ b |
+|-------|-------|-------|--------|-------|
+| 0101  | 0011  | 0001 (1) | 0111 (7) | 0110 (6) |
+
+<Aside type="tip">
+**✅ C++ Best Practice**: Prefer **unsigned types** (`uint32_t`, `uint64_t`) for bitwise operations. They avoid sign-extension surprises and make logical right shift trivial (no `>>>` needed!).
+</Aside>
+
+---
+
+## 🔁 Bitwise Complement (`~`) & Two's Complement — C++20 Guaranteed!
+
+### How `~` Works (Same as Java)
+
+The `~` operator flips **every bit**: `0 → 1`, `1 → 0`.
+
+```text
+a = 5 (int, typically 32-bit):
+00000000 00000000 00000000 00000101  → 5
+
+~a:
+11111111 11111111 11111111 11111010  → ? (negative number in two's complement)
+```
+
+### 🧮 Two's Complement: Now Guaranteed in C++20!
+
+**Pre-C++20**: Two's complement was common but implementation-defined.  
+**C++20 and later**: Two's complement is **required** by the standard ([P0907](http://wg21.link/p0907))!
+
+<Code lang="cpp" title="Why ~5 = -6 — C++20 guaranteed" code={`
+// ~5 calculation (two's complement):
+// 5 in binary:     000...0101
+// Flip bits:       111...1010  (1's complement)
+// Add 1:           111...1011  (2's complement) = -6
+
+// To read 111...1011 as decimal:
+// It's negative (MSB = 1), so:
+// Step 1: Subtract 1 → 111...1010
+// Step 2: Flip bits  → 000...0101 = 5
+// Result: -5 - 1 = -6 ✅
+
+#include <iostream>
+#include <limits>
+
+int main() {
+    std::cout << ~5 << '\\n';  // -6 (C++20 guaranteed two's complement)
+    
+    // General formula: ~x = -(x + 1)
+    std::cout << ~0 << '\\n';    // -1
+    std::cout << ~10 << '\\n';   // -11
+    std::cout << ~(-1) << '\\n'; // 0
+    
+    // ✅ C++20: verify two's complement at compile-time
+    static_assert(std::numeric_limits<int>::is_modulo, 
+                  "Two's complement guaranteed in C++20+");
+    
+    return 0;
+}
+`} />
+
+<Aside type="tip">
+**Memory Trick**: `~x = -(x + 1)` — works in all two's complement systems (Java always, C++20+ guaranteed).  
+Use this to compute complement results instantly in interviews!
+</Aside>
+
+---
+
+## 🔄 Shift Operators — C++ vs Java Critical Differences!
+
+### Left Shift (`<<`) — Same as Java
+
+```text
+a << n  →  a * 2^n  (fast!) — for non-negative a and n < bit-width
+```
+
+<Code lang="cpp" title="Left shift examples — C++" code={`
+#include <iostream>
+#include <cstdint>
+
+int main() {
+    int a = 5;  // 0101
+
+    std::cout << (a << 1) << '\\n';  // 1010 = 10  (5 × 2¹)
+    std::cout << (a << 2) << '\\n';  // 010100 = 20 (5 × 2²)
+    std::cout << (a << 3) << '\\n';  // 0101000 = 40 (5 × 2³)
+
+    // Practical: Fast power of 2
+    uint32_t pow2 = 1u << 10;  // 1024 (2¹⁰) ✅
+    
+    // ⚠️ Undefined behavior if shift amount >= bit-width or negative!
+    // int bad = 1 << 32;  // 💥 UB if int is 32-bit!
+    
+    // ✅ Safe: use unsigned and check bounds
+    if (10 < 32) {  // 32 = sizeof(uint32_t)*8
+        uint32_t safe = 1u << 10;
+    }
+
+    return 0;
+}
+`} />
+
+### ⚠️ Right Shift (`>>`) — Signed vs Unsigned — CRITICAL DIFFERENCE!
+
+| Type | `>>` Behavior | C++ Standard | Java Equivalent |
+|------|--------------|--------------|----------------|
+| **Signed (`int`)** | ⚠️ Implementation-defined pre-C++20; **arithmetic** (sign-extend) in practice | C++20: most implementations use arithmetic, but not guaranteed by standard | `>>` (signed right shift) |
+| **Unsigned (`uint32_t`)** | ✅ **Logical** (zero-fill) — guaranteed | All standards | `>>>` (unsigned right shift) |
+
+<Code lang="cpp" title="Signed vs unsigned right shift — C++" code={`
+#include <iostream>
+#include <cstdint>
+
+int main() {
+    // ✅ Unsigned: logical right shift (zero-fill) — guaranteed!
+    uint32_t pos = 20u;
+    std::cout << (pos >> 1) << '\\n';  // 10  (20 ÷ 2)
+    
+    uint32_t neg = static_cast<uint32_t>(-8);  // 0xFFFFFFF8
+    std::cout << (neg >> 1) << '\\n';  // 2147483644 (0x7FFFFFFC) — zero-fill! ✅
+    
+    // ⚠️ Signed: implementation-defined pre-C++20 (but usually arithmetic)
+    int signed_neg = -8;
+    std::cout << (signed_neg >> 1) << '\\n';  // Usually -4 (sign-extend), but not guaranteed pre-C++20
+    
+    // ✅ Modern C++: Always use unsigned for logical right shift!
+    // No need for Java's >>> — just use uint32_t/uint64_t
+    
+    // Visual: -8 as uint32_t >>> 1
+    // Before: 11111111 11111111 11111111 11111000 (0xFFFFFFF8)
+    // After:  01111111 11111111 11111111 11111100 (0x7FFFFFFC) = 2147483644 ✅
+
+    return 0;
+}
+`} />
+
+<Aside type="danger">
+**🔥 Critical C++ Difference from Java**:  
+- Java has `>>>` for logical right shift on signed types.  
+- **C++ has NO `>>>` operator!**  
+✅ **Solution**: Use **unsigned types** (`uint32_t`, `uint64_t`) for logical right shift — `>>` on unsigned is guaranteed zero-fill.
+
+```cpp
+// Java: int x = -8; x >>> 1 → 2147483644
+// C++ equivalent:
+int32_t x = -8;
+uint32_t logical = static_cast<uint32_t>(x) >> 1;  // 2147483644 ✅
+```
+</Aside>
+
+---
+
+## 🔬 Shift Amount Rules — C++ vs Java
+
+```cpp
+// ⚠️ C++: Shifting by >= bit-width or negative amount = UNDEFINED BEHAVIOR!
+int x = 1;
+// x << 32;  // 💥 UB if int is 32-bit! (Java: masks to 0 → x << 0)
+
+// ✅ Safe pattern: check bounds before shift
+if (n < 32) {  // for 32-bit int
+    int result = x << n;
+}
+
+// ✅ C++20: std::has_single_bit, std::bit_width for safe bit math
+#include <bit>
+if (std::bit_width(static_cast<uint32_t>(n)) <= 32) {
+    // safe to shift
+}
+```
+
+<Code lang="cpp" title="Safe shift patterns — C++" code={`
+#include <cstdint>
+#include <bit>  // C++20
+
+// ✅ Safe left shift with bounds check
+template<typename T>
+constexpr T safe_left_shift(T value, unsigned shift) {
+    static_assert(std::is_unsigned_v<T>, "Use unsigned for safe shifts");
+    constexpr unsigned bits = sizeof(T) * 8;
+    return (shift < bits) ? (value << shift) : 0;
+}
+
+// ✅ C++20: Use std::rotl for rotate (no UB)
+uint32_t x = 0x80000000;
+uint32_t rotated = std::rotl(x, 1);  // 0x00000001 — safe rotation!
+
+// ✅ Use unsigned types to avoid sign issues
+uint32_t flags = 0b1010u;
+flags <<= 2;  // 0b101000 — well-defined
+`} />
+
+<Aside type="tip">
+**🔑 C++ Rule**: Unlike Java's modulo masking (`shift & 31`), C++ treats out-of-bounds shifts as **undefined behavior**.  
+✅ **Always validate shift amounts**: `if (shift < sizeof(T)*8)` before shifting.
+</Aside>
+
+---
+
+## 🔬 Compound Assignment — Same as Java
+
+```cpp
+#include <cstdint>
+
+int main() {
+    uint32_t flags = 0b1010u;
+
+    flags &= 0b1100u;    // flags = flags & 0b1100  = 0b1000
+    flags |= 0b0011u;    // flags = flags | 0b0011  = 0b1011
+    flags ^= 0b0001u;    // flags = flags ^ 0b0001  = 0b1010
+    flags <<= 2;         // flags = flags << 2      = 0b101000
+    flags >>= 1;         // flags = flags >> 1      = 0b10100 (logical for unsigned)
+    
+    return 0;
+}
+```
+
+---
+
+## 🔬 Bitwise vs Logical Operators — C++ Same as Java
+
+```
+&  vs  &&
+|  vs  ||
+^  (no short-circuit version)
+
+&  → bitwise AND (both operands always evaluated)
+&& → logical AND (short-circuit — right side skipped if left is false)
+
+|  → bitwise OR (both operands always evaluated)
+|| → logical OR (short-circuit — right side skipped if left is true)
+```
+
+<Code lang="cpp" title="& vs && with side effects — C++" code={`
+#include <iostream>
+
+auto check = []() { 
+    std::cout << "check() called\\n"; 
+    return false; 
+};
+
+int main() {
+    // & on bool — both sides evaluated (no short-circuit)
+    bool a = false;
+    
+    std::cout << "Using &&:\\n";
+    if (a && check()) { }   // check() NOT called — short-circuit
+    
+    std::cout << "\\nUsing &:\\n";
+    if (a & check()) { }    // check() IS called — no short-circuit!
+    
+    return 0;
+}
+`} />
+
+---
+
+## ⚠️ Rules & Compile-Time Restrictions — C++ Edition
+
+<CardGrid>
+  <Card title="Rule 1: Integral Types Only" icon="error">
+  ```cpp
+    // ✅ Valid for int, unsigned, long, char, std::byte:
+    int x = 5;
+    std::cout << ~x << '\\n';      // -6
+    std::cout << (x << 2) << '\\n';  // 20
+    
+    // ❌ Invalid for bool (except &, |, ^ with promotion):
+    bool b = true;
+    // std::cout << ~b << '\\n';    // ❌ Error: operator ~ cannot be applied to bool
+    // std::cout << (b << 1) << '\\n'; // ❌ Error: operator << cannot be applied to bool
+    
+    // ✅ But &, |, ^ work on bool (promote to int):
+    std::cout << (true & false) << '\\n';  // 0 (int)
+  ```
+  </Card>
+  
+  <Card title="Rule 2: Type Promotion Applies (Similar to Java)" icon="information">
+  ```cpp
+      uint8_t b = 5;
+      // b << 1 → b promoted to int, result is int
+      int result = b << 1;  // ✅
+      
+      // Cannot assign back to uint8_t without cast:
+      // uint8_t b2 = b << 1;  // ❌ Warning: narrowing conversion
+      uint8_t b2 = static_cast<uint8_t>(b << 1);  // ✅ explicit cast
+  ```
+    **Why**: Bitwise operations on small integral types promote to `int` first (usual arithmetic conversions).
+  </Card>
+
+  <Card title="Rule 3: Shift Bounds — UB if Out of Range!" icon="danger">
+  ```cpp
+      int x = 1;
+      // x << 32;  // 💥 Undefined Behavior if int is 32-bit!
+      
+      // ✅ Safe: check bounds
+      constexpr int bits = sizeof(int) * 8;
+      if (32 < bits) {
+          int result = x << 32;
+      }
+      
+      // ✅ Better: use unsigned and std::bit_width (C++20)
+      #include <bit>
+      uint32_t y = 1u;
+      if (std::bit_width(y) + 32 <= 32) {  // always false for y=1
+          // safe
+      }
+  ```
+    **Interview Trap**: `x << 32` is **UB** in C++ (not masked like Java) — a critical difference!
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA — Essential Bitwise Tricks — C++ Edition
+
+<CardGrid>
+  <Card title="Trick 1: Even/Odd Check — Same as Java" icon="rocket">
+```cpp
+    // Check if n is even (last bit = 0)
+    if ((n & 1) == 0) { /* even */ }    
+    // Check if n is odd (last bit = 1)
+    if ((n & 1) == 1) { /* odd */ }
+    
+    // ✅ Faster than n % 2 == 0! (single CPU instruction)
+    // ✅ Use unsigned to avoid sign issues:
+    uint32_t un = static_cast<uint32_t>(n);
+    if ((un & 1u) == 0) { /* even */ }
+```
+  </Card>
+  
+  <Card title="Trick 2: Power of Two Check — Same as Java" icon="shield">
+```cpp
+    // n is power of 2 if: n > 0 AND (n & (n-1)) == 0
+    bool isPowerOfTwo(uint32_t n) {
+        return n > 0 && (n & (n - 1)) == 0;
+    }
+    
+    // Why? Powers of 2 have single 1-bit:
+    // 8 = 1000, 7 = 0111 → 1000 & 0111 = 0000 ✅
+    // 6 = 0110, 5 = 0101 → 0110 & 0101 = 0100 ≠ 0 ❌
+```
+  </Card>
+
+  <Card title="Trick 3: Swap Without Temp Variable — Same as Java (but don't!)" icon="backspace">
+```cpp
+    // XOR swap (works for integers)
+    a = a ^ b;
+    b = a ^ b;  // (a^b)^b = a
+    a = a ^ b;  // (a^b)^a = b
+    
+    // ⚠️ Warning: Don't use in production — less readable, 
+    // and fails if a and b reference same memory location.
+    // Prefer: std::swap(a, b); or int temp = a; a = b; b = temp;
+```
+  </Card>
+
+  <Card title="Trick 4: Bit Manipulation Utilities — C++ Style" icon="information">
+```cpp
+    // Get i-th bit (0 = LSB)
+    template<typename T>
+    constexpr bool getBit(T n, unsigned i) {
+        return (n >> i) & 1;
+    }
+    
+    // Set i-th bit to 1
+    template<typename T>
+    constexpr T setBit(T n, unsigned i) {
+        return n | (static_cast<T>(1) << i);
+    }
+    
+    // Clear i-th bit to 0
+    template<typename T>
+    constexpr T clearBit(T n, unsigned i) {
+        return n & ~static_cast<T>(1) << i;
+    }    
+    
+    // Toggle i-th bit
+    template<typename T>
+    constexpr T toggleBit(T n, unsigned i) {
+        return n ^ (static_cast<T>(1) << i);
+    }
+    
+    // ✅ C++20: Use std::bitset for compile-time bit manipulation
+    #include <bitset>
+    constexpr std::bitset<8> flags{0b10101010};
+    static_assert(flags[1] == 1);  // Compile-time check!
+```
+  </Card>
+
+  <Card title="Trick 5: C++20 Bit Operations Library" icon="rocket">
+```cpp
+    #include <bit>  // C++20
+    
+    // Count set bits (replaces Integer.bitCount)
+    uint32_t n = 0b10110100;
+    int count = std::popcount(n);  // 3 ✅
+    
+    // Count leading/trailing zeros
+    int leading = std::countl_zero(n);   // 24 (for 32-bit)
+    int trailing = std::countr_zero(n);  // 2
+    
+    // Rotate bits (no UB!)
+    uint32_t x = 0x80000000;
+    uint32_t rotated = std::rotl(x, 1);  // 0x00000001
+    
+    // Type-safe bit reinterpretation
+    float f = 1.0f;
+    uint32_t bits = std::bit_cast<uint32_t>(f);  // Safe, no UB
+    
+    // Check if power of two
+    bool isPow2 = std::has_single_bit(n);  // C++20 ✅
+```
+  </Card>
+</CardGrid>
+
+**Underlying primitive: CPU bitwise instructions + guaranteed two's complement (C++20)**
+
+```text
+C++ bitwise ops → CPU instructions (1:1 mapping, zero overhead):
+
+  &  → AND  (x86: and eax, ebx)
+  |  → OR   (x86: or  eax, ebx)
+  ^  → XOR  (x86: xor eax, ebx)
+  << → SHL  (x86: shl eax, cl)
+  >> → SAR/SHR (x86: sar for signed, shr for unsigned)
+
+All single CPU instructions — fastest possible operations.
+
+std::popcount(n):
+  C++20 intrinsic → POPCNT CPU instruction (if available)
+  Single clock cycle — counts set bits
+
+std::countl_zero(n):
+  C++20 intrinsic → LZCNT/BSR CPU instruction
+
+Two's complement — guaranteed in C++20:
+  n + ~n = all bits 1 = -1 (in two's complement)
+  ~n = -1 - n = -(n+1)
+
+DSA applications:
+  HashMap bucket: (n-1) & hash  (when n is power of 2)
+    → same as hash % n but O(1) without division
+  std::bitset: entire class built on bitwise ops
+  bloom filter: multiple hash functions + OR to set bits
+  bit flags: uint32_t for 32 boolean flags in 4 bytes
+```
+
+<Aside type="tip">
+**DSA Pro Tip**: Bitwise operations are **O(1)** and extremely fast — ideal for:
+- Frequency counting with bit masks (`uint32_t` for 32 flags)
+- Subset generation (`1u << n` subsets for n elements)
+- XOR-based problems (find unique element, swap, encryption)
+- Low-level optimization in competitive programming
+✅ **Use `std::bitset` for compile-time bit patterns** and `std::popcount` for population count!
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet — C++ Edition
+
+<CardGrid>
+  <Card title="Q: What is ~5 in C++?" icon="information">
+    **`-6`** — use formula `~x = -(x + 1)` (guaranteed in C++20 two's complement).  
+    `~5 = -(5 + 1) = -6` ✅
+
+    ```cpp
+      std::cout << ~0 << '\\n';     // -1  (all bits set = -1)
+      std::cout << ~1 << '\\n';     // -2
+      std::cout << ~(-1) << '\\n';  //  0
+
+      // Common use: ~0u as "all bits set" mask for unsigned
+      uint32_t ALL_BITS = ~0u;          // 0xFFFFFFFF = 4294967295u
+      uint64_t ALL_BITS_L = ~0ull;      // 0xFFFFFFFFFFFFFFFFull
+    ```
+  </Card>
+  
+  <Card title="Q: How to do logical right shift (like Java's >>>) in C++?" icon="error">
+    **Use unsigned types!** C++ has no `>>>` operator.
+    ```cpp
+    // Java: int x = -8; x >>> 1 → 2147483644
+    // C++ equivalent:
+    int32_t x = -8;
+    uint32_t logical = static_cast<uint32_t>(x) >> 1;  // 2147483644 ✅
+    
+    // ✅ Better: use unsigned from the start
+    uint32_t flags = 0xFFFFFFF8u;  // -8 as unsigned
+    uint32_t result = flags >> 1;   // 2147483644 — guaranteed zero-fill
+    ```
+  </Card>
+
+  <Card title="Q: What does `n & (n-1)` do?" icon="rocket">
+    **Clears the lowest set bit** in `n`.  
+    - If result is `0` and `n > 0` → `n` is a power of 2  
+    - Used to count set bits: `while (n > 0) { count++; n &= (n-1); }`
+  </Card>
+
+  <Card title="Q: Can bitwise operators be used on bool in C++?" icon="caution">
+    **Only `&`, `|`, `^`** work on `bool` (promote to `int`).  
+    `~`, `<<`, `>>` → ❌ Compile Error on `bool`.  
+    ✅ Prefer `std::bitset` or integer flags for bit-level boolean logic.
+  </Card>
+
+  <Card title="Q: Why is `(n & 1)` faster than `n % 2`?" icon="approve-check">
+    Bitwise AND is a **single CPU instruction**, while modulo involves division.  
+    Modern compilers may optimize `% 2` to `& 1`, but explicit `& 1` guarantees the optimization.
+  </Card>
+
+  <Card title="Q: What is `1 << 32` for a 32-bit int in C++?" icon="danger">
+    **💥 Undefined Behavior!** — Unlike Java's modulo masking, C++ treats shifts >= bit-width as UB.  
+    ✅ **Always check**: `if (shift < sizeof(T)*8)` before shifting.
+  </Card>
+
+  <Card title="Q: Right shift on negative signed int — what happens?" icon="error">
+  ```cpp
+    int n = -8;  // Typically: 1111...1000 (two's complement)
+    
+    // Pre-C++20: implementation-defined (usually arithmetic/sign-extend)
+    // C++20: most implementations use arithmetic, but not guaranteed by standard
+    std::cout << (n >> 1) << '\\n';  // Usually -4, but not portable!
+    
+    // ✅ Portable solution: use unsigned for logical shift
+    uint32_t un = static_cast<uint32_t>(n);
+    std::cout << (un >> 1) << '\\n';  // 2147483644 — guaranteed zero-fill
+  ```
+  </Card>
+
+  <Card title="Q: C++20 std::popcount vs Integer.bitCount" icon="approve-check">
+  ```cpp
+    // Java: Integer.bitCount(n)
+    // C++20: std::popcount(n) — same functionality, zero overhead
+    
+    #include <bit>
+    uint32_t n = 0b10110100;
+    int count = std::popcount(n);  // 3 ✅
+    
+    // Pre-C++20 fallback: compiler intrinsics
+    #if defined(__GNUC__) || defined(__clang__)
+    int count = __builtin_popcount(n);  // GCC/Clang
+    #elif defined(_MSC_VER)
+    int count = __popcnt(n);  // MSVC
+    #endif
+  ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary — C++ Bitwise
+
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Name</th>
+      <th>Effect</th>
+      <th>Example</th>
+      <th>Result</th>
+      <th>C++ Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>&</code></td><td>AND</td><td>1 if both bits 1</td><td><code>5 & 3</code></td><td><code>1</code></td><td>Same as Java</td></tr>
+    <tr><td><code>|</code></td><td>OR</td><td>1 if any bit 1</td><td><code>5 | 3</code></td><td><code>7</code></td><td>Same as Java</td></tr>
+    <tr><td><code>^</code></td><td>XOR</td><td>1 if bits differ</td><td><code>5 ^ 3</code></td><td><code>6</code></td><td>Same as Java</td></tr>
+    <tr><td><code>~</code></td><td>NOT</td><td>Flip all bits</td><td><code>~5</code></td><td><code>-6</code></td><td>Two's complement guaranteed C++20+</td></tr>
+    <tr><td><code>&lt;&lt;</code></td><td>Left Shift</td><td>Multiply by 2ⁿ</td><td><code>5u &lt;&lt; 2</code></td><td><code>20</code></td><td>⚠️ UB if shift >= bit-width!</td></tr>
+    <tr><td><code>&gt;&gt;</code> (unsigned)</td><td>Logical Right Shift</td><td>Divide by 2ⁿ (zero-fill)</td><td><code>0xFFFFFFF8u &gt;&gt; 1</code></td><td><code>2147483644</code></td><td>✅ Guaranteed zero-fill for unsigned</td></tr>
+    <tr><td><code>&gt;&gt;</code> (signed)</td><td>Arithmetic Right Shift</td><td>Divide by 2ⁿ (sign-extend)</td><td><code>-8 &gt;&gt; 1</code></td><td><code>-4 (usually)</code></td><td>⚠️ Implementation-defined pre-C++20</td></tr>
+  </tbody>
+</table>
+
+### 🧮 Formulas to Memorize — C++
+
+| Expression | Equivalent | Use Case | C++ Notes |
+|------------|------------|----------|-----------|
+| `~x` | `-(x + 1)` | Compute complement instantly | Guaranteed in C++20 two's complement |
+| `x << n` | `x × 2ⁿ` | Fast multiplication | ⚠️ UB if `n >= sizeof(T)*8` |
+| `x >> n` (unsigned) | `x ÷ 2ⁿ` | Fast unsigned division | ✅ Guaranteed zero-fill |
+| `x & 1` | `x % 2` | Even/odd check | Use unsigned to avoid sign issues |
+| `x & (x-1)` | Clears lowest set bit | Power-of-2 check, bit counting | Same as Java |
+| `x ^ x` | `0` | Cancel out duplicates (XOR trick) | Same as Java |
+| `std::popcount(x)` | Count set bits | Population count | C++20; use intrinsics pre-C++20 |
+
+<Aside type="caution">
+**🔥 Final Checklist for C++ Bitwise**:
+1. ✅ Bitwise ops work on `int`/`unsigned`/`long`/`char`/`std::byte` — **not** `float`/`double`
+2. ✅ `&`, `|`, `^` also work on `bool` (promote to `int`) — but prefer `std::bitset`
+3. ✅ `~x = -(x + 1)` — guaranteed in C++20 two's complement
+4. ✅ **Shift bounds matter**: `x << 32` is **UB** if `int` is 32-bit (unlike Java!)
+5. ✅ **No `>>>` in C++** — use `unsigned` types for logical right shift
+6. ✅ Use `(n & (n-1)) == 0` to check power of 2 (with `n > 0`)
+7. ✅ Prefer `&&`/`||` over `&`/`|` for boolean logic (short-circuit is safer)
+8. ✅ **Enable warnings**: `-Wshift-count-overflow -Wsign-conversion` to catch shift UB
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding — C++ Edition
+
+<Code lang="cpp" title="Predict the output / behavior" code={`
+#include <iostream>
+#include <cstdint>
+#include <bit>  // C++20
+
+int main() {
+    std::cout << std::boolalpha;
+    
+    // Q1: Basic bitwise
+    uint32_t a = 6;  // 0110
+    uint32_t b = 3;  // 0011
+    std::cout << (a & b) << '\\n';  // ?
+    std::cout << (a | b) << '\\n';  // ?
+    std::cout << (a ^ b) << '\\n';  // ?
+    
+    // Q2: Complement (C++20 guaranteed two's complement)
+    std::cout << ~0u << '\\n';      // ? (unsigned: 4294967295)
+    std::cout << ~10 << '\\n';      // ? (signed: -11)
+    
+    // Q3: Shift operators — critical differences!
+    std::cout << (8u << 2) << '\\n';    // ? (32)
+    std::cout << (20u >> 2) << '\\n';   // ? (5)
+    
+    // ⚠️ Signed right shift: implementation-defined pre-C++20
+    int signed_neg = -8;
+    std::cout << (signed_neg >> 1) << '\\n';  // ? (usually -4, but not guaranteed)
+    
+    // ✅ Unsigned right shift: guaranteed zero-fill
+    uint32_t unsigned_neg = static_cast<uint32_t>(-8);
+    std::cout << (unsigned_neg >> 1) << '\\n';  // ? (2147483644)
+    
+    // Q4: Bit tricks
+    uint32_t n = 16;
+    std::cout << ((n & 1) == 0) << '\\n';        // ? (even?)
+    std::cout << ((n & (n-1)) == 0) << '\\n';    // ? (power of 2?)
+    
+    // Q5: Shift UB trap — C++ vs Java!
+    uint32_t x = 1;
+    // std::cout << (x << 32) << '\\n';  // 💥 UB if uint32_t is 32-bit!
+    
+    // Q6: Boolean bitwise
+    std::cout << (true ^ true) << '\\n';   // ?
+    std::cout << (false & true) << '\\n';  // ?
+    
+    // Q7: C++20 std::popcount
+    #if __cplusplus >= 202002L
+    std::cout << std::popcount(0b10110100u) << '\\n';  // ? (3)
+    #endif
+    
+    return 0;
+}
+
+/* Expected Output (typical, with C++20):
+2    ← 0110 & 0011 = 0010
+7    ← 0110 | 0011 = 0111
+5    ← 0110 ^ 0011 = 0101
+4294967295 ← ~0u = 0xFFFFFFFF (unsigned)
+-11  ← ~10 = -(10+1) = -11 (signed two's complement)
+32   ← 8 × 2² = 32
+5    ← 20 ÷ 2² = 5
+-4   ← signed shift (usually arithmetic, but implementation-defined pre-C++20)
+2147483644 ← unsigned shift (guaranteed zero-fill)
+true ← 16 is even
+true ← 16 is power of 2
+false ← true ^ true = false (same → 0)
+false ← false & true = false
+3    ← std::popcount(0b10110100) = 3 (C++20)
+*/
+`} />
+
+<Aside type="tip">
+**Pro Tip**: When in doubt about bitwise operations in C++:
+- ✅ Use **unsigned types** (`uint32_t`, `uint64_t`) for bit manipulation
+- ✅ Check **shift bounds**: `if (shift < sizeof(T)*8)` before `<<` or `>>`
+- ✅ Prefer **`std::bitset`** for compile-time bit patterns
+- ✅ Use **`std::popcount`** (C++20) or compiler intrinsics for population count
+- ✅ Enable **`-Wshift-count-overflow`** to catch UB at compile time
+- ✅ Remember: **no `>>>`** — cast to unsigned for logical right shift
+</Aside>
+
+---
+
+## 🧭 Quick-Revision Cheat Sheet — C++ Bitwise
+
+```text
+✅ BASIC RULES:
+   • Bitwise ops work on integral types: int, unsigned, long, char, std::byte
+   • &, |, ^ work on bool (promote to int) — but prefer std::bitset
+   • ~x = -(x + 1) — guaranteed in C++20 two's complement
+   • << and >>: UB if shift amount >= sizeof(T)*8 or negative!
+   • No >>> operator — use unsigned types for logical right shift
+
+✅ UNSIGNED TYPES ARE YOUR FRIEND:
+   • uint32_t, uint64_t: guaranteed zero-fill on >>, no sign confusion
+   • Use for: bit masks, flags, hashing, logical shifts
+   • Example: uint32_t flags = 0xFFFFFFF8u; flags >> 1;  // 2147483644 ✅
+
+✅ C++20 BIT OPERATIONS LIBRARY (<bit>):
+   • std::popcount(x)      — count set bits (replaces Integer.bitCount)
+   • std::countl_zero(x)   — count leading zeros
+   • std::countr_zero(x)   — count trailing zeros
+   • std::rotl(x, n)       — rotate left (no UB!)
+   • std::rotr(x, n)       — rotate right
+   • std::has_single_bit(x)— check if power of two
+   • std::bit_cast<T>(x)   — type-safe bit reinterpretation
+
+✅ SAFE SHIFT PATTERNS:
+   • Always check: if (shift < sizeof(T)*8) before << or >>
+   • Prefer unsigned: uint32_t result = value << shift;  // well-defined
+   • Use std::rotl/rotr for rotation — no UB!
+   • For signed logical shift: static_cast<uint32_t>(signed_val) >> n
+
+✅ DSA BEST PRACTICES:
+   • Use uint32_t for 32 boolean flags (memory efficient)
+   • Use (n & (n-1)) == 0 to check power of two
+   • Use std::popcount for population count (C++20) or __builtin_popcount
+   • Use std::bitset<N> for compile-time bit patterns
+   • Prefer std::swap over XOR swap — clearer and safer
+
+✅ COMPILER FLAGS FOR SAFETY:
+   • -Wshift-count-overflow      — catch out-of-bounds shifts
+   • -Wsign-conversion          — catch signed/unsigned mixing
+   • -Wextra                    — catch implicit promotions
+   • -std=c++20                 — enable std::bit and guaranteed two's complement
+```
+
+> 🎯 **Interview Pro Tip**: When asked about bitwise operators in C++, always mention:  
+> 1. **No `>>>` operator** — use `unsigned` types for logical right shift  
+> 2. **Shift bounds = UB** — `x << 32` is undefined if `int` is 32-bit (unlike Java!)  
+> 3. **Two's complement guaranteed in C++20** — `~x = -(x + 1)` is portable now  
+> 4. **`std::popcount` and `<bit>` library** — modern C++20 replacements for Java bit utils  
+> 5. **Unsigned types for bit manipulation** — avoid sign-extension surprises  
+> This demonstrates deep understanding of C++'s "zero-overhead, explicit control" philosophy! 🚀
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="C++ Integral Types"
+    href="/computer-languages/cpp/topics/integral-types"
+    description="Signed vs unsigned, fixed-width types, and promotion rules"
+  />
+  <LinkCard
+    title="C++ Undefined Behavior"
+    href="/computer-languages/cpp/topics/undefined-behavior"
+    description="Shift UB, signed overflow, and how to avoid pitfalls"
+  />
+  <LinkCard
+    title="C++20 Features"
+    href="/computer-languages/cpp/topics/cpp20"
+    description="std::bit, concepts, ranges, and modern bitwise idioms"
+  />
+  <LinkCard
+    title="C++ Performance"
+    href="/computer-languages/cpp/topics/performance"
+    description="Bitwise optimization, CPU intrinsics, and zero-overhead abstractions"
+  />
+</CardGrid>
+
+---
+
+## 🧩 AND `&` — Masking & Checking Bits
+
+```cpp
+uint8_t x = 0b11001010;   // 202
+
+// Check if bit N is set
+bool bit3 = (x >> 3) & 1;           // → 1 (bit 3 is set)
+bool bit3 = x & (1 << 3);           // → same, non-zero = true
+
+// Extract lower N bits (mask)
+uint8_t lower4 = x & 0x0F;          // → 0b00001010 = 10
+
+// Clear specific bit (bit 6)
+x = x & ~(1 << 6);                  // → 0b10001010
+
+// Check if even/odd (LSB)
+bool is_odd  = x & 1;               // → 0 (even)
+bool is_even = !(x & 1);
+
+// Check if power of 2
+bool pow2 = (x != 0) && !(x & (x - 1));
+// x     = 0b01000000 = 64
+// x - 1 = 0b00111111 = 63
+// x & (x-1) = 0  → power of 2
+```
+
+---
+
+## 🔌 OR `|` — Setting Bits
+
+```cpp
+uint8_t x = 0b00001010;
+
+// Set bit N
+x = x | (1 << 3);         // set bit 3 → 0b00001010 | 0b00001000 = 0b00001010 ✅
+x = x | (1 << 6);         // set bit 6 → 0b01001010
+
+// Combine flags
+const uint32_t READ    = 1 << 0;   // 0b001
+const uint32_t WRITE   = 1 << 1;   // 0b010
+const uint32_t EXECUTE = 1 << 2;   // 0b100
+
+uint32_t perms = READ | WRITE;     // 0b011 — read + write
+```
+
+---
+
+## 🔄 XOR `^` — Toggling & Tricks
+
+```cpp
+uint8_t x = 0b11001010;
+
+// Toggle bit N
+x = x ^ (1 << 3);         // flip bit 3
+
+// Swap without temp variable
+int a = 5, b = 7;
+a ^= b;    // a = a^b
+b ^= a;    // b = b^(a^b) = a  (original a)
+a ^= b;    // a = (a^b)^a = b  (original b)
+// a=7, b=5 — swapped
+
+// Find unique element (all others appear twice)
+// XOR of same number = 0, XOR with 0 = itself
+int arr[] = {4, 1, 2, 1, 2};
+int unique = 0;
+for (int x : arr) unique ^= x;   // → 4
+
+// Detect if two values have opposite signs
+bool opp_signs = (a ^ b) < 0;    // MSB differs → negative XOR result
+```
+
+---
+
+## 🚫 NOT `~` — Bitwise Complement
+
+```cpp
+uint8_t  a = 0b00001111;   // 15
+~a;                         // → 0b11110000 = 240
+
+uint32_t b = 0;
+~b;                         // → 0xFFFFFFFF = 4294967295
+
+int c = 0;
+~c;                         // → -1  (all bits set = -1 in two's complement)
+
+// ~x = -(x+1)  for signed integers (two's complement)
+~5   // → -6
+~-1  // →  0
+```
+
+### Two's Complement — Why `~0 = -1`
+
+```
+8-bit signed:
+ 0  = 0b00000000
+~0  = 0b11111111 = 255 as unsigned = -1 as signed (two's complement)
+
+Two's complement representation:
+-1  = 0b11111111
+-2  = 0b11111110
+-128= 0b10000000
+
+~x = bitwise flip = -(x+1) always holds
+```
+
+---
+
+## ⬅️➡️ Shift Operators
+
+### Left Shift `<<` — Multiply by Powers of 2
+
+```cpp
+int x = 1;
+x << 0    // → 1    (1 × 2⁰)
+x << 1    // → 2    (1 × 2¹)
+x << 3    // → 8    (1 × 2³)
+x << 10   // → 1024 (1 × 2¹⁰)
+
+5 << 2    // → 20   (5 × 4)
+```
+
+```
+1  = 0b00000001
+1<<3 → 0b00001000 = 8
+       shifted left by 3, zeroes fill from right
+```
+
+### Right Shift `>>` — Divide by Powers of 2
+
+```cpp
+int x = 32;
+x >> 1    // → 16   (32 / 2¹)
+x >> 2    // → 8    (32 / 2²)
+x >> 5    // → 1    (32 / 2⁵)
+7  >> 1   // → 3    (7 / 2, truncates toward zero)
+```
+
+### Signed vs Unsigned Right Shift
+
+```
+Unsigned right shift → fills zeros from left (logical shift)
+Signed right shift   → fills SIGN BIT from left (arithmetic shift)
+
+unsigned int u = 0b10000000000000000000000000000000;  // = 2147483648
+u >> 1       → 0b01000000000000000000000000000000   (zero fill)
+
+int s = 0b10000000000000000000000000000000;  // = -2147483648
+s >> 1       → 0b11000000000000000000000000000000   (sign fill = -1073741824)
+               ↑ sign bit COPIED, not zero filled
+```
+
+> 🔑 Signed right shift behavior is **implementation-defined** in C++ standard — but virtually all modern platforms use arithmetic shift (sign extension). C++20 mandates two's complement, making this well-defined.
+
+---
+
+## ☣️ Shift UB — The Dangerous Cases
+
+| Shift | Behavior |
+|---|---|
+| `x << n` where `n < 0` | ❌ UB |
+| `x << n` where `n >= sizeof(x)*8` | ❌ UB |
+| `x << n` where result overflows signed | ❌ UB (C++11), defined (C++20) |
+| `x >> n` where `n < 0` | ❌ UB |
+| `x >> n` where `n >= sizeof(x)*8` | ❌ UB |
+| Signed left shift causing overflow | ❌ UB (C++11) |
+
+```cpp
+int x = 1;
+x << 32;      // ❌ UB — int is 32 bits, shift by 32+ is UB
+x << -1;      // ❌ UB — negative shift count
+x << 31;      // ❌ UB in C++11 — sets sign bit, overflow
+              // ✅ defined in C++20 (two's complement mandated)
+
+// ✅ Safe: always use unsigned for bit manipulation
+uint32_t u = 1u;
+u << 31;      // ✅ defined — no sign bit concerns
+```
+
+---
+
+## 🔬 Under the Hood — Assembly
+
+```cpp
+int a = 0b1100, b = 0b1010;
+int r1 = a & b;
+int r2 = a | b;
+int r3 = a ^ b;
+int r4 = ~a;
+int r5 = a << 2;
+int r6 = a >> 2;
+```
+
+```asm
+; x86-64
+mov eax, [a]
+mov ecx, [b]
+
+; AND
+and eax, ecx        ; 1 instruction
+
+; OR
+or  eax, ecx        ; 1 instruction
+
+; XOR
+xor eax, ecx        ; 1 instruction
+
+; NOT
+not eax             ; 1 instruction
+
+; Left shift (count in cl register or immediate)
+mov ecx, 2
+sal eax, cl         ; Shift Arithmetic Left (same as shl for left)
+shl eax, 2          ; immediate form
+
+; Right shift
+sar eax, 2          ; Shift Arithmetic Right (signed — sign-extends)
+shr eax, 2          ; Shift Logical Right (unsigned — zero-fills)
+```
+
+```
+All bitwise ops: 1 CPU instruction, 1 cycle latency
+Fastest possible operations on a CPU
+Why bit manipulation matters for performance-critical code
+```
+
+---
+
+## 🏁 Bitmask / Flags Pattern — Production Use
+
+```cpp
+// ✅ Idiomatic C++ flags with enum class + bitwise ops
+
+enum class Permission : uint32_t {
+    None    = 0,
+    Read    = 1 << 0,    // 0b00000001
+    Write   = 1 << 1,    // 0b00000010
+    Execute = 1 << 2,    // 0b00000100
+    Delete  = 1 << 3,    // 0b00001000
+    All     = ~0u        // all bits set
+};
+
+// Operator overloads for enum class
+Permission operator|(Permission a, Permission b) {
+    return static_cast<Permission>(
+        static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+Permission operator&(Permission a, Permission b) {
+    return static_cast<Permission>(
+        static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+Permission operator~(Permission a) {
+    return static_cast<Permission>(~static_cast<uint32_t>(a));
+}
+bool has(Permission set, Permission flag) {
+    return (set & flag) != Permission::None;
+}
+
+// Usage
+Permission perms = Permission::Read | Permission::Write;
+perms = perms | Permission::Execute;        // add Execute
+perms = perms & ~Permission::Write;         // remove Write
+
+has(perms, Permission::Read)               // → true
+has(perms, Permission::Write)              // → false
+has(perms, Permission::Execute)            // → true
+```
+
+---
+
+## 🧮 Essential Bit Manipulation Patterns
+
+```cpp
+// ┌─────────────────────────────────────────────────────┐
+// │          BIT MANIPULATION CHEAT SHEET               │
+// └─────────────────────────────────────────────────────┘
+
+// Set bit n
+x |= (1u << n);
+
+// Clear bit n
+x &= ~(1u << n);
+
+// Toggle bit n
+x ^= (1u << n);
+
+// Check bit n
+bool set = (x >> n) & 1u;
+
+// Isolate lowest set bit
+x & (-x);               // -x = ~x + 1 in two's complement
+
+// Clear lowest set bit
+x & (x - 1);
+
+// Check power of 2
+(x != 0) && !(x & (x - 1));
+
+// Round up to next power of 2 (32-bit)
+x--;
+x |= x >> 1;
+x |= x >> 2;
+x |= x >> 4;
+x |= x >> 8;
+x |= x >> 16;
+x++;
+
+// Count set bits (Brian Kernighan)
+int count = 0;
+while (x) { x &= (x-1); count++; }
+
+// Count set bits (GCC built-in — single instruction)
+int count = __builtin_popcount(x);     // 32-bit
+int count = __builtin_popcountll(x);   // 64-bit
+
+// Find position of lowest set bit (GCC)
+int pos = __builtin_ctz(x);            // count trailing zeros
+
+// Find position of highest set bit (GCC)
+int pos = 31 - __builtin_clz(x);      // count leading zeros
+
+// Reverse bits
+// no built-in — use lookup table or PDEP/PEXT
+```
+
+---
+
+## 🔢 Two's Complement — DSA Connection
+
+```
+Every bitwise operation maps to two's complement arithmetic:
+
+~x      = -(x + 1)         negation trick
+-x      = ~x + 1           two's complement negation
+x & -x  = lowest set bit   isolate LSB
+x & (x-1) = clear LSB      used in Hamming weight, power-of-2 check
+
+Negative numbers in binary (8-bit):
+ 1 = 0b00000001
+-1 = 0b11111111  (all ones — because ~1 + 1 = 0b11111110 + 1 = 0b11111111)
+-2 = 0b11111110
+-128=0b10000000  (most negative — MSB is sign bit)
+
+XOR properties for DSA:
+  x ^ x = 0              (self-cancellation)
+  x ^ 0 = x              (identity)
+  x ^ y = y ^ x          (commutative)
+  (x^y)^z = x^(y^z)     (associative)
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Network packet flag parsing:**
+
+```cpp
+// TCP header flags (6 bits)
+struct TCPFlags {
+    static constexpr uint8_t FIN = 1 << 0;  // 0b000001
+    static constexpr uint8_t SYN = 1 << 1;  // 0b000010
+    static constexpr uint8_t RST = 1 << 2;  // 0b000100
+    static constexpr uint8_t PSH = 1 << 3;  // 0b001000
+    static constexpr uint8_t ACK = 1 << 4;  // 0b010000
+    static constexpr uint8_t URG = 1 << 5;  // 0b100000
+};
+
+void process_packet(uint8_t flags) {
+    if (flags & TCPFlags::SYN && !(flags & TCPFlags::ACK)) {
+        handle_new_connection();   // SYN without ACK = new connection
+    }
+    if (flags & TCPFlags::FIN) {
+        handle_close();            // FIN = connection closing
+    }
+    if (flags & TCPFlags::RST) {
+        handle_reset();            // RST = connection reset
+    }
+}
+
+// Packet with SYN+ACK (connection acknowledge):
+uint8_t flags = TCPFlags::SYN | TCPFlags::ACK;  // 0b000011
+// Individual flag bits checked with & in O(1)
+```
+
+**Hash map power-of-2 sizing:**
+
+```cpp
+class HashMap {
+    size_t capacity;   // always power of 2
+
+    // ❌ Slow — modulo
+    size_t bucket(size_t hash) {
+        return hash % capacity;         // division — 20-90 cycles
+    }
+
+    // ✅ Fast — bitwise AND (works only when capacity is power of 2)
+    size_t bucket(size_t hash) {
+        return hash & (capacity - 1);   // 1 cycle
+    }
+    // hash % 8  ≡  hash & 7  (when capacity = 8 = 2³)
+    // This is why hash maps always use power-of-2 capacities
+};
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+int x = -1;
+std::cout << (x >> 1);    // → ?
+```
+> Implementation-defined pre-C++20, but on all modern platforms: arithmetic right shift → `-1` (sign bit replicated → all bits remain 1 → -1). C++20 mandates two's complement so this is `-1`.
+
+**Trap 2:**
+```cpp
+int x = 1;
+std::cout << (x << 31);   // → ?
+```
+> **UB in C++11/14/17** — shifts into sign bit of signed integer. **Defined in C++20** (two's complement mandated) → `-2147483648` (INT_MIN). Use `1u << 31` to be safe in all standards.
+
+**Trap 3:**
+```cpp
+uint8_t a = 200;
+uint8_t b = 100;
+uint8_t c = a & b;   // c = ?
+```
+> `a` and `b` promoted to `int` before `&`. `(int)200 & (int)100 = 64`. Then `c = (uint8_t)64 = 64`. Result correct here, but **type of `a & b` is `int`, not `uint8_t`** — surprises when assigning to larger type.
+
+**Trap 4:**
+```cpp
+int n = 32;
+int x = 1 << n;    // UB?
+```
+> ❌ **UB** — `n = 32`, `int` is 32 bits, shift by `>=` width is UB. Even `1 << 32` on a 32-bit int is UB. Might give `1` or `0` or anything — compiler may optimize out entirely.
+
+**Trap 5:**
+```cpp
+int a = 5, b = 5;
+a ^= b ^= a ^= b;   // a = ?, b = ?
+```
+> **UB** — modifying `a` and `b` multiple times without sequencing in a single expression. The XOR swap only works as three separate statements.
+
+---
+
+## 📊 DSA — Where Bitwise Ops Appear
+
+| Problem | Technique |
+|---|---|
+| Find single number (others appear twice) | XOR all → `x^x=0` |
+| Count set bits (Hamming weight) | `x &= x-1` loop or `__builtin_popcount` |
+| Power of 2 check | `x && !(x & x-1)` |
+| Subset enumeration | iterate mask from `0` to `(1<<n)-1` |
+| Lowest set bit | `x & -x` |
+| Next power of 2 | fill bits then +1 |
+| Two numbers without extra space | XOR swap |
+| Bit DP (bitmask DP) | state = subset of items |
+| Trie on integers | bit-by-bit from MSB |
+| Fast modulo (power of 2) | `x & (n-1)` instead of `x % n` |
+
+---

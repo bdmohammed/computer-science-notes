@@ -1,0 +1,1403 @@
+---
+title: C++ Inheritance
+slug: computer-languages/cpp/oop/inheritance
+description: Master inheritance in C++ — public/protected/private inheritance, virtual functions, overriding, multiple inheritance, diamond problem, and practical patterns for reusable code.
+sidebar:
+  label: "Inheritance"
+  badge:
+    text: OOP Pillar
+    variant: tip
+tags: [cpp, inheritance, virtual, overriding, polymorphism, oop, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🧬 Inheritance in C++ — Complete Guide
+
+> **Inheritance** allows a **derived class (child)** to acquire properties and behaviors from a **base class (parent)**. In C++, it enables code reuse, polymorphism, and interface implementation. Unlike Java, C++ supports **Multiple Inheritance** and offers three types of inheritance access (`public`, `protected`, `private`).
+
+```text
+C++ Inheritance
+│
+├── Types
+│   ├── Single          → class B : public A
+│   ├── Multiple        → class C : public A, public B (Supported!)
+│   ├── Multilevel      → A → B → C
+│   └── Hierarchical    → A → B, A → C
+│
+├── Access Specifiers (Crucial Difference from Java)
+│   ├── public          → IS-A relationship (standard)
+│   ├── protected       → Implementation detail for derived classes
+│   └── private         → HAS-A / Composition alternative (default for 'class')
+│
+├── Key Mechanisms
+│   ├── Virtual Functions (Polymorphism)
+│   ├── Override Keyword (C++11 safety)
+│   ├── Constructor Initialization Lists
+│   └── Dynamic Casts
+│
+└── Special Rules
+    ├── No implicit 'Object' base class
+    ├── Destructors must be virtual for polymorphism
+    ├── Diamond Problem (solved with virtual inheritance)
+    └── Constructors/Destructors are NOT inherited
+```
+
+```cpp
+// Parent (Base Class)
+class Animal {
+protected: // Accessible to derived classes
+    std::string name;
+    int age;
+
+public:
+    Animal(const std::string& n, int a) : name(n), age(a) {}
+    
+    // Virtual Destructor is CRITICAL for polymorphism
+    virtual ~Animal() = default; 
+
+    // Virtual function enables runtime polymorphism
+    virtual void speak() const {
+        std::cout << name << " makes a sound.\n";
+    }
+    
+    void sleep() const {
+        std::cout << name << " is sleeping.\n";
+    }
+};
+
+// Child (Derived Class)
+class Dog : public Animal { // Public Inheritance (IS-A)
+    std::string breed;
+
+public:
+    Dog(const std::string& n, int a, const std::string& b) 
+        : Animal(n, a), breed(b) {} // Call base constructor
+
+    // Override base behavior
+    void speak() const override { // 'override' keyword ensures correctness
+        std::cout << name << " says: Woof!\n";
+    }
+
+    void fetch() const {
+        std::cout << name << " fetches the ball.\n";
+    }
+};
+
+// Usage
+int main() {
+    Dog dog("Rex", 3, "Labrador");
+    dog.speak(); // "Rex says: Woof!" (Polymorphic)
+    dog.sleep(); // Inherited from Animal
+    
+    // Polymorphism via pointer/reference
+    Animal* ptr = &dog;
+    ptr->speak(); // "Rex says: Woof!" (Dynamic Dispatch)
+    return 0;
+}
+```
+
+<Aside type="tip">
+**Key Insight**: In C++, inheritance is not just about reuse. It's about **Memory Layout** and **Vtables**. 
+- `public` inheritance models **IS-A**.
+- `virtual` functions enable **Runtime Polymorphism**.
+- Always make base destructors `virtual` to prevent memory leaks when deleting derived objects via base pointers.
+</Aside>
+
+---
+
+## 🗂️ Types of Inheritance & Access Specifiers
+
+> C++ has three modes of inheritance. This is a major difference from Java (which only has `public`-like behavior for classes).
+
+### 🔑 Access Control Matrix
+
+<table>
+  <thead>
+    <tr>
+      <th>Base Member</th>
+      <th>public Inheritance</th>
+      <th>protected Inheritance</th>
+      <th>private Inheritance</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>public</td><td>public in Derived</td><td>protected in Derived</td><td>private in Derived</td></tr>
+    <tr><td>protected</td><td>protected in Derived</td><td>protected in Derived</td><td>private in Derived</td></tr>
+    <tr><td>private</td><td>Not Accessible</td><td>Not Accessible</td><td>Not Accessible</td></tr>
+  </tbody>
+</table>
+
+<Code lang="cpp" title="Public vs Private Inheritance" code={`
+class Base {
+public:
+    void pub() {}
+protected:
+    void prot() {}
+private:
+    void priv() {}
+};
+
+// 1. Public Inheritance (IS-A)
+class PubDeriv : public Base {
+    void test() {
+        pub();  // ✅ OK
+        prot(); // ✅ OK
+        // priv(); // ❌ Error
+    }
+};
+// Outside:
+// PubDeriv d; d.pub(); // ✅ OK
+
+// 2. Private Inheritance (HAS-A / Implementation Detail)
+class PrivDeriv : private Base {
+    void test() {
+        pub();  // ✅ OK (becomes private in PrivDeriv)
+        prot(); // ✅ OK
+    }
+};
+// Outside:
+// PrivDeriv d; d.pub(); // ❌ Error! pub() is private in PrivDeriv.
+`} />
+
+<Aside type="note">
+**Rule of Thumb**: 
+- Use **`public`** inheritance for **IS-A** relationships (Polymorphism).
+- Use **`private`** inheritance or **Composition** for **HAS-A** relationships (Implementation reuse without polymorphism).
+- Avoid **`protected`** inheritance unless you know exactly why you need it.
+</Aside>
+
+---
+
+## 🔄 Method Overriding & Virtual Functions
+
+> In Java, methods are virtual by default. In C++, you must explicitly mark them as **`virtual`** in the base class.
+
+### 🔑 Overriding Rules
+
+<CardGrid>
+  <Card title="Rule 1: Virtual Keyword in Base" icon="approve-check">
+```cpp
+    class Base {
+    public:
+        virtual void foo() { cout << "Base\n"; } // Enables polymorphism
+    };
+    
+    class Derived : public Base {
+    public:
+        void foo() override { cout << "Derived\n"; } // 'override' is optional but recommended
+    };
+    
+    Base* b = new Derived();
+    b->foo(); // Prints "Derived"
+```
+  </Card>
+  
+  <Card title="Rule 2: Signature Must Match" icon="error">
+```cpp
+    class Base {
+    public:
+        virtual void foo(int x) {}
+    };
+    
+    class Derived : public Base {
+    public:
+        // void foo() {} // ❌ This HIDES Base::foo, doesn't override it!
+        void foo(int x) override {} // ✅ Correct
+    };
+```
+  </Card>
+
+  <Card title="Rule 3: Covariant Return Types" icon="information">
+```cpp
+    class Animal { public: virtual Animal* clone() { return new Animal(); } };
+    class Dog : public Animal { 
+    public: 
+        // ✅ Allowed: Dog* is a subtype of Animal*
+        Dog* clone() override { return new Dog(); } 
+    };
+```
+  </Card>
+</CardGrid>
+
+### ⚠️ The `override` and `final` Keywords (C++11)
+
+<Code lang="cpp" title="Modern C++ Safety" code={`
+class Base {
+public:
+    virtual void foo() {}
+    virtual void bar() final {} // Cannot be overridden further
+};
+
+class Derived : public Base {
+public:
+    void foo() override {} // ✅ Compiler checks if foo exists in Base
+    // void bar() override {} // ❌ Error: bar is final
+};
+`} />
+
+<Aside type="tip">
+**Best Practice**: Always use `override` in derived classes. It prevents silent bugs where you think you're overriding a method but actually creating a new one due to a signature mismatch.
+</Aside>
+
+---
+
+## 🔗 Constructor & Destructor Chaining
+
+> Constructors are **not inherited**. They are called in order from Base to Derived. Destructors are called in reverse order.
+
+### 🔑 Execution Order
+
+<Code lang="cpp" title="Construction and Destruction" code={`
+#include <iostream>
+
+class Base {
+public:
+    Base() { std::cout << "Base Constructor\n"; }
+    virtual ~Base() { std::cout << "Base Destructor\n"; }
+};
+
+class Derived : public Base {
+public:
+    Derived() { std::cout << "Derived Constructor\n"; }
+    ~Derived() override { std::cout << "Derived Destructor\n"; }
+};
+
+int main() {
+    Derived d;
+    // Output:
+    // Base Constructor
+    // Derived Constructor
+    // Derived Destructor
+    // Base Destructor
+    return 0;
+}
+`} />
+
+### ⚠️ Important Rules
+
+<CardGrid>
+  <Card title="Rule: Initialize Base in Init List" icon="approve-check">
+```cpp
+    class Base {
+    public:
+        Base(int x) : val(x) {}
+        int val;
+    };
+    
+    class Derived : public Base {
+    public:
+        // ✅ Correct: Pass args to Base constructor
+        Derived(int x, int y) : Base(x), derivedVal(y) {} 
+        int derivedVal;
+    };
+```
+  </Card>
+  
+  <Card title="Rule: Virtual Destructor is Mandatory" icon="error">
+```cpp
+    class Base {
+    public:
+        // virtual ~Base() = default; // ❌ If missing:
+        ~Base() {} 
+    };
+    
+    class Derived : public Base {
+        int* data = new int[100];
+    public:
+        ~Derived() { delete[] data; }
+    };
+    
+    // Memory Leak!
+    Base* b = new Derived();
+    delete b; // Only calls ~Base(), ~Derived() is skipped!
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 💎 Multiple Inheritance & The Diamond Problem
+
+> C++ supports multiple inheritance. This can lead to the **Diamond Problem** if two base classes share a common ancestor.
+
+### 🔑 The Diamond Problem
+
+```text
+      Base
+     /    \
+   Der1   Der2
+     \    /
+      Final
+```
+
+If `Final` inherits from `Der1` and `Der2`, it gets **two copies** of `Base`. This causes ambiguity.
+
+### ✅ Solution: Virtual Inheritance
+
+<Code lang="cpp" title="Solving the Diamond Problem" code={`
+class Base {
+public:
+    int data;
+    Base() : data(0) {}
+};
+
+// Use 'virtual' keyword to share ONE copy of Base
+class Der1 : public virtual Base {}; 
+class Der2 : public virtual Base {}; 
+
+class Final : public Der1, public Der2 {
+public:
+    void setData(int d) {
+        data = d; // ✅ Unambiguous: only one 'data' member exists
+    }
+};
+
+int main() {
+    Final f;
+    f.setData(10);
+    return 0;
+}
+`} />
+
+<Aside type="caution">
+**Warning**: Virtual inheritance adds complexity and slight performance overhead (vptr adjustments). Use it only when necessary (e.g., Interface-like ABCs). Prefer composition if possible.
+</Aside>
+
+---
+
+## 🎯 Benefits of Inheritance in C++
+
+<CardGrid>
+  <Card title="Benefit 1: Code Reuse" icon="rocket">
+    ```cpp
+    // Common logic in Base
+    class Logger {
+    protected:
+        void log(const std::string& msg) { /* ... */ }
+    };
+    
+    // Reuse log() in Derived
+    class FileLogger : public Logger {
+    public:
+        void writeToFile(const std::string& msg) {
+            log(msg); // Reused
+            // ... file IO
+        }
+    };
+    ```
+  </Card>
+  
+  <Card title="Benefit 2: Polymorphism" icon="shield">
+    ```cpp
+    std::vector<std::unique_ptr<Shape>> shapes;
+    shapes.push_back(std::make_unique<Circle>());
+    shapes.push_back(std::make_unique<Square>());
+    
+    for (auto& s : shapes) {
+        s->draw(); // Calls Circle::draw or Square::draw dynamically
+    }
+    ```
+  </Card>
+
+  <Card title="Benefit 3: Interface Implementation" icon="approve-check">
+    ```cpp
+    // Pure Abstract Base Class (Interface)
+    class Serializable {
+    public:
+        virtual ~Serializable() = default;
+        virtual std::string serialize() const = 0;
+    };
+    
+    class User : public Serializable {
+    public:
+        std::string serialize() const override {
+            return "{\"name\": \"Alice\"}";
+        }
+    };
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 Inheritance in DSA — Practical Patterns
+
+<CardGrid>
+  <Card title="Pattern: Abstract Base for Data Structures" icon="rocket">
+    ```cpp
+    template<typename T>
+    class Container {
+    public:
+        virtual ~Container() = default;
+        virtual void add(const T& item) = 0;
+        virtual T get(int index) const = 0;
+        virtual size_t size() const = 0;
+    };
+    
+    template<typename T>
+    class ArrayList : public Container<T> {
+        std::vector<T> data;
+    public:
+        void add(const T& item) override { data.push_back(item); }
+        T get(int index) const override { return data.at(index); }
+        size_t size() const override { return data.size(); }
+    };
+    ```
+  </Card>
+  
+  <Card title="Pattern: CRTP (Curiously Recurring Template Pattern)" icon="shield">
+    ```cpp
+    // Static Polymorphism (Compile-time)
+    template <typename Derived>
+    class Base {
+    public:
+        void interface() {
+            static_cast<Derived*>(this)->implementation();
+        }
+    };
+    
+    class Child : public Base<Child> {
+    public:
+        void implementation() {
+            std::cout << "Child Impl\n";
+        }
+    };
+    
+    // No vtable overhead! Fast!
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🏢 Real-Life SDE Usage — Production Patterns
+
+<CardGrid>
+  <Card title="Pattern: Plugin Architecture" icon="rocket">
+    ```cpp
+    // Interface
+    class IPlugin {
+    public:
+        virtual ~IPlugin() = default;
+        virtual void execute() = 0;
+    };
+    
+    // Plugin Implementation
+    class AudioPlugin : public IPlugin {
+    public:
+        void execute() override {
+            std::cout << "Playing Audio\n";
+        }
+    };
+    
+    // Manager uses abstraction
+    class PluginManager {
+        std::vector<std::unique_ptr<IPlugin>> plugins;
+    public:
+        void addPlugin(std::unique_ptr<IPlugin> p) {
+            plugins.push_back(std::move(p));
+        }
+        void runAll() {
+            for (auto& p : plugins) p->execute();
+        }
+    };
+    ```
+  </Card>
+  
+  <Card title="Pattern: Exception Hierarchy" icon="shield">
+    ```cpp
+    class AppException : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+    
+    class NetworkError : public AppException {
+    public:
+        using AppException::AppException;
+    };
+    
+    class DatabaseError : public AppException {
+    public:
+        using AppException::AppException;
+    };
+    
+    // Catching
+    try {
+        // ...
+    } catch (const NetworkError& e) {
+        // Handle specific
+    } catch (const AppException& e) {
+        // Handle general
+    }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the difference between Java and C++ inheritance?" icon="information">
+    - C++ supports **Multiple Inheritance**; Java does not (uses Interfaces).
+    - C++ has **public/protected/private** inheritance; Java is always public-like.
+    - C++ methods are **not virtual by default**; Java methods are.
+    - C++ has no single root `Object` class.
+  </Card>
+  
+  <Card title="Q: Why must base destructors be virtual?" icon="error">
+    If you delete a derived object via a base pointer (`delete basePtr`), and the base destructor is **not virtual**, the derived destructor will **not** be called. This leads to **memory leaks** and undefined behavior.
+  </Card>
+
+  <Card title="Q: What is the Diamond Problem?" icon="caution">
+    It occurs in multiple inheritance when two parent classes inherit from the same grandparent. The child ends up with two copies of the grandparent's data. Solved using **`virtual inheritance`**.
+  </Card>
+
+  <Card title="Q: What does `override` do?" icon="approve-check">
+    It tells the compiler to check if the function actually overrides a virtual function in the base class. If not (e.g., signature mismatch), it throws a **compile error**.
+  </Card>
+
+  <Card title="Q: Can constructors be virtual?" icon="error">
+    **No**. Constructors cannot be virtual because the vtable is not set up until the object is constructed. Use the **Factory Pattern** or **Virtual Clone** idiom instead.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Inheritance Types
+
+| Type | Syntax | Use Case |
+|------|--------|----------|
+| **Public** | `class D : public B` | IS-A relationship (Polymorphism) |
+| **Protected** | `class D : protected B` | Implementation detail for further derivation |
+| **Private** | `class D : private B` | HAS-A / Composition alternative (Default for `class`) |
+
+### Key Keywords
+
+| Keyword | Purpose |
+|---------|---------|
+| `virtual` | Enables dynamic dispatch (polymorphism) |
+| `override` | Ensures method overrides a base virtual method (C++11) |
+| `final` | Prevents further overriding or inheritance (C++11) |
+| `virtual inheritance` | Solves Diamond Problem in multiple inheritance |
+
+### Common Pitfalls
+
+| Pitfall | Risk | Fix |
+|---------|------|-----|
+| Non-virtual destructor | Memory leak when deleting via base pointer | Make base destructor `virtual` |
+| Missing `override` | Silent hiding of methods instead of overriding | Always use `override` |
+| Diamond Problem | Ambiguous member access | Use `public virtual Base` |
+| Slicing | Losing derived data when passing by value | Pass by **reference** or **pointer** |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Always mark base destructors as `virtual`.
+2. ✅ Use `override` in derived classes.
+3. ✅ Prefer `public` inheritance for polymorphism.
+4. ✅ Use `virtual inheritance` sparingly (only for diamonds).
+5. ✅ Avoid deep inheritance hierarchies; prefer composition.
+6. ✅ Remember: Constructors are NOT inherited.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict output" code={`
+#include <iostream>
+
+class A {
+public:
+    A() { std::cout << "A "; }
+    virtual ~A() { std::cout << "~A "; }
+    virtual void foo() { std::cout << "A::foo "; }
+};
+
+class B : public A {
+public:
+    B() { std::cout << "B "; }
+    ~B() override { std::cout << "~B "; }
+    void foo() override { std::cout << "B::foo "; }
+};
+
+int main() {
+    A* ptr = new B();
+    ptr->foo();
+    delete ptr;
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output:
+A B B::foo ~B ~A 
+
+Explanation:
+1. new B(): Calls A() then B(). -> "A B "
+2. ptr->foo(): Virtual dispatch calls B::foo(). -> "B::foo "
+3. delete ptr(): Virtual destructor calls ~B() then ~A(). -> "~B ~A "
+```
+</details>
+
+<Aside type="tip">
+**Pro Interview Strategy**:
+1. Explain **Vtables** and how virtual dispatch works.
+2. Discuss **Object Slicing** (passing derived by value to base).
+3. Mention **CRTP** for static polymorphism.
+4. Emphasize **RAII** and smart pointers with inheritance.
+</Aside>
+
+---
+
+# 🧬 C++ Inheritance — Complete Deep Dive
+
+---
+
+## 📌 What Is Inheritance?
+
+A mechanism where a **derived class acquires properties and behavior** from a base class.
+
+```
+Base class (parent)
+  → defines common interface + behavior
+
+Derived class (child)
+  → inherits base members
+  → adds new behavior
+  → can override existing behavior
+```
+
+```cpp
+class Animal {              // Base
+    std::string name_;
+public:
+    Animal(std::string name) : name_(std::move(name)) { }
+    void breathe() { std::cout << "breathing\n"; }
+    std::string name() const { return name_; }
+};
+
+class Dog : public Animal { // Derived — inherits from Animal
+    std::string breed_;
+public:
+    Dog(std::string name, std::string breed)
+        : Animal(std::move(name))   // base constructor MUST be called
+        , breed_(std::move(breed)) { }
+
+    void bark() { std::cout << "Woof!\n"; }    // new behavior
+    std::string breed() const { return breed_; }
+};
+
+Dog d("Rex", "Labrador");
+d.breathe();    // ✅ inherited from Animal
+d.bark();       // ✅ Dog-specific
+d.name();       // ✅ inherited
+d.breed();      // ✅ Dog-specific
+```
+
+---
+
+## 🗺️ Types of Inheritance
+
+```
+Inheritance Types
+│
+├── By Access Specifier
+│   ├── public inheritance     → IS-A relationship
+│   ├── protected inheritance  → implemented-in-terms-of (rare)
+│   └── private inheritance    → implemented-in-terms-of
+│
+└── By Structure
+    ├── Single                 → one base class
+    ├── Multilevel             → A → B → C (chain)
+    ├── Hierarchical           → one base, many derived
+    ├── Multiple               → many base classes
+    └── Hybrid                 → combination (diamond)
+```
+
+---
+
+## 🔷 1. Access Specifier in Inheritance
+
+```cpp
+class Base {
+public:    int pub = 1;
+protected: int prot = 2;
+private:   int priv = 3;
+};
+```
+
+### Access Transformation Table
+
+| Base member | `public` inherit | `protected` inherit | `private` inherit |
+|---|---|---|---|
+| `public` | public | protected | private |
+| `protected` | protected | protected | private |
+| `private` | inaccessible | inaccessible | inaccessible |
+
+```cpp
+class PublicD    : public    Base { };
+class ProtectedD : protected Base { };
+class PrivateD   : private   Base { };
+
+PublicD    pd;
+pd.pub  = 1;   // ✅ still public
+pd.prot = 2;   // ❌ protected
+
+ProtectedD prd;
+prd.pub = 1;   // ❌ became protected
+prd.prot= 2;   // ❌ protected
+
+PrivateD prvd;
+prvd.pub = 1;  // ❌ became private
+```
+
+### IS-A vs HAS-A
+
+```
+public inheritance    = IS-A     → "Dog IS-A Animal"
+                                   → substitutability (Liskov)
+                                   → correct use of inheritance
+
+private/protected     = implemented-in-terms-of
+                       → "Stack is implemented using Vector"
+                       → prefer composition over private inheritance
+```
+
+---
+
+## 🔷 2. Constructor and Destructor Order
+
+```cpp
+class Base {
+public:
+    Base()  { std::cout << "Base()\n"; }
+    ~Base() { std::cout << "~Base()\n"; }
+};
+
+class Middle : public Base {
+public:
+    Middle()  { std::cout << "Middle()\n"; }
+    ~Middle() { std::cout << "~Middle()\n"; }
+};
+
+class Derived : public Middle {
+public:
+    Derived()  { std::cout << "Derived()\n"; }
+    ~Derived() { std::cout << "~Derived()\n"; }
+};
+
+Derived d;
+```
+
+```
+Construction order:   Base() → Middle() → Derived()
+Destruction order:    ~Derived() → ~Middle() → ~Base()
+
+Rule: BASE FIRST in construction, BASE LAST in destruction.
+      Always the reverse — LIFO.
+```
+
+### Constructor with Arguments
+
+```cpp
+class Animal {
+    std::string name_;
+public:
+    explicit Animal(std::string name) : name_(std::move(name)) { }
+};
+
+class Dog : public Animal {
+    std::string breed_;
+public:
+    Dog(std::string name, std::string breed)
+        : Animal(std::move(name))       // ← MUST explicitly call base ctor
+        , breed_(std::move(breed))      //    if base has no default ctor
+    { }
+    // If base ctor not called explicitly → compiler calls Base()
+    // If Base() doesn't exist → COMPILE ERROR
+};
+```
+
+---
+
+## 🔷 3. Method Overriding
+
+```cpp
+class Shape {
+public:
+    virtual double area() const {    // virtual — enables override
+        return 0.0;
+    }
+    virtual void print() const {
+        std::cout << "Area: " << area() << "\n";
+    }
+    virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+    double r_;
+public:
+    explicit Circle(double r) : r_(r) { }
+
+    double area() const override {   // override — checked at compile time
+        return 3.14159 * r_ * r_;
+    }
+};
+
+class Rectangle : public Shape {
+    double w_, h_;
+public:
+    Rectangle(double w, double h) : w_(w), h_(h) { }
+
+    double area() const override {
+        return w_ * h_;
+    }
+};
+
+// Polymorphic usage:
+std::vector<std::unique_ptr<Shape>> shapes;
+shapes.push_back(std::make_unique<Circle>(5.0));
+shapes.push_back(std::make_unique<Rectangle>(3.0, 4.0));
+
+for (const auto& s : shapes)
+    s->print();   // calls correct area() for each type via vtable
+```
+
+### Override vs Hide
+
+```cpp
+class Base {
+public:
+    virtual void f(int x) { std::cout << "Base::f(int)\n"; }
+    void g(int x) { std::cout << "Base::g(int)\n"; }   // non-virtual
+};
+
+class Derived : public Base {
+public:
+    // OVERRIDE — virtual, same signature → runtime dispatch
+    void f(int x) override { std::cout << "Derived::f(int)\n"; }
+
+    // HIDE — non-virtual, same name → compile-time dispatch
+    void g(int x) { std::cout << "Derived::g(int)\n"; }
+
+    // HIDE — different signature, base version hidden
+    void f(double x) { }   // hides Base::f(int) in Derived scope
+};
+
+Base* b = new Derived();
+b->f(1);   // → Derived::f(int)  (virtual dispatch)
+b->g(1);   // → Base::g(int)     (non-virtual — static dispatch)
+
+Derived d;
+d.f(1);    // → Derived::f(int)
+d.g(1);    // → Derived::g(int)
+d.f(1.0);  // → Derived::f(double)
+// d.f(1) and d.f(1.0) coexist — different signatures
+```
+
+---
+
+## 🔷 4. Object Slicing — Critical Trap
+
+```cpp
+class Animal {
+    std::string name_;
+public:
+    Animal(std::string n) : name_(std::move(n)) { }
+    virtual std::string sound() const { return "..."; }
+    std::string name() const { return name_; }
+};
+
+class Dog : public Animal {
+    std::string breed_;
+public:
+    Dog(std::string n, std::string b)
+        : Animal(std::move(n)), breed_(std::move(b)) { }
+    std::string sound() const override { return "Woof"; }
+    std::string breed() const { return breed_; }
+};
+
+Dog dog("Rex", "Labrador");
+
+// ✅ Pointer/reference — no slicing, polymorphism works
+Animal* pa = &dog;
+pa->sound();    // → "Woof"
+
+// ❌ VALUE copy — SLICING occurs
+Animal a = dog;    // Dog SLICED to Animal
+                   // breed_ member LOST
+                   // sound() now calls Animal::sound() → "..."
+a.sound();         // → "..."  (not "Woof"!)
+```
+
+```
+Object Slicing:
+┌──────────────────────────────┐
+│  Dog object                  │
+│  [Animal part: name_]        │
+│  [Dog part: breed_]  ← LOST │
+└──────────────────────────────┘
+         ↓ copy to Animal
+┌──────────────────────────────┐
+│  Animal object               │
+│  [Animal part: name_]        │
+│  [Dog part: GONE]            │
+└──────────────────────────────┘
+vptr now points to Animal vtable — Dogness completely erased
+```
+
+> 🔴 **Slicing is silent — no warning, no error. Always use `Base*` or `Base&` for polymorphic usage.**
+
+---
+
+## 🔷 5. Multiple Inheritance
+
+```cpp
+class IFlyable {
+public:
+    virtual void fly() = 0;
+    virtual ~IFlyable() = default;
+};
+
+class ISwimmable {
+public:
+    virtual void swim() = 0;
+    virtual ~ISwimmable() = default;
+};
+
+class Duck : public IFlyable, public ISwimmable {
+public:
+    void fly()  override { std::cout << "Duck flying\n"; }
+    void swim() override { std::cout << "Duck swimming\n"; }
+};
+
+Duck d;
+d.fly();    // ✅
+d.swim();   // ✅
+
+IFlyable*  f = &d;
+ISwimmable* s = &d;
+f->fly();   // ✅
+s->swim();  // ✅
+```
+
+### Memory Layout with Multiple Inheritance
+
+```
+Duck object:
+┌──────────────────────────────┐
+│  vptr₁ → IFlyable vtable     │  +0  (for IFlyable*)
+├──────────────────────────────┤
+│  IFlyable subobject data     │
+├──────────────────────────────┤
+│  vptr₂ → ISwimmable vtable   │  +?  (for ISwimmable*)
+├──────────────────────────────┤
+│  ISwimmable subobject data   │
+├──────────────────────────────┤
+│  Duck own data               │
+└──────────────────────────────┘
+
+Duck* d  → address of whole object
+IFlyable*  f = d → same address (IFlyable is first base)
+ISwimmable* s = d → DIFFERENT address (adjusted by compiler)
+```
+
+### Name Ambiguity in Multiple Inheritance
+
+```cpp
+class A { public: void f() { } };
+class B { public: void f() { } };
+class C : public A, public B { };
+
+C c;
+c.f();        // ❌ ambiguous — A::f or B::f?
+
+// ✅ Disambiguate explicitly
+c.A::f();     // call A's version
+c.B::f();     // call B's version
+
+// ✅ Or override in C:
+class C : public A, public B {
+public:
+    void f() override { A::f(); }  // choose which base to call
+};
+```
+
+---
+
+## 🔷 6. Diamond Problem + Virtual Inheritance
+
+```
+    Animal
+    /    \
+  Dog    Cat
+    \    /
+     Hybrid
+```
+
+```cpp
+class Animal {
+public:
+    int legs = 4;
+    void breathe() { }
+};
+
+class Dog : public Animal { };
+class Cat : public Animal { };
+
+// Without virtual:
+class Hybrid : public Dog, public Cat {
+    // TWO Animal subobjects!
+    // Dog::Animal::legs and Cat::Animal::legs
+};
+
+Hybrid h;
+h.legs;          // ❌ ambiguous — which Animal::legs?
+h.Dog::legs;     // ✅ explicit
+h.Cat::legs;     // ✅ different variable!
+h.breathe();     // ❌ ambiguous — two copies of breathe()
+```
+
+### Virtual Inheritance — Solution
+
+```cpp
+class Animal {
+public:
+    int legs = 4;
+    virtual void breathe() { }
+    virtual ~Animal() = default;
+};
+
+class Dog : virtual public Animal { };   // virtual inheritance
+class Cat : virtual public Animal { };   // virtual inheritance
+
+class Hybrid : public Dog, public Cat {
+    // ONE Animal subobject — shared via virtual inheritance
+};
+
+Hybrid h;
+h.legs;       // ✅ unambiguous — one Animal
+h.breathe();  // ✅ unambiguous
+```
+
+### Virtual Inheritance Memory Layout
+
+```
+Without virtual inheritance:
+Hybrid: [Dog: [Animal][Dog data]] [Cat: [Animal][Cat data]] [Hybrid data]
+         ↑ two Animal copies
+
+With virtual inheritance:
+Hybrid: [Dog vbptr][Dog data]
+        [Cat vbptr][Cat data]
+        [Hybrid data]
+        [SHARED Animal subobject]  ← one copy, at fixed offset
+         ↑ vbptr = virtual base pointer (points to shared Animal)
+
+Cost:
+  Extra pointer per virtually-inherited base
+  Extra indirection to access virtual base members
+  Virtual base constructor called by MOST DERIVED class
+```
+
+### Virtual Base Constructor Rule
+
+```cpp
+class Animal {
+public:
+    explicit Animal(int legs) : legs_(legs) { }
+    int legs_;
+};
+
+class Dog : virtual public Animal {
+public:
+    Dog() : Animal(4) { }       // normally initializes Animal
+};
+class Cat : virtual public Animal {
+public:
+    Cat() : Animal(4) { }
+};
+
+class Hybrid : public Dog, public Cat {
+public:
+    // MUST initialize virtual base directly
+    Hybrid() : Animal(4), Dog(), Cat() { }
+    //         ↑ Dog() and Cat() calls to Animal() IGNORED
+    //         Animal initialized ONCE by Hybrid — most derived
+};
+```
+
+---
+
+## 🔷 7. `using` in Inheritance
+
+### Expose Hidden Base Members
+
+```cpp
+class Base {
+public:
+    void f(int x) { }
+    void f(double x) { }
+};
+
+class Derived : public Base {
+public:
+    void f(std::string s) { }  // hides ALL Base::f overloads!
+};
+
+Derived d;
+d.f("hello");  // ✅
+d.f(42);       // ❌ Base::f(int) hidden!
+
+// ✅ Bring all base overloads back into scope
+class Derived : public Base {
+public:
+    using Base::f;             // restore all Base::f overloads
+    void f(std::string s) { }
+};
+
+d.f("hello");  // ✅ Derived::f(string)
+d.f(42);       // ✅ Base::f(int) — restored
+d.f(3.14);     // ✅ Base::f(double) — restored
+```
+
+### Change Access Level
+
+```cpp
+class Base {
+protected:
+    void helper() { }
+};
+
+class Derived : public Base {
+public:
+    using Base::helper;    // ✅ expose protected as public
+};
+
+Derived d;
+d.helper();    // ✅ now accessible
+```
+
+---
+
+## 🔷 8. Multilevel and Hierarchical Inheritance
+
+```cpp
+// Multilevel: A → B → C
+class Vehicle {
+public:
+    int speed = 0;
+    virtual void describe() const { std::cout << "Vehicle\n"; }
+    virtual ~Vehicle() = default;
+};
+
+class Car : public Vehicle {
+public:
+    int doors = 4;
+    void describe() const override { std::cout << "Car\n"; }
+};
+
+class SportsCar : public Car {
+public:
+    bool turbo = true;
+    void describe() const override { std::cout << "SportsCar\n"; }
+};
+
+SportsCar sc;
+sc.speed;    // ✅ from Vehicle
+sc.doors;    // ✅ from Car
+sc.turbo;    // ✅ from SportsCar
+
+Vehicle* v = &sc;
+v->describe(); // → "SportsCar" (virtual dispatch through 2 levels)
+```
+
+---
+
+## 🔬 Under the Hood — vtable with Inheritance
+
+```cpp
+class Base {
+public:
+    virtual void f() { }
+    virtual void g() { }
+    virtual ~Base() { }
+};
+
+class Derived : public Base {
+public:
+    void f() override { }    // overrides Base::f
+    // g() not overridden — inherits Base::g
+};
+```
+
+```
+Base vtable:              Derived vtable:
+┌─────────────────┐       ┌─────────────────┐
+│ type_info*      │       │ type_info*      │
+├─────────────────┤       ├─────────────────┤
+│ &Base::~Base    │       │ &Derived::~Derived│
+├─────────────────┤       ├─────────────────┤
+│ &Base::f        │       │ &Derived::f     │ ← overridden
+├─────────────────┤       ├─────────────────┤
+│ &Base::g        │       │ &Base::g        │ ← inherited (same pointer)
+└─────────────────┘       └─────────────────┘
+
+Base object:       [vptr→Base vtable    ][Base data]
+Derived object:    [vptr→Derived vtable ][Base data][Derived data]
+
+Base* b = new Derived();
+b->f():
+  1. Load vptr from *b → points to Derived vtable
+  2. Read slot [f] → &Derived::f
+  3. Call Derived::f  ← correct
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**GUI framework with inheritance hierarchy:**
+
+```cpp
+// Framework base — defines interface
+class Widget {
+    int x_, y_, w_, h_;
+public:
+    Widget(int x, int y, int w, int h)
+        : x_(x), y_(y), w_(w), h_(h) { }
+
+    virtual void render()         = 0;
+    virtual void handle_click(int x, int y) { }
+    virtual void handle_key(int key) { }
+
+    int x() const { return x_; }
+    int y() const { return y_; }
+    virtual ~Widget() = default;
+};
+
+// Intermediate — adds click behavior
+class Clickable : public Widget {
+    std::function<void()> on_click_;
+public:
+    using Widget::Widget;
+    void set_click_handler(std::function<void()> h) {
+        on_click_ = std::move(h);
+    }
+    void handle_click(int, int) override {
+        if (on_click_) on_click_();
+    }
+};
+
+// Concrete — specific widget
+class Button : public Clickable {
+    std::string label_;
+public:
+    Button(int x, int y, int w, int h, std::string label)
+        : Clickable(x, y, w, h), label_(std::move(label)) { }
+
+    void render() override {
+        draw_rect(x(), y(), label_);
+    }
+};
+
+class ImageButton : public Button {
+    Image img_;
+public:
+    using Button::Button;
+    void render() override {
+        Button::render();    // call base render
+        draw_image(img_);    // add image on top
+    }
+};
+
+// Framework only knows Widget — handles all types
+std::vector<std::unique_ptr<Widget>> ui;
+ui.push_back(std::make_unique<Button>(10, 10, 100, 30, "OK"));
+ui.push_back(std::make_unique<ImageButton>(10, 50, 50, 50, "icon"));
+
+for (auto& w : ui) {
+    w->render();             // correct render per type
+}
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+class Base { public: virtual void f() { std::cout << "Base\n"; } };
+class Derived : public Base {
+public:
+    void f() { std::cout << "Derived\n"; }  // no override keyword
+};
+Base* b = new Derived();
+b->f();   // → ?
+```
+> Prints `"Derived"` — `virtual` in base is enough for dispatch. `override` is a safety keyword (compile-time check), not required for overriding to work. But in prod: always write `override` to catch typos.
+
+**Trap 2:**
+```cpp
+class Base {
+public:
+    Base() { f(); }           // calls virtual in constructor
+    virtual void f() { std::cout << "Base::f\n"; }
+};
+class Derived : public Base {
+public:
+    void f() override { std::cout << "Derived::f\n"; }
+};
+Derived d;   // prints?
+```
+> Prints `"Base::f"`. During `Base()` constructor, vtable is NOT yet set to `Derived`'s vtable — it points to `Base`'s vtable. Virtual dispatch in constructors calls the **base class version**, not derived. This is one of the most dangerous C++ traps.
+
+**Trap 3:**
+```cpp
+class Base { public: ~Base() { } };  // non-virtual
+class Derived : public Base { int* data; public:
+    Derived() : data(new int[100]) { }
+    ~Derived() { delete[] data; }
+};
+Base* b = new Derived();
+delete b;
+```
+> **UB + memory leak** — `~Base()` non-virtual. `delete b` only calls `~Base()`. `~Derived()` never called. `data` leaked. Always `virtual ~Base()`.
+
+**Trap 4:**
+```cpp
+class A { public: void f() { std::cout << "A\n"; } };
+class B : public A { public: void f() { std::cout << "B\n"; } };
+
+void call(A a) { a.f(); }  // by value
+
+B b;
+call(b);   // → ?
+```
+> Prints `"A"` — `call` takes `A` by value → **slicing**. `B` sliced to `A`. `f()` is non-virtual — static dispatch to `A::f`. Two separate issues: slicing + non-virtual.
+
+**Trap 5:**
+```cpp
+class Base {
+public:
+    virtual void f() { g(); }   // calls g()
+    virtual void g() { std::cout << "Base::g\n"; }
+};
+class Derived : public Base {
+public:
+    void g() override { std::cout << "Derived::g\n"; }
+};
+
+Derived d;
+d.f();   // → ?
+```
+> Prints `"Derived::g"`. `f()` is called on `Derived` object. Inside `f()`, `g()` is called on `*this` — which is `Derived`. Virtual dispatch → `Derived::g()`. This is how the **Template Method Pattern** works in C++.
+
+---

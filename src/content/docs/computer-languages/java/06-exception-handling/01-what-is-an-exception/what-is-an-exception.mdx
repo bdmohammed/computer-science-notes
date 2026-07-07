@@ -1,0 +1,1023 @@
+---
+title: What is an Exception?
+slug: computer-languages/java/exception-handling/fundamentals/what-is-an-exception
+description: What is an Exception in Java?
+---
+## 💥 What Is An Exception
+
+---
+
+### 🧠 What It Is
+
+An **exception** is an **unexpected event** that occurs during program execution, disrupting the normal flow of instructions. In Java, every exception is an **object** — an instance of a class that extends `Throwable`. When something goes wrong, the JVM **creates** this object and **throws** it up the call stack.
+
+```text
+SleepingException
+TyrePunchuredException
+FileNotFoundException ...etc
+```
+
+- It is highly recommended to handle exceptions. The main objective of exception handling is graceful (normal) termination of the program.
+
+---
+
+### 🔬 Exception vs Error vs Bug
+
+| | Definition | Example | Recoverable? |
+|--|-----------|---------|-------------|
+| **Bug** | Wrong logic — programmer mistake | Off-by-one in loop | Fix the code |
+| **Exception** | Unexpected runtime event | File not found, null access | ✅ Yes — handle it |
+| **Error** | JVM-level catastrophe | Out of memory, stack overflow | ❌ No — system broken |
+
+---
+
+### 🔬 What "Exception as Object" Means
+
+```
+int[] arr = new int[5];
+arr[10] = 99;              // ← abnormal event occurs here
+
+JVM does:
+  1. Detects index 10 is out of bounds
+  2. Creates object: new ArrayIndexOutOfBoundsException("Index 10 out of bounds for length 5")
+  3. Throws it — normal execution STOPS here
+  4. Looks up the call stack for a handler (catch block)
+  5. If no handler found → Default Exception Handler takes over
+```
+
+```
+Exception Object on Heap:
+┌──────────────────────────────────────────┐
+│  ArrayIndexOutOfBoundsException          │
+│  ├── message : "Index 10 out of bounds"  │
+│  ├── cause   : null                      │
+│  └── stackTrace : [                      │
+│        Main.main(Main.java:3)            │
+│      ]                                   │
+└──────────────────────────────────────────┘
+```
+
+---
+
+## What is the meaning of exception handling?
+
+Exception handling doesn't mean repairing an exception. We have to define alternative way to continue rest of the program normally. This way of defining alternative is nothing but exception handling.
+
+Example: Suppose our programming requirement is to read data from remote file locating at London. At runtime if London file is not available then our program should not be terminated abnormally. We have to provide a local file to continue rest of the program normally. This way of defining alternative is nothing but exception handling.
+
+```java
+try {
+    read data from London file
+} catch(FileNotFoundException e) {
+    use local file and continue rest of the program normally
+}
+```
+
+---
+
+## 📚 Runtime Stack Mechanism
+
+---
+
+### 🧠 What It Is
+
+For every thread JVM will create a separate **private runtime stack** at the time of Thread creation. All method calls performed by that thread will be stored in that **stack frame**. Each entry in the stack is called "Activation record" (or) "stack frame".
+
+After completing every method call JVM removes the corresponding entry from the stack. After completing all method calls JVM destroys the empty stack and terminates the program normally.
+
+When an exception is thrown, the JVM **unwinds** this stack frame by frame looking for a handler. No stack — no exception handling.
+
+```java
+class Test {
+    public static void main(String[] args){
+        doStuff();
+    }
+    public static void doStuff(){
+        doMoreStuff();
+    }
+    public static void doMoreStuff(){
+        System.out.println("Hello");
+    }
+}
+
+Output:
+Hello
+
+Diagram:
+                METHOD CALL STACK (JVM STACK)
+
+
+┌───────────────┐
+│               │
+│   Empty Stack │
+│               │
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│    main()     │   ← main method pushed
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│   doStuff()   │   ← called from main()
+├───────────────┤
+│    main()     │
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│ doMoreStuff() │   ← called from doStuff()
+├───────────────┤
+│   doStuff()   │
+├───────────────┤
+│    main()     │
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│   doStuff()   │   ← doMoreStuff() finished
+├───────────────┤
+│    main()     │
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│    main()     │   ← doStuff() finished
+└───────────────┘
+        │
+        ▼
+
+
+┌───────────────┐
+│   Empty Stack │   ← main() finished
+└───────────────┘
+        │
+        ▼
+
+Destroyed by JVM and program terminated normally.
+```
+
+---
+
+### 🔬 Stack Frame — What's Inside
+
+```
+┌─────────────────────────────────────────┐
+│            STACK FRAME                  │
+│                                         │
+│  ├── Local Variable Array               │
+│  │     [this, param1, param2, ...]      │
+│  │                                      │
+│  ├── Operand Stack                      │
+│  │     (working area for computations)  │
+│  │                                      │
+│  └── Frame Data                         │
+│        ├── reference to constant pool   │
+│        ├── return address               │
+│        └── exception table              │
+│              (catch block mappings)     │
+└─────────────────────────────────────────┘
+```
+
+The **exception table** inside each frame is what the JVM checks when an exception is thrown — it maps bytecode ranges to catch handlers.
+
+---
+
+---
+
+### 🔬 Stack Per Thread
+
+```
+JVM Process
+│
+├── Thread: main
+│   └── Runtime Stack
+│       ├── frame: main()
+│       ├── frame: methodA()
+│       └── frame: methodB()   ← top
+│
+├── Thread: http-worker-1
+│   └── Runtime Stack
+│       ├── frame: run()
+│       └── frame: processRequest()
+│
+└── Thread: db-pool-1
+    └── Runtime Stack
+        ├── frame: run()
+        └── frame: executeQuery()
+
+Each thread's stack is PRIVATE.
+Exception in one thread NEVER affects another thread's stack.
+```
+
+---
+
+### 💻 Real-World Code — Stack Building and Unwinding
+
+```java
+public class OrderService {
+
+    public static void main(String[] args) {
+        OrderService svc = new OrderService();
+        svc.placeOrder("user-99");              // frame 1 pushed
+    }
+
+    void placeOrder(String userId) {
+        validateUser(userId);                   // frame 2 pushed
+    }
+
+    void validateUser(String userId) {
+        fetchUser(userId);                      // frame 3 pushed
+    }
+
+    void fetchUser(String userId) {
+        // Simulates DB returning null
+        User user = null;
+        user.getName();                         // NPE thrown here — frame 4 context
+    }
+}
+```
+
+**Stack at moment of exception:**
+
+```
+┌─────────────────────────────────────────┐  ← TOP
+│  fetchUser("user-99")                   │  NPE thrown here
+│  OrderService.java:20                   │  no catch → POPPED
+├─────────────────────────────────────────┤
+│  validateUser("user-99")                │  no catch → POPPED
+│  OrderService.java:15                   │
+├─────────────────────────────────────────┤
+│  placeOrder("user-99")                  │  no catch → POPPED
+│  OrderService.java:11                   │
+├─────────────────────────────────────────┤
+│  main(args)                             │  no catch → POPPED
+│  OrderService.java:6                    │
+└─────────────────────────────────────────┘
+         ↓
+Default Exception Handler takes over
+Prints stack trace + terminates thread
+```
+
+**Output:**
+```
+Exception in thread "main" java.lang.NullPointerException
+    at OrderService.fetchUser(OrderService.java:20)
+    at OrderService.validateUser(OrderService.java:15)
+    at OrderService.placeOrder(OrderService.java:11)
+    at OrderService.main(OrderService.java:6)
+```
+
+Stack trace = **snapshot of the runtime stack** at moment of exception creation. Bottom entry = entry point. Top entry = exact throw site.
+
+---
+
+### 🔬 Unwinding — Frame by Frame
+
+```
+THROW SITE: fetchUser()
+     │
+     ▼
+JVM checks fetchUser()'s exception table
+     │
+     No matching handler
+     │
+     ▼
+fetchUser() frame DESTROYED
+  └── local variables GONE (userId, user references — GC eligible)
+     │
+     ▼
+JVM checks validateUser()'s exception table
+     │
+     No matching handler
+     │
+     ▼
+validateUser() frame DESTROYED
+     │
+     ▼
+JVM checks placeOrder()'s exception table
+     │
+     No matching handler
+     │
+     ▼
+placeOrder() frame DESTROYED
+     │
+     ▼
+JVM checks main()'s exception table
+     │
+     No matching handler
+     │
+     ▼
+main() frame DESTROYED
+     │
+     ▼
+Thread terminates
+Default handler prints trace
+```
+
+---
+
+### 🔬 Exception Table — The Real Mechanism
+
+Every method with a `try-catch` has an **exception table** in its bytecode:
+
+```java
+void process() {
+    try {
+        riskyOp();        // bytecode offset 0–10
+    } catch (IOException e) {
+        recover();        // bytecode offset 15–25
+    }
+}
+```
+
+```
+Exception Table for process():
+┌────────┬──────┬─────────┬──────────────────┐
+│ From   │  To  │ Target  │ Type             │
+├────────┼──────┼─────────┼──────────────────┤
+│   0    │  10  │   15    │ IOException      │
+└────────┴──────┴─────────┴──────────────────┘
+
+"If exception thrown between offset 0 and 10,
+ AND exception is-a IOException,
+ THEN jump to offset 15 (catch block)"
+```
+
+JVM checks this table — no iteration over code, no search. Direct offset lookup. This is why `try-catch` has **near-zero overhead** when no exception is thrown.
+
+---
+
+### 💻 Stack with Handler Found
+
+```java
+void placeOrder(String userId) {
+    try {
+        validateUser(userId);        // throws NPE
+    } catch (NullPointerException e) {
+        log.error("User not found"); // handler found HERE
+    }
+}
+```
+
+```
+Stack at moment of throw:
+┌─────────────────────────┐ ← TOP
+│  fetchUser()            │ NPE thrown → no handler → POPPED
+├─────────────────────────┤
+│  validateUser()         │ no handler → POPPED
+├─────────────────────────┤
+│  placeOrder()           │ ✅ NPE handler found in exception table
+│                         │ execution resumes at catch block
+├─────────────────────────┤
+│  main()                 │ never sees the exception
+└─────────────────────────┘
+```
+
+Once handler found — unwinding **stops**. Frames above the handler are destroyed. Handler frame stays alive. Execution continues normally after the catch block.
+
+---
+
+### 📊 Stack vs Heap in Exception Context
+
+| | Stack | Heap |
+|--|-------|------|
+| **What lives here** | Frames, local vars, references | Exception objects, their messages, stack trace arrays |
+| **Per thread?** | ✅ Yes — private | ❌ No — shared |
+| **Exception object** | Reference only | Full object lives here |
+| **On frame destroy** | Reference gone | Object survives until GC |
+| **Stack trace** | Source of truth at capture | Stored as `StackTraceElement[]` on heap |
+
+---
+
+## 🛡️ Default Exception Handling in Java
+
+---
+
+### 🧠 What It Is
+
+- If an exception raised inside any method then that method is responsible to create Exception object with the following information.
+- - Name of the exception.
+- - Description of the exception.
+- - Location of the exception.(StackTrace)
+- After creating that Exception object, the method handovers that object to the JVM.
+- JVM checks whether the method contains any exception handling code or not. If method won't contain any handling code then JVM terminates that method abnormally and removes corresponding entry form the stack.
+- JVM identifies the caller method and checks whether the caller method contain any handling code or not. If the caller method also does not contain handling code then JVM terminates that caller method also abnormally and removes corresponding entry from the stack.
+- This process will be continued until main() method and if the main() method also doesn't contain any exception handling code then JVM terminates main() method also and removes corresponding entry from the stack.
+- Then JVM handovers the responsibility of exception handling to the default exception handler.
+- Default exception handler just print exception information to the console in the following format and terminates the program abnormally.
+
+Exception in thread “xxx(main)” Name of exception: description
+Location of exception (stack trace)
+
+```java
+class Test {
+    public static void main(String[] args){
+        doStuff();
+    }
+    public static void doStuff(){
+        doMoreStuff();
+    }
+    public static void doMoreStuff(){
+        System.out.println(10/0);
+    }
+}
+Output:
+Exception in thread "main" java.lang.ArithmeticException: / by zero
+atTest.doMoreStuff(Test.java:10)
+atTest.doStuff(Test.java:7)
+atTest.main(Test.java:4)
+Diagram:
+┌───────────────┐
+│ doMoreStuff() │
+├───────────────┤
+│   doStuff()   │
+├───────────────┤
+│    main()     │
+└───────────────┘
+```
+
+---
+
+### 💻 Real-World Code — Exception is an Object
+
+```java
+public class PaymentProcessor {
+    void charge(String customerId, double amount) {
+        if (customerId == null) {
+            // JVM creates this object and throws it
+            throw new IllegalArgumentException("customerId cannot be null");
+        }
+
+        // Simulate DB call
+        Customer customer = db.find(customerId);  // may throw SQLException
+        customer.deduct(amount);                  // may throw NullPointerException
+    }
+}
+```
+
+At `customer.deduct(amount)` — if `customer` is `null`:
+- JVM creates `new NullPointerException()`
+- Throws it — `charge()` stops immediately
+- JVM walks the stack looking for a `catch(NullPointerException)` or `catch(Exception)`
+- If nothing catches it → JVM prints stack trace and **terminates the thread**
+
+---
+
+### 🔬 Two Categories — The Only Split That Matters
+
+```
+Throwable
+├── Error                    ← JVM broke. Don't catch. Don't recover.
+│   ├── OutOfMemoryError
+│   ├── StackOverflowError
+│   └── VirtualMachineError
+│
+└── Exception
+    ├── Checked Exception    ← Must handle at compile time
+    │   ├── IOException
+    │   ├── SQLException
+    │   └── ClassNotFoundException
+    │
+    └── Unchecked Exception  ← RuntimeException subtree
+        ├── NullPointerException
+        ├── ArrayIndexOutOfBoundsException
+        └── IllegalArgumentException
+```
+
+| | Checked | Unchecked |
+|--|---------|-----------|
+| **Detected at** | Compile time | Runtime |
+| **Must handle?** | ✅ Yes — compiler enforces | ❌ No — optional |
+| **Cause** | External systems (file, DB, network) | Programming mistakes |
+| **Extends** | `Exception` directly | `RuntimeException` |
+
+---
+
+### 🔬 Normal Flow vs Exception Flow
+
+```
+Normal Flow:
+  main() → methodA() → methodB() → methodC()
+                                        │
+                                     returns
+                                        │
+                              returns to methodB
+                                        │
+                              returns to methodA
+                                        │
+                              returns to main()
+
+Exception Flow:
+  main() → methodA() → methodB() → methodC()
+                                        │
+                                   throws NPE ← execution STOPS
+                                        │
+                    JVM checks methodC — no handler
+                                        │
+                    JVM checks methodB — no handler
+                                        │
+                    JVM checks methodA — no handler
+                                        │
+                    JVM checks main()  — no handler
+                                        │
+                    Default Handler prints trace + thread dies
+```
+
+---
+
+### 🔬 Who Is the Default Exception Handler
+
+```
+JVM Runtime
+│
+└── Thread
+    └── ThreadGroup
+        └── Thread.UncaughtExceptionHandler  ← Default Exception Handler lives here
+```
+
+Every thread belongs to a `ThreadGroup`. `ThreadGroup` implements `Thread.UncaughtExceptionHandler`. When a thread dies with an unhandled exception, the JVM calls:
+
+```java
+thread.getUncaughtExceptionHandler().uncaughtException(thread, exception);
+```
+
+Default implementation in `ThreadGroup`:
+```java
+// Inside ThreadGroup.uncaughtException() — JDK source
+public void uncaughtException(Thread t, Throwable e) {
+    if (parent != null) {
+        parent.uncaughtException(t, e);      // walks up ThreadGroup tree
+    } else {
+        // reached root — print and die
+        System.err.println("Exception in thread \""
+                           + t.getName() + "\" " + e);
+        e.printStackTrace(System.err);
+    }
+}
+```
+
+---
+
+### 🔬 Full Default Handling Flow
+
+```
+Exception thrown in method
+         │
+         ▼
+JVM unwinds stack frame by frame
+         │
+         ▼
+No catch block found anywhere in stack
+         │
+         ▼
+JVM calls thread.getUncaughtExceptionHandler()
+         │
+         ▼
+   ┌─────────────────────────────────────┐
+   │  ThreadGroup.uncaughtException()    │
+   │  walks up ThreadGroup parent tree   │
+   │  until root ThreadGroup reached     │
+   └─────────────────────────────────────┘
+         │
+         ▼
+Prints to System.err:
+  "Exception in thread "<thread-name>" <ExceptionClass>: <message>"
+  + full stack trace
+         │
+         ▼
+Thread TERMINATES
+(Other threads keep running)
+```
+
+---
+
+### 💻 Default Output — Anatomy
+
+```java
+public class PaymentService {
+    public static void main(String[] args) {
+        processPayment(null);
+    }
+
+    static void processPayment(String txnId) {
+        validateTxn(txnId);
+    }
+
+    static void validateTxn(String txnId) {
+        System.out.println(txnId.length());   // NPE here
+    }
+}
+```
+
+**Output on System.err:**
+```
+Exception in thread "main" java.lang.NullPointerException:
+Cannot invoke "String.length()" because "txnId" is null
+    at PaymentService.validateTxn(PaymentService.java:11)  ← throw site (top)
+    at PaymentService.processPayment(PaymentService.java:7)
+    at PaymentService.main(PaymentService.java:3)           ← entry point (bottom)
+```
+
+```
+Output anatomy:
+┌─────────────────────────────────────────────────────────────┐
+│ Exception in thread "main"                                  │ ← thread name
+│ java.lang.NullPointerException:                             │ ← exception class
+│ Cannot invoke "String.length()" because "txnId" is null     │ ← message (Java 14+)
+│     at PaymentService.validateTxn(PaymentService.java:11)   │ ← throw site
+│     at PaymentService.processPayment(PaymentService.java:7) │ ← caller
+│     at PaymentService.main(PaymentService.java:3)           │ ← root caller
+└─────────────────────────────────────────────────────────────┘
+Read bottom → top to trace cause.
+Read top → bottom to trace propagation.
+```
+
+---
+
+### 🔬 Thread Termination — Not JVM Termination
+
+```java
+public class Server {
+    public static void main(String[] args) throws InterruptedException {
+
+        Thread worker = new Thread(() -> {
+            System.out.println("Worker started");
+            throw new RuntimeException("worker crashed");
+            // ← Default handler prints this, worker thread dies
+        });
+
+        worker.start();
+        Thread.sleep(100);
+
+        // Main thread still alive — JVM still running
+        System.out.println("Main still running");
+    }
+}
+```
+
+**Output:**
+```
+Worker started
+Exception in thread "Thread-0" java.lang.RuntimeException: worker crashed
+    at Server.lambda$main$0(Server.java:6)
+    at java.lang.Thread.run(Thread.java:834)
+Main still running                             ← JVM did NOT die
+```
+
+🔴 **Prod consequence:** Thread pool worker crashes silently. Pool spawns a replacement thread. Feature handled by that thread stops working. No alert fires. Requests queue up. Looks like a slow memory leak or thread starvation.
+
+---
+
+### 💻 Customizing Default Handler — Production Pattern
+
+```java
+// Set for a specific thread
+Thread worker = new Thread(task);
+worker.setUncaughtExceptionHandler((thread, ex) -> {
+    logger.error("Thread {} died: {}", thread.getName(), ex.getMessage(), ex);
+    alertingService.page("CRITICAL: thread death in payment service");
+});
+
+// Set globally for ALL threads
+Thread.setDefaultUncaughtExceptionHandler((thread, ex) -> {
+    logger.error("UNHANDLED EXCEPTION in thread {}", thread.getName(), ex);
+    metrics.increment("unhandled.exceptions");
+    // DO NOT swallow — re-throw or alert
+});
+```
+
+```
+Priority of UncaughtExceptionHandler lookup:
+  1. thread.getUncaughtExceptionHandler()   ← thread-specific (highest priority)
+  2. thread's ThreadGroup
+  3. Thread.getDefaultUncaughtExceptionHandler()  ← global fallback
+  4. ThreadGroup parent chain → root → System.err  ← JDK default
+```
+
+---
+
+### 🔬 Multi-Thread Default Handling
+
+```java
+public class MultiThreaded {
+    public static void main(String[] args) throws InterruptedException {
+
+        Thread t1 = new Thread(() -> {
+            System.out.println("T1 running");
+            int[] arr = new int[3];
+            arr[10] = 1;                         // ArrayIndexOutOfBoundsException
+        }, "payment-worker");
+
+        Thread t2 = new Thread(() -> {
+            for (int i = 0; i < 5; i++) {
+                System.out.println("T2 tick: " + i);
+                try { Thread.sleep(200); } catch (InterruptedException e) {}
+            }
+        }, "heartbeat-worker");
+
+        t1.start();
+        t2.start();
+    }
+}
+```
+
+**Output (interleaved):**
+```
+T1 running
+T2 tick: 0
+Exception in thread "payment-worker" java.lang.ArrayIndexOutOfBoundsException
+    at MultiThreaded.lambda$main$0(MultiThreaded.java:7)
+T2 tick: 1
+T2 tick: 2
+T2 tick: 3
+T2 tick: 4
+```
+
+`payment-worker` dies. `heartbeat-worker` keeps going. JVM exits only when **all non-daemon threads** finish.
+
+---
+
+### 📊 Default vs Custom Handler
+
+| | Default Handler | Custom Handler |
+|--|----------------|----------------|
+| **Output** | `System.err` | Anywhere — logger, alerting |
+| **Format** | JDK hardcoded format | Your format |
+| **Thread action** | Dies (always) | Dies (always) — handler doesn't prevent death |
+| **Metrics** | None | ✅ Can increment counters |
+| **Alerting** | None | ✅ Can page on-call |
+| **Per thread** | ❌ | ✅ `thread.setUncaughtExceptionHandler()` |
+| **Global** | ✅ (ThreadGroup root) | ✅ `Thread.setDefaultUncaughtExceptionHandler()` |
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — Exceptions are objects, so they live on the heap**
+
+```java
+try {
+    throw new RuntimeException("fail");
+} catch (RuntimeException e) {
+    // e is a reference to an object on the heap
+    // It has fields, methods, can be passed around, stored, logged
+    RuntimeException stored = e;   // still alive — GC won't collect
+    store(stored);                 // prod anti-pattern: storing exceptions
+}
+```
+
+Storing exceptions in collections (e.g., for batch processing) keeps their entire **stack trace** in memory — each stack trace is a `StackTraceElement[]` array. Under load, this causes memory pressure.
+
+---
+
+**🪤 Trap 2 — `Error` is also `Throwable` — you CAN catch it**
+
+```java
+try {
+    recursiveMethod();
+} catch (StackOverflowError e) {
+    // compiles and runs — but almost always wrong
+    // stack is already destroyed — any method call here may throw again
+}
+```
+
+Catching `Error` is legal Java but almost always dangerous. The JVM is in an undefined state. Logging, cleanup, or recovery attempts can themselves fail.
+
+---
+
+**🪤 Trap 3 — Exception object creation is expensive, not the throw**
+
+```java
+// The SLOW part is new SomeException() — not throw
+// Because new SomeException() calls fillInStackTrace()
+// which walks the entire call stack and captures it as an array
+
+// In hot paths (e.g., loop of 1M iterations):
+for (int i = 0; i < 1_000_000; i++) {
+    try {
+        riskyOp();
+    } catch (Exception e) { }    // creating + capturing stack trace 1M times
+}
+// This is a known prod performance killer
+```
+
+Fix used in prod: Override `fillInStackTrace()` to return `this` (no-op) in custom exceptions used for flow control — but this is itself an anti-pattern signal.
+
+**🪤 Trap 4 — Local variables in unwound frames are not immediately GC'd**
+
+```java
+void fetchUser(String userId) {
+    byte[] largeBuffer = new byte[50 * 1024 * 1024]; // 50MB
+    riskyOp();   // throws — frame unwound
+    // largeBuffer local variable gone
+    // BUT: object on heap survives until GC runs
+    // Under load: many exceptions = many 50MB objects surviving until next GC
+    // → GC pressure → stop-the-world pauses in prod
+}
+```
+
+Frame destruction removes the **reference** from the stack. The object stays on heap until GC. If exceptions fire frequently in a hot path, large allocations inside those methods cause GC pressure.
+
+---
+
+**🪤 Trap 5 — Stack trace captured at `new`, not at `throw`**
+
+```java
+// Anti-pattern seen in prod codebases:
+Exception e = new RuntimeException("fail");  // ← stack trace captured HERE
+// ... 50 lines of code later ...
+throw e;                                     // ← thrown here, but trace points above
+```
+
+`fillInStackTrace()` runs at **object construction**, not at `throw`. If you create an exception object far from where you throw it, the stack trace is **misleading** — it points to the creation site, not the problem site.
+
+---
+
+**🪤 Trap 6 — Each thread has its own stack — exception in one thread doesn't propagate to another**
+
+```java
+Thread worker = new Thread(() -> {
+    throw new RuntimeException("worker failed");  // kills THIS thread only
+});
+worker.start();
+
+// Main thread continues running
+// RuntimeException is GONE unless:
+//   1. UncaughtExceptionHandler is set
+//   2. Future.get() is used (wraps in ExecutionException)
+```
+
+Prod scenario: Executor thread pool. Task throws unchecked exception. Thread silently dies. Pool replaces thread. No log, no alert, no stack trace — unless `UncaughtExceptionHandler` is registered. Silent failure in production.
+
+---
+
+**🪤 Trap 7 — StackOverflowError is a stack mechanism failure**
+
+```java
+void recurse() {
+    recurse();   // each call pushes a frame
+}
+// JVM has fixed stack size per thread (default: 512KB–1MB)
+// Frames accumulate until stack memory exhausted
+// JVM throws StackOverflowError
+// Ironically: throwing the error needs stack space too
+// Caught in a very shallow frame — hence it IS catchable
+```
+
+```
+Default thread stack sizes:
+  -Xss512k  (Linux default)
+  -Xss1m    (common prod setting)
+
+Tuning: java -Xss2m MyApp
+```
+
+**🪤 Trap 7 — `main` thread death doesn't kill daemon threads — reversed**
+
+```java
+public static void main(String[] args) {
+    Thread daemon = new Thread(() -> {
+        while (true) {
+            System.out.println("daemon tick");
+            try { Thread.sleep(100); } catch (InterruptedException e) {}
+        }
+    });
+    daemon.setDaemon(true);
+    daemon.start();
+
+    throw new RuntimeException("main died");
+    // main thread dies → JVM sees no non-daemon threads left
+    // → JVM exits → daemon thread killed mid-tick → no stack trace for daemon
+}
+```
+
+Daemon thread gets **no uncaught exception handler call** if JVM exits. Its death is silent even if it had work in progress.
+
+---
+
+**🪤 Trap 8 — Default handler output goes to `System.err`, not `System.out`**
+
+```java
+System.out.println("before");
+throw new RuntimeException("crash");
+System.out.println("after");    // never prints
+```
+
+In prod, `System.out` and `System.err` may be **routed to different log files** or different log levels. Default exception output goes to `System.err`. If ops team monitors only `System.out` log → exception output is **invisible** in monitoring dashboards.
+
+---
+
+**🪤 Trap 9 — Exception in `main` with non-daemon threads still running**
+```java
+public static void main(String[] args) {
+    Thread t = new Thread(() -> {
+        try { Thread.sleep(5000); } catch (InterruptedException e) {}
+        System.out.println("non-daemon done");
+    });
+    t.start();  // non-daemon — keeps JVM alive
+
+    throw new RuntimeException("main crashed");
+    // main thread dies → stack trace printed
+    // BUT JVM stays alive — non-daemon thread still running
+    // "non-daemon done" prints 5 seconds later
+    // JVM exits only after that
+}
+```
+
+JVM exit condition: **all non-daemon threads finished** — not "main thread finished."
+
+---
+
+**🪤 Trap 10 — `System.exit()` in uncaught exception handler skips shutdown hooks**
+
+```java
+Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+    logger.error("crash", e);
+    System.exit(1);   // ← skips finally blocks in OTHER threads
+                      // ← runs shutdown hooks (Runtime.addShutdownHook)
+                      // ← does NOT run finally in crashed thread (already dead)
+});
+```
+
+`System.exit()` triggers shutdown hooks but **does not run `finally` blocks** in threads that are still executing. Connection pools, file handles in other threads may not close cleanly.
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Stack — call stack unwinding**
+
+The JVM maintains a **call stack** per thread. Each method call = one **stack frame** pushed. When an exception is thrown:
+
+```
+Stack before throw:
+┌─────────────────┐  ← top
+│  methodC frame  │  → exception thrown here
+├─────────────────┤
+│  methodB frame  │  → no handler → popped
+├─────────────────┤
+│  methodA frame  │  → no handler → popped
+├─────────────────┤
+│  main() frame   │  → no handler → popped → thread dies
+└─────────────────┘
+
+Each pop = JVM checking if frame has matching catch block.
+No match = frame destroyed = local variables GONE.
+This is "stack unwinding."
+```
+
+`fillInStackTrace()` walks this stack at the moment of `new Exception()` and captures it as `StackTraceElement[]` — that's why deep call stacks produce long stack traces and why exception creation is O(n) in stack depth.
+
+**Underlying primitive: Stack (LIFO) — call stack is literally a stack data structure**
+
+```
+Push  = method call   (LIFO — last called, first to unwind)
+Pop   = method return OR frame destroyed during unwinding
+
+Stack overflow = stack capacity exceeded
+  → JVM: StackOverflowError
+  → OS:  SIGSEGV (segmentation fault on native stack)
+
+Stack depth in stack trace = stack height at throw moment
+  → Deep trace = long call chain = O(n) fillInStackTrace() cost
+```
+
+The JVM runtime stack maps directly to the OS thread stack in HotSpot. Each frame is a contiguous memory block. Stack grows **downward** in memory. `StackOverflowError` = stack pointer crossed the guard page.
+
+**Underlying primitive: Chain of Responsibility pattern + Thread metadata**
+
+Default exception handling is literally the **Chain of Responsibility** design pattern:
+
+```
+Exception not handled
+       │
+       ▼
+Thread's own UncaughtExceptionHandler?  → handle → done
+       │ no
+       ▼
+Thread's ThreadGroup handler?           → handle → done
+       │ no
+       ▼
+Parent ThreadGroup handler?             → handle → done
+       │ no (reached root)
+       ▼
+Thread.defaultUncaughtExceptionHandler? → handle → done
+       │ no
+       ▼
+ThreadGroup.uncaughtException() root    → System.err + thread death
+```
+
+Each link in the chain either handles or passes up. Same pattern as servlet filter chains, Spring exception resolvers, logging handler chains.
+---

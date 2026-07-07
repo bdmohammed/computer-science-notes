@@ -1,0 +1,1055 @@
+---
+title: Python Module Execution & Initialization
+slug: computer-languages/python/internals/module-execution
+description: Master how Python loads modules, executes top-level code, handles `__init__.py`, and manages the "Static" lifecycle. Understand `__name__ == "__main__"` and circular imports.
+sidebar:
+  label: "Module Flow"
+  badge:
+    text: Python Internals
+    variant: tip
+tags: [python, modules, initialization, static, imports, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## ⚡ Python Module Execution Flow
+
+> **Python doesn't have "static blocks."** Instead, **module-level code** (code not inside a function or class) executes **top-to-bottom** when the module is first imported. This is Python's equivalent of Static Control Flow.
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of importing a module as **running a script**.  
+1. **Create Module Object**: An empty namespace is created.  
+2. **Execute Top-Level Code**: Lines run sequentially. Functions/Classes are defined (but not called).  
+3. **Cache**: The module is stored in `sys.modules`. Future imports reuse this object (no re-execution).  
+⚠️ If you call a function during definition, it runs immediately!
+</Aside>
+
+---
+
+## 🔬 The Execution Lifecycle
+
+```
+IMPORT TRIGGERED (import my_module)
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  CHECK sys.modules                          │
+│  Already loaded? → Return cached object     │
+│  Not loaded? → Continue...                  │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 1 — EXECUTION (Top → Bottom)         │
+│  1. Execute assignments (x = 10)            │
+│  2. Execute def/class statements            │
+│     (Defines objects, doesn't run body)     │
+│  3. Execute bare logic (print, calls)       │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 2 — CACHING                          │
+│  Store module in sys.modules                │
+│  Return module object to importer           │
+└─────────────────────────────────────────────┘
+```
+
+### The Golden Rule 📜
+**Module-level code runs ONCE**, the first time the module is imported.
+
+---
+
+## 💻 Real-World Code — The "Trap" Pattern
+
+In Java, you worry about forward references. In Python, you worry about **execution order**.
+
+<Code lang="python" title="config.py — Watch the order!" code={`
+# config.py
+
+def load_timeout():
+    # ⚠️ TRAP: max_retries is NOT defined yet if called during module load
+    # But wait! In Python, functions are just objects. 
+    # The BODY of load_timeout() doesn't run until CALLED.
+    print(f"load_timeout called — max_retries = {max_retries}")
+    return 30
+
+# Phase 1: Execution starts
+timeout = load_timeout()  # ❌ NameError: name 'max_retries' is not defined
+
+max_retries = 3
+`} />
+
+**Output:**
+```text
+NameError: name 'max_retries' is not defined
+```
+
+<Code lang="python" title="✅ Fix: Define before use" code={`
+# config.py
+
+max_retries = 3  # Define first
+
+def load_timeout():
+    print(f"load_timeout called — max_retries = {max_retries}")
+    return 30
+
+timeout = load_timeout()  # ✅ Works!
+`} />
+
+<Aside type="danger">
+**🚨 Production Bug**: Unlike Java, Python doesn't give you a "default value" for undefined variables. It throws a `NameError` immediately. Always define variables before using them in module-level code.
+</Aside>
+
+---
+
+## 🛑 Forward References & Scoping
+
+Python uses **lexical scoping**. You can't use a variable before it's assigned in the current scope.
+
+<CardGrid>
+  <Card title="❌ Direct Use Before Definition" icon="error">
+    ```python
+    print(i)  # ❌ NameError
+    i = 10
+    ```
+  </Card>
+  
+  <Card title="✅ Function Body is Lazy" icon="approve-check">
+    ```python
+    def show():
+        print(i)  # ✅ No error here! (Code not executed yet)
+
+    i = 10
+    
+    show()  # ✅ Prints 10 (Executed after i is defined)
+    ```
+  </Card>
+
+  <Card title="⚠️ The Global Trap" icon="caution">
+    ```python
+    x = 10
+    def update():
+        x = 20  # Creates LOCAL x, doesn't touch global x
+        
+    update()
+    print(x)  # Prints 10 (Global unchanged)
+    
+    # Fix: Use 'global' keyword
+    def update_real():
+        global x
+        x = 20
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔁 Package Initialization (`__init__.py`)
+
+In Java, static blocks run when a class loads. In Python, **`__init__.py`** runs when a **package** is imported.
+
+<Code lang="python" title="Package Structure" code={`
+my_package/
+├── __init__.py
+├── module_a.py
+└── module_b.py
+`} />
+
+<Code lang="python" title="__init__.py Execution" code={`
+# my_package/__init__.py
+
+print("Package Initializing...")
+
+# You can initialize package-level state here
+API_KEY = "secret"
+
+# You can import submodules to expose them conveniently
+from . import module_a
+from . import module_b
+
+# ⚠️ Avoid heavy logic here! It runs on EVERY import of the package.
+`} />
+
+<Aside type="note">
+**Key Insight**: Importing `my_package` runs `__init__.py`. Importing `my_package.module_a` also runs `__init__.py` first (if not already run).
+</Aside>
+
+---
+
+## 🔀 Circular Imports — The Python Killer
+
+Java handles circular static dependencies with default values (0/null). Python crashes with `ImportError`.
+
+<Code lang="python" title="❌ Circular Import Crash" code={`
+# a.py
+import b  # Tries to load b
+
+def func_a():
+    return "A"
+
+print(b.func_b())  # ❌ AttributeError: module 'b' has no attribute 'func_b'
+                   # Because b is still loading!
+
+# b.py
+import a  # Tries to load a (already in progress)
+
+def func_b():
+    return "B"
+`} />
+
+### ✅ Fixes for Circular Imports
+
+<CardGrid>
+  <Card title="Fix 1: Move Import Inside Function" icon="rocket">
+    ```python
+    # a.py
+    def func_a():
+        import b  # Delayed import
+        return b.func_b()
+    ```
+  </Card>
+  
+  <Card title="Fix 2: Refactor Shared Code" icon="shield">
+    ```python
+    # shared.py
+    def common_logic(): ...
+
+    # a.py
+    import shared
+
+    # b.py
+    import shared
+    # No circular dependency!
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔧 The `if __name__ == "__main__":` Guard
+
+This is Python's equivalent of the `main()` method entry point, but it's a **conditional check**.
+
+<Code lang="python" title="Script vs. Module" code={`
+# my_script.py
+
+def main():
+    print("Running App...")
+
+# This code runs ONLY if executed directly:
+# python my_script.py
+if __name__ == "__main__":
+    main()
+
+# If imported:
+# import my_script
+# The code inside 'if' is SKIPPED.
+`} />
+
+<Aside type="tip">
+**Why use it?**  
+It allows a file to be both a **reusable module** and a **standalone script**. Without it, importing the module would accidentally trigger your app logic.
+</Aside>
+
+---
+
+## 🔩 Internals — `sys.modules` Cache
+
+Python caches every imported module in a dictionary called `sys.modules`.
+
+```python
+import sys
+print(sys.modules.keys())
+```
+
+- **First Import**: Code executes. Module object created. Added to cache.
+- **Second Import**: Python checks cache. Finds module. Returns it immediately. **Code does NOT run again.**
+
+<Code lang="python" title="Singleton Behavior" code={`
+# singleton.py
+print("Initializing Singleton...")
+data = []
+
+# main.py
+import singleton  # Prints "Initializing..."
+import singleton  # Silent (Cached)
+singleton.data.append(1)
+`} />
+
+---
+
+## 🏭 SDE/SRE Relevance & Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Lazy Initialization" icon="rocket">
+    ```python
+    # Avoid heavy work at import time
+    _db_connection = None
+
+    def get_db():
+        global _db_connection
+        if _db_connection is None:
+            _db_connection = create_expensive_connection()
+        return _db_connection
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: DSA Precomputation" icon="shield">
+    ```python
+    # primes.py
+    # Compute once at import time
+    PRIMES = sieve_of_eratosthenes(10000)
+
+    # Usage
+    from primes import PRIMES
+    # Fast lookup, no recomputation
+    ```
+  </Card>
+
+  <Card title="Anti-Pattern: Side Effects in Imports" icon="error">
+    ```python
+    # bad_module.py
+    import os
+    os.system("rm -rf /")  # 😱 Runs on import!
+
+    # Good: Put logic in functions
+    def clean_temp():
+        os.system("rm -rf /tmp/*")
+    ```
+  </Card>
+
+  <Card title="Anti-Pattern: Mutable Module State" icon="caution">
+    ```python
+    # config.py
+    settings = {"debug": True}
+
+    # app.py
+    import config
+    config.settings["debug"] = False
+
+    # other.py
+    import config
+    print(config.settings["debug"])  # False (Shared state!)
+    # ⚠️ Hard to debug. Prefer immutable configs or dependency injection.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Execution Order" icon="information">
+    ```text
+    Q: When does module code run?
+    A: Top-to-bottom, only once, on first import.
+    
+    Q: Does importing a module twice run it twice?
+    A: No. It's cached in sys.modules.
+    ```
+  </Card>
+  
+  <Card title="Circular Imports" icon="shield">
+    ```text
+    Q: How do you fix circular imports?
+    A: 1. Move import inside function (lazy).
+       2. Refactor shared code into a third module.
+       3. Merge modules if they are too coupled.
+    ```
+  </Card>
+
+  <Card title="__name__ == '__main__'" icon="rocket">
+    ```text
+    Q: What does this guard do?
+    A: Prevents code from running when the file is imported as a module.
+    
+    Q: What is __name__ when imported?
+    A: It equals the module name (e.g., "my_module").
+    ```
+  </Card>
+
+  <Card title="Common Traps" icon="caution">
+    ```text
+    Q: Can I use a variable before defining it?
+    A: No. NameError. Python is interpreted line-by-line.
+    
+    Q: Do classes execute their body on import?
+    A: Yes. The class body runs to define methods/attrs.
+       But methods themselves don't run until called.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+PYTHON MODULE FLOW CHECKLIST
+
+1. Trigger:
+   import my_module
+
+2. Check Cache:
+   Is it in sys.modules?
+   Yes → Return cached object.
+   No → Create new module object.
+
+3. Execute Top-Level Code:
+   - Variables assigned.
+   - Functions/Classes defined (body skipped).
+   - Bare statements (print, calls) executed.
+
+4. Cache:
+   Add to sys.modules.
+
+5. Subsequent Imports:
+   Skip execution. Return cached object.
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Keep module-level code minimal. Use functions.
+2. ✅ Use `if __name__ == "__main__":` for scripts.
+3. ✅ Avoid circular imports by refactoring.
+4. ✅ Be careful with mutable global state in modules.
+
+Mastering module flow prevents "ImportError" nightmares and ensures your app starts predictably. 🐍✨
+</Aside>
+
+---
+
+# ⚙️ Python Static Control Flow
+
+---
+
+## 🧠 Mental Model First
+
+```
+STATIC CONTROL FLOW = execution that happens at DEFINITION TIME
+                      not at instance creation or method call time
+
+Two completely different timelines in Python:
+
+┌─────────────────────────────────────────────────────────────────┐
+│  STATIC TIME (definition time)                                  │
+│    When Python encounters class/def/import/decorator           │
+│    Happens ONCE — when module is imported                      │
+│    Order: top-to-bottom within each scope                      │
+│                                                                 │
+│  RUNTIME (execution time)                                       │
+│    When functions/methods are called                           │
+│    When objects are instantiated                               │
+│    Happens on every invocation                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Java equivalent:
+  static { }  blocks  →  Python module/class body execution
+  static fields       →  Python class variables
+  static initializer  →  Python class body + metaclass hooks
+```
+
+---
+
+## 1️⃣ Module-Level Static Execution
+
+```python
+# module.py — everything runs TOP TO BOTTOM when imported
+
+print("1: module start")          # runs at import time
+
+CONSTANT = 42                      # bound at import time
+
+def helper():                      # function OBJECT created at import time
+    print("helper called")         # body NOT run at import time
+
+print("2: after function def")     # runs at import time
+
+class MyClass:                     # class body runs at import time
+    print("3: inside class body")  # runs at import time
+    x = 10                         # class variable bound at import time
+
+print("4: after class def")        # runs at import time
+
+if __name__ == "__main__":
+    print("5: main guard")         # runs only when run directly
+    helper()                       # function body runs NOW
+```
+
+```python
+import module
+# OUTPUT:
+# 1: module start
+# 2: after function def
+# 3: inside class body
+# 4: after class def
+# (5 skipped — module imported, not run directly)
+```
+
+```
+STATIC EXECUTION ORDER at import:
+  1. Module body top → bottom
+  2. Class body top → bottom (when class statement reached)
+  3. Decorator applied immediately after def/class
+  4. __init_subclass__ triggered at subclass definition
+  5. Metaclass __new__ / __init__ during class creation
+```
+
+---
+
+## 2️⃣ Class Body Execution — Static Context
+
+```python
+print("BEFORE class Foo")
+
+class Foo:
+    print("  A: class body start")          # runs at class creation
+
+    class_var = 10                           # bound at class creation
+    print(f"  B: class_var = {class_var}")  # runs at class creation
+
+    def method(self):                        # function object created
+        print("  method body")              # NOT run now
+
+    computed = [x**2 for x in range(5)]     # runs at class creation
+    print(f"  C: computed = {computed}")
+
+    print("  D: class body end")
+
+print("AFTER class Foo")
+```
+
+```
+OUTPUT:
+BEFORE class Foo
+  A: class body start
+  B: class_var = 10
+  C: computed = [0, 1, 4, 9, 16]
+  D: class body end
+AFTER class Foo
+```
+
+### 🔬 What Happens During Class Creation
+
+```
+class Foo(Base, metaclass=Meta):
+    body
+
+STATIC STEPS:
+  1. Evaluate base classes → (Base,)
+  2. Determine metaclass   → Meta (or type if default)
+  3. Prepare namespace     → Meta.__prepare__(name, bases)
+  4. Execute class body    → exec(body, namespace)
+  5. Create class object   → Meta.__new__(Meta, name, bases, namespace)
+  6. Initialize class      → Meta.__init__(cls, name, bases, namespace)
+  7. Trigger subclass hook → Base.__init_subclass__(cls)
+  8. Apply class decorators→ Foo = decorator(Foo)
+  9. Bind name             → STORE_NAME 'Foo'
+```
+
+---
+
+## 3️⃣ Decorator Application — Static Time
+
+```python
+def log_class(cls):
+    print(f"  [decorator] wrapping {cls.__name__}")
+    return cls
+
+def log_method(func):
+    print(f"  [decorator] wrapping {func.__name__}")
+    return func
+
+print("BEFORE class")
+
+@log_class                                    # applied AFTER class body
+class Service:
+    print("  service body start")
+
+    @log_method                               # applied AFTER function def
+    def process(self):
+        print("    process called")           # NOT run yet
+
+    @log_method
+    def validate(self):
+        print("    validate called")
+
+    print("  service body end")
+
+print("AFTER class")
+```
+
+```
+OUTPUT:
+BEFORE class
+  service body start
+  [decorator] wrapping process        ← after process def
+  [decorator] wrapping validate       ← after validate def
+  service body end
+  [decorator] wrapping Service        ← after entire class body
+AFTER class
+```
+
+```
+DECORATOR ORDER:
+  1. Function body defined
+  2. Innermost decorator applied first
+  3. Outer decorators applied outward
+
+@A
+@B
+@C
+def foo(): ...
+→ foo = A(B(C(foo)))   executed at DEFINITION TIME
+  C applied first, then B, then A
+```
+
+---
+
+## 4️⃣ Inheritance Static Flow — `__init_subclass__`
+
+```python
+class Plugin:
+    _registry: dict = {}
+
+    def __init_subclass__(cls, category: str = "general", **kwargs):
+        super().__init_subclass__(**kwargs)
+        print(f"  [static] registering {cls.__name__} as '{category}'")
+        Plugin._registry[category] = cls
+
+
+print("BEFORE subclasses")
+
+class AuthPlugin(Plugin, category="auth"):        # triggers __init_subclass__
+    print("  AuthPlugin body")
+
+class CachePlugin(Plugin, category="cache"):      # triggers __init_subclass__
+    print("  CachePlugin body")
+
+print("AFTER subclasses")
+print(f"Registry: {Plugin._registry}")
+```
+
+```
+OUTPUT:
+BEFORE subclasses
+  AuthPlugin body
+  [static] registering AuthPlugin as 'auth'
+  CachePlugin body
+  [static] registering CachePlugin as 'cache'
+AFTER subclasses
+Registry: {'auth': <class 'AuthPlugin'>, 'cache': <class 'CachePlugin'>}
+```
+
+---
+
+## 5️⃣ Metaclass Static Flow
+
+```python
+class Meta(type):
+    def __new__(mcs, name, bases, namespace):
+        print(f"  Meta.__new__: creating {name}")
+        cls = super().__new__(mcs, name, bases, namespace)
+        return cls
+
+    def __init__(cls, name, bases, namespace):
+        print(f"  Meta.__init__: initializing {name}")
+        super().__init__(name, bases, namespace)
+
+    def __init_subclass__(cls, **kwargs):
+        print(f"  Meta.__init_subclass__: {cls}")
+        super().__init_subclass__(**kwargs)
+
+
+print("BEFORE class A")
+
+class A(metaclass=Meta):
+    print("  A body")
+
+print("BEFORE class B")
+
+class B(A):
+    print("  B body")
+```
+
+```
+OUTPUT:
+BEFORE class A
+  A body
+  Meta.__new__: creating A
+  Meta.__init__: initializing A
+BEFORE class B
+  B body
+  Meta.__new__: creating B
+  Meta.__init__: initializing B
+```
+
+---
+
+## 6️⃣ Full Static + Runtime Order — Class Hierarchy
+
+```python
+class Base:
+    print("1. Base class body")
+
+    base_var = "base"
+    print(f"2. base_var = {base_var!r}")
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        print(f"6. Base.__init_subclass__: {cls.__name__}")
+
+    def __init__(self):
+        print("9. Base.__init__")
+        super().__init__()
+
+
+class Child(Base):
+    print("3. Child class body")
+
+    child_var = "child"
+    print(f"4. child_var = {child_var!r}")
+
+    def __init__(self):
+        print("8. Child.__init__ start")
+        super().__init__()
+        print("10. Child.__init__ end")
+
+
+print("5. module level: after class definitions")
+print("7. creating instance...")
+obj = Child()
+print("11. instance created")
+```
+
+```
+OUTPUT:
+1. Base class body
+2. base_var = 'base'
+3. Child class body
+4. child_var = 'child'
+6. Base.__init_subclass__: Child    ← static hook fires
+5. module level: after class definitions
+7. creating instance...
+8. Child.__init__ start             ← runtime begins
+9. Base.__init__                    ← runtime
+10. Child.__init__ end              ← runtime
+11. instance created
+```
+
+---
+
+## 7️⃣ Static Conditional Imports
+
+```python
+# Pattern 1 — platform-specific code:
+import sys
+
+if sys.platform == "win32":
+    import winreg                      # only on Windows
+    def get_registry_value(key): ...
+else:
+    def get_registry_value(key):
+        raise NotImplementedError("Windows only")
+
+
+# Pattern 2 — optional dependency:
+try:
+    import ujson as json               # fast JSON if available
+except ImportError:
+    import json                        # fallback to stdlib
+
+data = json.loads('{"key": "value"}') # same call — different impl
+
+
+# Pattern 3 — version-specific:
+import sys
+
+if sys.version_info >= (3, 11):
+    from tomllib import loads          # stdlib in 3.11+
+else:
+    from tomli import loads            # third-party for older
+
+
+# Pattern 4 — TYPE_CHECKING guard:
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                      # False at runtime — only for type checker
+    from mymodule import HeavyClass    # no circular import at runtime
+
+def process(obj: "HeavyClass") -> None:  # annotation is string (lazy)
+    ...
+```
+
+---
+
+## 8️⃣ Class Variable vs Instance Variable — Static Order Matters
+
+```python
+class Counter:
+    count = 0                           # CLASS variable — static, shared
+
+    def __init__(self, name: str):
+        Counter.count += 1             # modifies class var
+        self.name = name               # instance var — runtime
+        self.id = Counter.count        # reads class var at runtime
+
+
+print(f"Before: count={Counter.count}")  # 0
+a = Counter("A")
+b = Counter("B")
+print(f"After:  count={Counter.count}")  # 2
+print(f"a.id={a.id}, b.id={b.id}")       # 1, 2
+```
+
+```python
+# Static class variable with mutable default — shared trap:
+class Config:
+    tags: list = []                 # ONE list — shared by all instances!
+
+c1 = Config()
+c2 = Config()
+c1.tags.append("admin")
+print(c2.tags)                      # ["admin"] — c2 sees c1's change!
+
+# Fix — initialize in __init__ (runtime, per-instance):
+class Config:
+    def __init__(self):
+        self.tags: list = []        # each instance gets own list
+```
+
+---
+
+## 🔬 `@classmethod` and `@staticmethod` in Static Flow
+
+```python
+class Registry:
+    _items: list = []                  # class var — created ONCE at class def
+
+    @classmethod
+    def register(cls, item) -> None:   # cls = Registry at call time
+        cls._items.append(item)
+
+    @staticmethod
+    def validate(item) -> bool:        # no cls, no self — pure function
+        return item is not None
+
+    @classmethod
+    def create_with(cls, *items):      # factory — called at runtime
+        for item in items:
+            if cls.validate(item):
+                cls.register(item)
+        return cls()
+
+r = Registry.create_with("a", None, "b")
+Registry._items   # ["a", "b"]
+```
+
+---
+
+## 🔬 `__slots__` — Static Memory Layout
+
+```python
+class Node:
+    __slots__ = ('val', 'next')    # layout decided at class creation (static)
+
+    def __init__(self, val):
+        self.val  = val
+        self.next = None
+```
+
+```
+__slots__ defined at class definition (STATIC TIME):
+  CPython creates slot descriptors in type object
+  No __dict__ allocated for instances
+  Memory layout fixed — cannot be changed after class creation
+
+If you add to __slots__ after class created:
+  Node.__slots__ += ('prev',)   # AttributeError or no effect
+                                 # layout already compiled
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Static class initialization for memoization table:
+class FibMatrix:
+    """
+    Matrix exponentiation for Fibonacci.
+    Matrix defined at class definition time — ONCE.
+    """
+    BASE_MATRIX = [[1, 1], [1, 0]]    # static, created once
+
+    @classmethod
+    def _multiply(cls, A, B):
+        return [[A[0][0]*B[0][0] + A[0][1]*B[1][0],
+                 A[0][0]*B[0][1] + A[0][1]*B[1][1]],
+                [A[1][0]*B[0][0] + A[1][1]*B[1][0],
+                 A[1][0]*B[0][1] + A[1][1]*B[1][1]]]
+
+    @classmethod
+    def compute(cls, n: int) -> int:
+        if n == 0: return 0
+        result = [[1, 0], [0, 1]]    # identity matrix
+        base   = cls.BASE_MATRIX
+        while n:
+            if n & 1:
+                result = cls._multiply(result, base)
+            base = cls._multiply(base, base)
+            n >>= 1
+        return result[0][1]
+```
+
+```python
+# Trie — static node structure:
+class TrieNode:
+    __slots__ = ('children', 'is_end')   # static layout — 26 children max
+
+    def __init__(self):
+        self.children: dict = {}
+        self.is_end: bool = False
+
+class Trie:
+    def __init__(self):
+        self._root = TrieNode()
+
+    def insert(self, word: str) -> None:
+        node = self._root
+        for ch in word:
+            if ch not in node.children:
+                node.children[ch] = TrieNode()
+            node = node.children[ch]
+        node.is_end = True
+```
+
+---
+
+## 💀 Interview Trap 1 — Class Body Accesses Name Before Assignment
+
+```python
+class Broken:
+    x = 10
+    y = x + 5      # ✅ x is already defined above in class body
+
+class AlsoBroken:
+    y = x + 5      # 💥 NameError: name 'x' is not defined
+    x = 10         # x defined AFTER y — class body is top-to-bottom
+```
+
+```python
+# Methods are different — they don't run at class creation:
+class Fine:
+    def method(self):
+        return self.x + self.y   # ✅ fine — runs at call time, not def time
+
+    x = 10
+    y = 20
+    # x and y exist by the time method() is ever called
+```
+
+---
+
+## 💀 Interview Trap 2 — Mutable Class Variable Shared Across Instances
+
+```python
+class Node:
+    children = []              # 💀 ONE list for ALL Node instances
+
+a = Node()
+b = Node()
+a.children.append("left")
+print(b.children)             # ["left"] ← b's "children" changed!
+
+# Why? children is a CLASS variable — defined ONCE at class body execution
+# All instances share the same list object
+
+# Fix:
+class Node:
+    def __init__(self):
+        self.children = []    # instance variable — each gets own list
+```
+
+---
+
+## 💀 Interview Trap 3 — Decorator Executed at Definition, Not Call Time
+
+```python
+import time
+
+def timer(func):
+    start = time.time()        # 💀 captured at DECORATION time, not call time
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    print(f"Decorated {func.__name__} at t={time.time() - start:.4f}s")
+    return wrapper
+
+@timer
+def process():
+    pass
+
+# "Decorated process at t=0.0001s" prints at import time
+# NOT when process() is called
+
+# Fix — capture time inside wrapper:
+def timer(func):
+    import functools
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()    # captured at CALL time
+        result = func(*args, **kwargs)
+        print(f"{func.__name__}: {time.time()-start:.4f}s")
+        return result
+    return wrapper
+```
+
+---
+
+## 💀 Interview Trap 4 — `__init_subclass__` Fires Before `__init__`
+
+```python
+class Base:
+    registry = {}
+
+    def __init_subclass__(cls, name="", **kwargs):
+        super().__init_subclass__(**kwargs)
+        Base.registry[name or cls.__name__] = cls
+        # cls is registered HERE — before any instance is created
+        # before cls.__init__ ever runs
+
+
+class Child(Base, name="child"):
+    def __init__(self, value):
+        self.value = value
+
+# TRAP: Child is already in registry before Child(42) is ever called:
+print(Base.registry)   # {'child': <class 'Child'>}  ← already registered
+c = Child(42)          # instance creation happens AFTER static registration
+```
+
+---
+
+## 💀 Interview Trap 5 — `TYPE_CHECKING` Blocks Are Not Runtime
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:               # False at runtime — this block NEVER executes
+    from heavy_module import HeavyClass   # never imported at runtime!
+
+def process(obj: HeavyClass):   # 💀 NameError at runtime if annotation evaluated
+    return obj.compute()
+
+# Fix 1 — use string annotation:
+def process(obj: "HeavyClass"):       # ✅ string not evaluated at runtime
+
+# Fix 2 — from __future__ import annotations:
+from __future__ import annotations   # ALL annotations become strings lazily
+def process(obj: HeavyClass):        # ✅ HeavyClass not evaluated at runtime
+```
+
+---

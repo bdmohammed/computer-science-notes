@@ -1,0 +1,919 @@
+---
+title: Python Literals
+slug: computer-languages/python/language-fundamentals/literals
+description: Fixed values assigned directly to variables — Pythonic syntax, dynamic typing, and gotchas.
+sidebar:
+  label: "Literals"
+  badge:
+    text: Core
+    variant: tip
+tags: [python, literals, primitives, string, unicode, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+A **Literal** is a fixed value assigned directly in source code.
+
+- ✔ Represents constant data
+- ✔ Written directly in code
+- ✔ Python infers type dynamically at runtime
+
+<Code lang="python" title="What a literal looks like" code={`
+x = 10           # 10    → integer literal
+d = 10.5         # 10.5  → floating-point literal
+b = True         # True  → boolean literal (capitalized!)
+z = [1, 2, 3]   # [1,2,3]→ list literal  ← WARNING: NOT compile-time
+`} />
+
+```
+          SOURCE CODE
+               │
+        ┌──────▼──────┐
+        │  Tokenizer  │  ← recognizes literal tokens
+        └──────┬──────┘
+               │
+        ┌──────▼──────┐
+        │     AST     │  ← Constant(value=42) node
+        └──────┬──────┘
+               │
+        ┌──────▼──────┐
+        │  Bytecode   │  ← LOAD_CONST  (pulled from co_consts)
+        └─────────────┘
+```
+
+> Integer, float, string, bytes, bool, None literals → stored in `co_consts` of the code object at compile time. List/dict/set literals → bytecode **constructs them at runtime** every call.
+
+---
+
+## 🗺️ Classification
+
+| Literal | Example | Notes |
+|---------|---------|-------|
+| Integer | `10`, `0x1F`, `0b101`, `0o10` | Unlimited precision (no overflow) |
+| Floating Point | `10.5`, `1.5e3`, `3.14_15` | Default: `float` (IEEE 754 double) |
+| Boolean | `True`, `False` | Capitalized, singleton objects |
+| Character | `'A'`, `'\n'`, `'\u0041'` | **No char type** — single-char `str` |
+| String | `"Hello"`, `'Hi'`, `"""Multi"""` | Immutable, Unicode by default |
+| None | `None` | Singleton for "no value" (like Java `null`) |
+
+```
+┌──────────────────────────────────────────────────┐
+│              PYTHON LITERALS                     │
+│                                                  │
+│  Numeric    → int, float, complex               │
+│  Boolean    → True, False                       │
+│  String     → str, bytes, f-string, raw, etc.  │
+│  Sequence   → list, tuple                       │
+│  Mapping    → dict                              │
+│  Set        → set                               │
+│  None       → None                              │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Integer Literals
+
+Whole numbers. **Unlimited precision** — no `int`/`long` split like Java.
+
+### Number Systems
+| System      | Base | Prefix      | Allowed Values | Example  | Value |
+| ----------- | ---- | ----------- | -------------- | -------- | ----- |
+| Decimal     | 10   | none        | `0-9`          | `10`     | 10    |
+| Octal       | 8    | `0o` / `0O` | `0-7`          | `0o10`   | 8     |
+| Hexadecimal | 16   | `0x` / `0X` | `0-9`, `A-F`   | `0x10`   | 16    |
+| Binary      | 2    | `0b` / `0B` | `0-1`          | `0b1010` | 10    |
+
+### All Forms
+```python
+# Decimal (base 10)
+x = 1_000_000       # underscores for readability (3.6+)
+x = 255
+
+# Binary (base 2)
+x = 0b1111_0000     # → 240
+
+# Octal (base 8)
+x = 0o17            # → 15
+
+# Hexadecimal (base 16)
+x = 0xFF            # → 255
+x = 0xDEAD_BEEF     # → 3735928559
+```
+
+### 🔬 Internals — Compile-Time Constant Folding
+
+```python
+import dis
+
+def foo():
+    return 2 * 1024 * 1024
+
+dis.dis(foo)
+# LOAD_CONST   2097152   ← compiler folded 2*1024*1024 at compile time
+# RETURN_VALUE
+```
+
+> CPython's **peephole optimizer** (now `ast_optimizer`) folds constant expressions involving literals. `2 * 1024 * 1024` never executes at runtime — result already in `co_consts`.
+
+### Underscore Rules
+```python
+1_000_000     # ✅
+_1000         # ✅ (but this is an identifier, not a literal)
+1__000        # ❌ SyntaxError — consecutive underscores
+1_            # ❌ SyntaxError — trailing underscore
+0x_FF         # ❌ SyntaxError — after prefix
+```
+
+<Aside type="note">
+Python **is case-insensitive** for literal prefixes too — `0xFF`, `0Xff`, `0xff` all work identically.
+</Aside>
+
+# Super Short Mental Trick
+If you see a prefix, it's not decimal:  
+- `0o` → octal  
+- `0x` → hexadecimal  
+- `0b` → binary  
+
+> ⚠️ **Python vs Java**: Python uses `0o` for octal (not just `0`), preventing accidental octal interpretation!
+
+## Decimal
+```text
+123 = 1×10² + 2×10¹ + 3×10⁰ = 123
+```
+
+## Binary
+```text
+0b1010 = 1×2³ + 0×2² + 1×2¹ + 0×2⁰ = 10
+```
+
+## Octal
+```text
+0o10 = 1×8¹ + 0×8⁰ = 8
+```
+
+## Hexadecimal
+```text
+0x10 = 1×16¹ + 0×16⁰ = 16
+```
+
+---
+
+# Hex Digits
+
+| Hex | Decimal |
+| --- | ------- |
+| A–F | 10–15   |
+
+```text
+0xFF = 15×16¹ + 15×16⁰ = 255
+```
+
+<Code lang="python" title="Number system examples" code={`
+x = 10        # Decimal → 10
+y = 0o10      # Octal   → 8
+z = 0x10      # Hex     → 16
+w = 0b10      # Binary  → 2
+
+print(f"{x}----{y}----{z}")  # 10----8----16`} />
+
+#### Validity Quiz
+<Code lang="python" title="✅ Valid" code={`
+x = 0o777       # Octal (digits 0–7 only)
+x = 0xFACE      # Hex uppercase
+x = 0xbeef      # Hex lowercase
+x = 0xabb2cd    # Hex longer value
+x = 1_000_000   # Underscores for readability (PEP 515)
+`}/>
+
+<Code lang="python" title="❌ Invalid" 
+code={`
+x = 0o786       # SyntaxError: '8' not valid in octal
+x = 0xBeer      # SyntaxError: 'r' not a hex digit
+x = 010         # SyntaxError: leading zero in decimal (Python 3)
+`} />
+
+---
+
+### Underscore in Literals <Badge text="Python 3.6+" variant="success" />
+
+<Code lang="python" title="Underscore for readability (PEP 515)" code={`
+million    = 1_000_000          # ✅ readable!
+phone      = 98_765_43210       # ✅
+amount     = 1_23_456.78        # ✅
+binary     = 0b1111_0000_1010   # ✅
+
+# ⚠️ Rules — where underscore is NOT allowed:
+a = _100           # ❌ can't START with _
+b = 100_           # ❌ can't END with _
+c = 100_.00        # ❌ can't END before decimal
+d = 100._00        # ❌ can't START after decimal
+e = 0x_FF          # ❌ can't appear right after prefix
+f = 1_0_0          # ✅ valid (but pointless)
+`} />
+
+<Aside type="tip">
+**Python advantage**: No overflow for integers!  
+```python
+big = 9_000_000_000  # ✅ Works fine — no L suffix needed
+```
+Python integers automatically promote to arbitrary precision.
+</Aside>
+
+---
+
+## 2️⃣ Floating Point Literals
+
+- Real numbers (decimals). Default type is **`float`** (IEEE 754 double-precision).
+- **No suffix needed** — Python doesn't distinguish `float`/`double`.
+
+<Code lang="python" title="✅ Valid"
+code={`
+d  = 10.5           # float literal
+d2 = 10.5           # no 'd' suffix needed
+f  = 10.5           # no 'f' suffix — all floats are double-precision
+big   = 1.5e10      # scientific notation → 15000000000.0
+small = 1.5e-3      # scientific notation → 0.0015
+hex_float = 0x1.2p3 # ✅ Hex float (Python 3.6+): 1.125 × 2³ = 9.0
+.5              # → 0.5   (leading dot allowed)
+5.              # → 5.0   (trailing dot allowed)
+1_000.000_001   # underscores allowed
+`} />
+
+### 🔬 What the compiler stores
+
+```python
+import dis
+
+def foo():
+    return 3.14
+
+dis.dis(foo)
+# LOAD_CONST  3.14   ← IEEE 754 double stored in co_consts
+```
+
+```python
+# 3.14 in co_consts is stored as C double — already has precision error baked in
+import struct
+struct.pack('d', 3.14).hex()
+# '1f85eb51b81e0940'  ← actual bits stored
+```
+
+<Code lang="python" title="❌ Invalid"
+code={`
+# No compile-time type errors for float assignment!
+# But watch for precision issues:
+f = 10.5  # ✅ Valid — but it's a float, not a "double"
+`} />
+
+<Aside type="tip">
+**Memory trick:** *"Python floats are fearless — no suffix stress."*  
+- Integral literals auto-convert to float in expressions:
+```python
+d = 123.456         # ✅ valid
+d = 0o123.456       # ❌ SyntaxError: octal not allowed in float literals
+d = 0x123           # ✅ integer literal → auto-converted to float in float context
+d = 0xBeef          # ✅ → 48879.0
+```
+</Aside>
+
+<Aside type="danger">
+**Never use `float` for money** — same precision issues as Java:
+```python
+print(0.1 + 0.2)  # 0.30000000000000004 😱
+# Use Decimal for financial calculations:
+from decimal import Decimal
+print(Decimal('0.1') + Decimal('0.2'))  # 0.3 ✅
+```
+</Aside>
+
+---
+
+## 3️⃣ Character & String Literals
+
+> 🚨 **Python has no `char` type** — single characters are just length-1 strings.
+
+### String Forms (covers Java's char + String)
+
+<Code lang="python" title="All valid string/char forms" code={`
+c1 = 'A'           # Single-quoted string (length 1)
+c2 = chr(97)       # Convert Unicode code point → 'a'
+c3 = '\u0041'      # Unicode escape → 'A'
+c4 = '\n'          # Escape sequence → newline
+
+# Python also supports:
+s1 = "Hello"       # Double quotes
+s2 = '''Multi
+line'''            # Triple-quoted (no escaping needed)
+s3 = f"Value: {42}" # f-string (Python 3.6+)
+`} />
+
+<Code lang="python" title="✅ Valid"
+code={`
+ch  = 'A'
+ch2 = chr(65)          # → 'A'
+ch3 = '\u0041'         # Unicode → 'A'
+ch4 = '\ubeef'         # valid Unicode escape
+ch5 = '\u0061'         # → 'a'
+# No hex literal direct assignment to "char" — use chr():
+ch6 = chr(0xFace)      # ✅ if within valid Unicode range (0–0x10FFFF)
+`} />
+
+<Code lang="python" title="❌ Invalid / Gotchas"
+code={`
+ch = "A"          # ✅ Valid! But it's a str, not a "char"
+ch = a            # NameError: 'a' not defined (unless variable exists)
+ch = 'ab'         # ✅ Valid! But it's a 2-char string, not single char
+ch = ''           # ✅ Valid! Empty string (unlike Java char)
+ch = chr(65536)   # ✅ Valid! Python supports full Unicode (not limited to 0–65535)
+ch = \u0062       # SyntaxError: missing quotes
+ch = '\iface'     # DeprecationWarning / SyntaxError: invalid escape
+`} />
+
+### Escape Sequences (Same as Java ✅)
+
+| Escape | Meaning |
+|--------|---------|
+| `\n` | New line |
+| `\t` | Horizontal tab |
+| `\r` | Carriage return |
+| `\f` | Form feed |
+| `\b` | Backspace |
+| `\\` | Backslash |
+| `\'` | Single quote |
+| `\"` | Double quote |
+| `\0` | Null character |
+
+<Aside type="note">
+Python also supports **raw strings** to ignore escapes:  
+```python
+path = r"C:\Users\Name"  # Backslashes treated literally
+```
+</Aside>
+
+---
+
+## 4️⃣ String Literals & Text Blocks
+
+Sequence of characters, enclosed in **single `' '`, double `" "`, or triple `''' '''` / `""" """` quotes**.
+
+- Immutable — same as Java
+- Unicode by default (Python 3)
+- **f-strings** for interpolation (Python 3.6+)
+
+<Code lang="python" title="String basics" code={`
+# Regular
+s = "hello"
+s = 'hello'
+
+# Raw string — backslashes NOT processed
+r = r"C:\Users\name"    # ✅ → C:\Users\name
+r = "C:\Users\name"     # ⚠️  \U, \n processed → broken path on Windows
+
+# Bytes literal
+b = b"hello"            # bytes object, not str
+
+# Concatenation
+result = "Hello" + "World"  # "HelloWorld"
+
+# f-strings (Python's superpower 🔥)
+name = "Alice"
+age = 25
+info = f"{name} is {age} years old"  # "Alice is 25 years old"
+
+# Number + String = String (explicit conversion needed)
+mixed  = str(10) + "20"   # "1020"
+mixed2 = "10" + str(20)   # "1020"
+# Or use f-string: f"{10}{20}" → "1020"
+`} />
+
+### Multi-line Strings (Python's Text Blocks)
+
+<Code lang="python" title="Triple-quoted strings — clean & readable" code={`
+json = """
+{
+    "name": "Alice",
+    "age": 25
+}
+"""
+
+html = '''
+<html>
+    <body>Hello</body>
+</html>
+'''
+
+# Strip leading whitespace with textwrap.dedent if needed:
+import textwrap
+clean = textwrap.dedent(json)
+`} />
+
+### Escape Sequences
+
+| Escape | Meaning |
+|--------|---------|
+| `\n` | newline |
+| `\t` | tab |
+| `\r` | carriage return |
+| `\\` | literal backslash |
+| `\'` `\"` | literal quote |
+| `\0` | null character |
+| `\xHH` | hex char (1 byte) |
+| `\uHHHH` | Unicode (4 hex digits) |
+| `\UHHHHHHHH` | Unicode (8 hex digits) |
+| `\N{name}` | Unicode by name |
+
+```python
+"\u0041"        # 'A'
+"\N{SNOWMAN}"   # '☃'
+"\x41"          # 'A'
+```
+
+### 🔬 String Literal Concatenation — Compile-Time
+
+```python
+s = "hello" " " "world"    # adjacent string literals → merged at compile time
+# → "hello world"  (single str object in co_consts)
+
+# Useful for long strings without \ or +:
+query = (
+    "SELECT * FROM users "
+    "WHERE active = true "
+    "ORDER BY created_at"
+)
+```
+
+```python
+import dis
+
+def foo():
+    return "hello" " " "world"
+
+dis.dis(foo)
+# LOAD_CONST  'hello world'   ← already merged, single constant
+```
+
+> This is **not** string concatenation at runtime. The tokenizer merges adjacent string literals before AST is even built.
+
+### 🔬 f-string Internals (3.12 changed this)
+
+```python
+name = "Ali"
+f"Hello {name}!"
+```
+
+**Before Python 3.12:**
+```
+compiled to:  "Hello " + str(name) + "!"
+bytecode:     FORMAT_VALUE + BUILD_STRING opcodes
+```
+
+**Python 3.12+:**
+```
+new LOAD_FAST_AND_CLEAR + CALL_INTRINSIC_1
+f-strings now use a dedicated parser → faster, fewer allocations
+```
+
+```python
+# f-strings allow expressions, not just names
+f"{2 + 2}"              # "4"
+f"{obj.method()}"       # method called at runtime
+f"{value:.2f}"          # format spec
+f"{value!r}"            # calls repr()
+f"{'hi':>10}"           # "        hi"
+
+# Nested f-strings (3.12+)
+f"{'nested' if True else 'nope'}"
+```
+
+### 💀 f-string Trap — Lazy Evaluation at Call Site
+
+```python
+import logging
+
+# WRONG — always evaluates the f-string, even if DEBUG logs are disabled
+logging.debug(f"Processing {expensive_function()}")
+
+# CORRECT — lazy: only evaluates if DEBUG is enabled
+logging.debug("Processing %s", expensive_function())
+```
+
+> In prod with `INFO` level logging, the first version calls `expensive_function()` **every time** even though the log is never written. Real perf bug in high-frequency code paths.
+
+---
+
+## 5️⃣ Boolean Literals
+
+Only **two values** allowed: `True` or `False` (**capitalized!**).
+
+<Code lang="python" title="Boolean literals" code={`
+flag = True
+done = False
+
+# ✅ Pythonic idiom — truthiness checks
+if is_active:      # not: if is_active == True
+    pass
+if not is_empty:   # not: if is_empty == False
+    pass
+
+# ✅ Python treats many values as "truthy" / "falsy"
+if 1:              # ✅ True (non-zero numbers are truthy)
+    pass
+if 0:              # ❌ False (zero is falsy)
+    pass
+if "hello":        # ✅ True (non-empty string)
+    pass
+if "":             # ❌ False (empty string)
+    pass
+if []:             # ❌ False (empty list)
+    pass`} />
+
+> `True` and `False` are **keywords** (since Python 3, can't be reassigned) AND literals. Stored as `PyBoolObject` which subclasses `PyLongObject`.
+
+```python
+# Compiled as constants:
+import dis
+def foo(): return True
+dis.dis(foo)
+# LOAD_CONST  True   ← in co_consts
+```
+
+<Aside type="caution">
+`"True"` (with quotes) is a **string**, not a boolean.  
+`true` or `TRUE` → `NameError`. Python is **case-sensitive** for `True`/`False`.
+</Aside>
+
+---
+
+## 6️⃣ None Literal
+
+Represents the **absence of a value** (Python's `null`).
+
+<Code lang="python" title="None usage" code={`
+s   = None      # ✅ reference type
+arr = None      # ✅ list/array reference
+
+# Python doesn't have primitive vs reference distinction
+x = None        # ✅ Valid — any variable can be None
+b = None        # ✅ Valid
+
+# But operations may fail at runtime:
+# x + 1  # TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+
+# Use type hints + Optional for clarity (Python 3.5+):
+from typing import Optional
+def find_user(id: int) -> Optional[str]:
+    return None  # or return "Alice"
+`} />
+
+> Singleton. One `PyObject` for entire process lifetime. Always use `is None`, never `== None`.
+
+```python
+import dis
+def foo(): return None
+dis.dis(foo)
+# RETURN_CONST  None   ← special opcode in 3.12, was LOAD_CONST before
+```
+
+<Aside type="danger">
+**Common runtime crash in Python:**
+```python
+s = None
+len(s)   # 💥 TypeError: object of type 'NoneType' has no len()
+```
+Always check for `None` before calling methods:
+```python
+if s is not None:
+    print(len(s))
+# Or use: print(len(s) if s else 0)
+```
+</Aside>
+
+---
+
+## 7️⃣ Complex Literals
+
+```python
+3j          # → (0+3j)
+3.14j       # → (0+3.14j)
+1 + 2j      # → (1+2j)   ← actually int(1) + complex(2j), not a single literal
+```
+
+> `2j` alone is a literal. `1 + 2j` is an expression (addition of int literal + complex literal). The compiler constant-folds it anyway.
+
+---
+
+## 8 Bytes Literals
+
+```python
+b"hello"         # bytes
+b'\x00\xFF'      # hex bytes
+b'\n\t\r'        # escape sequences work
+rb"\raw\bytes"   # raw bytes — no escape processing
+```
+
+```python
+b"hello"[0]      # 104  (int, not char)
+b"hello"[0:2]    # b'he'  (bytes slice → bytes)
+```
+
+---
+
+## 8️⃣ Collection Literals — NOT Compile-Time Constants
+
+```python
+[1, 2, 3]     # list literal
+(1, 2, 3)     # tuple literal
+{1, 2, 3}     # set literal
+{"a": 1}      # dict literal
+```
+
+### 🔬 What bytecode actually does
+
+```python
+import dis
+
+def foo():
+    return [1, 2, 3]
+
+dis.dis(foo)
+# LOAD_CONST   1
+# LOAD_CONST   2
+# LOAD_CONST   3
+# BUILD_LIST   3        ← constructs new list at RUNTIME every call
+# RETURN_VALUE
+```
+
+```python
+def bar():
+    return (1, 2, 3)    # tuple of constants
+
+dis.dis(bar)
+# LOAD_CONST   (1, 2, 3)  ← ENTIRE TUPLE stored as single constant ✅
+# RETURN_VALUE
+```
+
+```
+┌─────────────────────────────────────────────────────────┐
+│           COMPILE-TIME vs RUNTIME                       │
+│                                                         │
+│  int/float/str/bytes/bool/None  →  co_consts (compile) │
+│  tuple of constants             →  co_consts (compile) │
+│  list  [...]                    →  BUILD_LIST (runtime) │
+│  dict  {...}                    →  BUILD_MAP  (runtime) │
+│  set   {...}                    →  BUILD_SET  (runtime) │
+└─────────────────────────────────────────────────────────┘
+```
+
+> This is why using a `tuple` as a constant lookup is faster than a `list` — the tuple is one `LOAD_CONST`, the list is N pushes + `BUILD_LIST`.
+
+```python
+# Real perf difference in tight loops:
+# Slow — list rebuilt every iteration
+for x in range(1_000_000):
+    if x % 2 in [0, 2, 4]:   # BUILD_LIST every iteration
+        pass
+
+# Fast — tuple loaded from co_consts once
+for x in range(1_000_000):
+    if x % 2 in (0, 2, 4):   # LOAD_CONST once
+        pass
+```
+
+---
+
+## 🔬 `co_consts` — Where Literals Live
+
+```python
+def foo():
+    x = 42
+    y = "hello"
+    z = 3.14
+    return (x, y, z)
+
+print(foo.__code__.co_consts)
+# (None, 42, 'hello', 3.14)
+#  ↑
+#  None always included (implicit return value)
+```
+
+> Every literal in a function body is deduplicated and stored in `co_consts` tuple on the `PyCodeObject`. The bytecode instruction `LOAD_CONST i` just indexes into this tuple — O(1), no hashing, no lookup.
+
+---
+
+
+## 🔬 Literal Type Compatibility (Python vs Java)
+
+| Concept | Java | Python |
+|---------|------|--------|
+| Type checking | Compile-time (static) | Runtime (dynamic) |
+| Integer overflow | Possible (`int` → `long`) | **Never** (unlimited precision) |
+| Float suffix | `f`/`d` required for `float` | No suffix needed |
+| Char vs String | Distinct types | No `char` — all are `str` |
+| Null safety | `null` only for references | `None` for any variable |
+| Octal prefix | `0` (error-prone) | `0o` (explicit, safer) |
+
+<Code lang="python" title="Python's dynamic flexibility" code={`
+# No compile-time range checks:
+b = 130          # ✅ Valid — no "byte" type; use int
+# But if you need byte-range validation, check manually:
+if not (-128 <= b <= 127):
+    raise ValueError("Out of byte range")
+
+# Float assignment — no suffix drama:
+f = 10.5         # ✅ Just works
+
+# Type hints are optional (for tooling, not enforcement):
+from typing import Union
+x: Union[int, float] = 10  # Hint only — runtime accepts anything
+`} />
+
+---
+
+## 🔥 Interview Traps (Python Edition)
+
+<CardGrid>
+  <Card title="Trap 1 — Mutable default arguments" icon="error">
+    ```python
+    def add_item(item, lst=[]):  # ❌ Shared list across calls!
+        lst.append(item)
+        return lst
+    
+    # Fix:
+    def add_item(item, lst=None):  # ✅
+        if lst is None:
+            lst = []
+        lst.append(item)
+        return lst
+    ```
+  </Card>
+  <Card title="Trap 2 — Octal prefix confusion" icon="error">
+    ```python
+    x = 0o10   # ✅ Octal = 8
+    x = 010    # ❌ SyntaxError in Python 3 (was octal in Python 2)
+    ```
+  </Card>
+  <Card title="Trap 3 — String vs char arithmetic" icon="error">
+    ```python
+    c = 'A' + 1       # ❌ TypeError: can't concat str + int
+    c = chr(ord('A') + 1)  # ✅ → 'B'
+    ```
+  </Card>
+  <Card title="Trap 4 — None vs False vs 0" icon="error">
+    ```python
+    if None:      # ❌ Falsy
+    if False:     # ❌ Falsy  
+    if 0:         # ❌ Falsy
+    if []:        # ❌ Falsy
+    if "":        # ❌ Falsy
+    
+    # But they're NOT equal:
+    None == False  # False
+    None == 0      # False
+    # Use 'is' for None checks:
+    if x is None:  # ✅ Correct
+    ```
+  </Card>
+  <Card title="Trap 5 — Mutable vs Immutable gotcha" icon="error">
+    ```python
+    a = "hello"
+    b = "hello"
+    a is b  # ✅ Often True (string interning)
+    
+    x = [1, 2]
+    y = [1, 2]
+    x is y  # ❌ False — different list objects
+    
+    # Prod scenario: modifying shared mutable default
+    cache = {}
+    def get_data(key, _cache=cache):  # ⚠️ _cache is shared!
+        if key not in _cache:
+            _cache[key] = expensive_fetch(key)
+        return _cache[key]
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**DSA connection — char/string literals:**  
+```python
+# Get ASCII/Unicode code point:
+ord('a')  # → 97
+chr(97)   # → 'a'
+
+# Pattern for frequency arrays (0–25 for a–z):
+index = ord(char) - ord('a')  # Foundation for counting sort, anagrams, sliding window
+
+# Python bonus: use collections.Counter for frequency maps!
+from collections import Counter
+freq = Counter("hello")  # {'h':1, 'e':1, 'l':2, 'o':1}
+```
+</Aside>
+
+<Aside type="success">
+🎯 **Quick Revision Cheat Sheet**
+```python
+# Literals at a glance:
+42              # int (unlimited precision)
+3.14            # float (double-precision)
+True, False     # bool (capitalized!)
+"hello"         # str (immutable, Unicode)
+None            # null equivalent
+
+# Number bases:
+0b1010          # binary → 10
+0o17            # octal  → 15  
+0xFF            # hex    → 255
+
+# Readability:
+1_000_000       # underscore separator (PEP 515)
+
+# Strings:
+f"{x}"          # f-string interpolation
+r"\path"        # raw string (ignore escapes)
+"""multi"""     # triple-quoted (text blocks)
+
+# Gotchas:
+# - No char type → use str of length 1
+# - No type suffixes (f, d, L)
+# - Octal = 0o (not 0)
+# - None checks: use 'is', not '=='
+```
+</Aside>
+```
+
+```python
+# Same value, same literal → CPython may or may not intern
+a = 256
+b = 256
+a is b      # True  ← small int cache
+
+a = 257
+b = 257
+a is b      # True  ← in same code block, compiler deduplicates co_consts!
+
+# But:
+def f(): return 257
+def g(): return 257
+f() is g()  # False ← different code objects, different co_consts
+```
+
+```python
+# Float literals — never cached
+a = 3.14
+b = 3.14
+a is b      # True  ← same code block, same co_consts slot
+            # False ← across functions/modules
+```
+
+> The deduplication of literals in `co_consts` is a **per-code-object** optimization. Never rely on `is` for comparing literal values across function boundaries.
+
+---
+
+## 💀 Interview Trap — Raw String Edge Case
+
+```python
+r"hello\"        # ❌ SyntaxError — raw string cannot end with odd number of backslashes
+r"hello\\"       # ✅ → 'hello\\'  (two chars: \ and \)
+r"hello\"world"  # ✅ → 'hello\\"world' — backslash doesn't escape quote in raw
+                 #     but it DOES prevent the quote from ending the string
+```
+
+> Raw strings process backslash as literal `\` **except** it still affects quote termination. A raw string ending in `\` is always a `SyntaxError`. This trips up regex writers.
+
+---
+
+## ✅ SDE Relevance
+
+| Topic | Level |
+|-------|-------|
+| Constant folding of numeric literals | 🟡 GOOD TO KNOW |
+| Tuple literal → co_consts, list → BUILD_LIST | 🔴 MUST KNOW |
+| f-string lazy eval in logging trap | 🔴 MUST KNOW |
+| Adjacent string literal merging | 🟡 GOOD TO KNOW |
+| Raw string backslash edge case | 🔴 MUST KNOW |
+| Float precision baked into literal | 🔴 MUST KNOW |
+| `is` across code objects for same literal | 🔴 MUST KNOW |
+| Tuple vs list in `in` operator (perf) | 🔴 MUST KNOW |
+| `\u`, `\N{}` Unicode escapes | 🟡 GOOD TO KNOW |
+| f-string 3.12 parser rewrite | 🟡 GOOD TO KNOW |
+
+---
+
+## 🔄 Key Conversion Summary
+
+| Java Concept | Python Equivalent | Notes |
+|--------------|-----------------|-------|
+| `int x = 10;` | `x = 10` | No type declaration needed |
+| `long l = 10L;` | `l = 10` | No `L` suffix — ints auto-scale |
+| `float f = 10.5f;` | `f = 10.5` | No `f` suffix needed |
+| `boolean b = true;` | `b = True` | Capitalized keywords |
+| `char c = 'A';` | `c = 'A'` | Returns `str` of length 1 |
+| `String s = "Hi";` | `s = "Hi"` | Same syntax, more features |
+| `null` | `None` | Singleton, use `is None` to check |
+| `010` (octal) | `0o10` | Explicit prefix prevents bugs |
+| Underscores | `1_000_000` | Same PEP 515 support ✅ |
+| Text blocks | `"""..."""` | Triple quotes, no `"` prefix needed |
+| Unicode `\uXXXX` | `\uXXXX` | Same escape syntax ✅ |
+
+> 🚀 **Pro Tip**: Python's dynamic typing removes most compile-time literal traps, but introduces runtime gotchas. Always write tests for edge cases!

@@ -1,0 +1,1250 @@
+---
+title: Python Class Design Patterns (The "Pythonic" Modifiers)
+slug: computer-languages/python/oop/class-design
+description: Master encapsulation, immutability, abstract base classes, and final classes in Python. Understand why Python has no `public`/`private` keywords but achieves the same goals through convention and tools.
+sidebar:
+  label: "Class Design"
+  badge:
+    text: OOP Fundamentals
+    variant: tip
+tags: [python, oop, encapsulation, abc, dataclasses, final, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🏛️ Class "Modifiers" in Python
+
+> **Python does not have access modifiers** like `public`, `private`, or `protected`.  
+> Instead, it relies on **conventions**, **naming patterns**, and **standard library tools** (`abc`, `typing`) to control visibility and behavior.
+
+```text
+Java Concept          → Python Equivalent
+│
+├── Access Control
+│   ├── public        → Default (no underscore)
+│   ├── protected     → _single_leading_underscore (Convention)
+│   └── private       → __double_leading_underscore (Name Mangling)
+│
+├── Behavioral Constraints
+│   ├── abstract      → ABC (Abstract Base Classes) + @abstractmethod
+│   ├── final         → @final (from typing, Python 3.8+)
+│   └── static class  → No direct equivalent (Use Module-level functions)
+│
+└── Immutability
+    ├── final fields  → @dataclass(frozen=True) or properties
+    └── strictfp      → N/A (Python floats are IEEE 754 double)
+```
+
+<Aside type="success">
+🎯 **Python Philosophy**: *"We're all consenting adults here."*  
+Access control is about **communicating intent**, not enforcing restrictions. If a user wants to access `_private` data, Python won't stop them, but it warns them: "You're breaking the contract."
+</Aside>
+
+---
+
+## 🔓 Access Control Conventions
+
+### 1. Public (Default)
+Any attribute without leading underscores is **public**.
+
+```python
+class User:
+    def __init__(self, name):
+        self.name = name  # ✅ Public
+
+user = User("Alice")
+print(user.name)  # ✅ Accessible everywhere
+```
+
+### 2. Protected (`_single_underscore`)
+A convention indicating **"Internal Use Only"**. It’s not enforced, but linters and IDEs will warn you.
+
+```python
+class Database:
+    def __init__(self):
+        self._connection_string = "secret_db_url"  # ⚠️ Protected
+
+    def _connect(self):  # ⚠️ Protected method
+        print("Connecting...")
+
+db = Database()
+db._connect()  # ✅ Works, but don't do it!
+```
+
+<Aside type="note">
+**Interview Tip**: In Python, `_protected` is a **gentleman's agreement**. It says "This is an implementation detail; don't rely on it in external code." It does NOT prevent access.
+</Aside>
+
+### 3. Private (`__double_underscore`)
+Triggers **Name Mangling**. The interpreter renames the attribute to `_ClassName__attr` to avoid accidental overrides in subclasses.
+
+```python
+class BankAccount:
+    def __init__(self):
+        self.__balance = 1000  # 🔒 "Private"
+
+    def get_balance(self):
+        return self.__balance
+
+acc = BankAccount()
+# print(acc.__balance)  # ❌ AttributeError: 'BankAccount' object has no attribute '__balance'
+
+# ✅ How to access (Name Mangling):
+print(acc._BankAccount__balance)  # 1000 (Don't do this in production!)
+```
+
+<Aside type="caution">
+**Why Name Mangling?**  
+It’s not for security. It’s to prevent **namespace collisions** in inheritance. If a parent class uses `__method`, a child class can define its own `__method` without overwriting the parent’s.
+</Aside>
+
+---
+
+## 🎭 Abstract Base Classes (ABCs)
+
+Python uses the `abc` module to create abstract classes, similar to Java’s `abstract` keyword.
+
+<Code lang="python" title="Defining an Abstract Class" code={`
+from abc import ABC, abstractmethod
+
+class Shape(ABC):  # ✅ Inherits from ABC
+    @abstractmethod
+    def area(self):
+        """Subclasses MUST implement this"""
+        pass
+    
+    @abstractmethod
+    def perimeter(self):
+        pass
+    
+    def describe(self):
+        """Concrete method (optional to override)"""
+        return f"I am a shape with area {self.area()}"
+
+# ❌ Cannot instantiate abstract class
+# s = Shape()  # 💥 TypeError: Can't instantiate abstract class Shape
+
+class Circle(Shape):
+    def __init__(self, radius):
+        self.radius = radius
+    
+    def area(self):
+        return 3.14 * self.radius ** 2
+    
+    def perimeter(self):
+        return 2 * 3.14 * self.radius
+
+# ✅ Concrete subclass works
+c = Circle(5)
+print(c.describe())  # "I am a shape with area 78.5"
+`} />
+
+<Aside type="tip">
+**Key Difference from Java**:  
+- Java: `abstract` keyword on class and methods.  
+- Python: Inherit from `ABC` and use `@abstractmethod` decorator.  
+- Python ABCs can also enforce **structural subtyping** (duck typing) via registration.
+</Aside>
+
+---
+
+## 🔒 Final Classes & Methods
+
+Python 3.8+ introduced `@final` in the `typing` module. It’s a **hint for type checkers** (like `mypy`), not a runtime enforcement.
+
+<Code lang="python" title="Using @final" code={`
+from typing import final
+
+@final
+class ImmutableConfig:
+    """This class should not be subclassed"""
+    def __init__(self, version):
+        self.version = version
+
+# class BadConfig(ImmutableConfig):  # ❌ mypy error: Cannot inherit from final class
+#     pass
+
+class BaseService:
+    @final
+    def start(self):
+        """This method cannot be overridden"""
+        print("Starting service...")
+
+class MyService(BaseService):
+    # def start(self):  # ❌ mypy error: Cannot override final method
+    #     pass
+    pass
+`} />
+
+<Aside type="caution">
+**Runtime vs. Static Check**:  
+- `@final` does **NOT** raise an error at runtime. You *can* subclass a `@final` class if you ignore type hints.  
+- Use it to communicate design intent to other developers and catch errors early with `mypy`.
+</Aside>
+
+---
+
+## 🧊 Immutability (The Python "Final Field")
+
+Python doesn’t have `final` fields. To create immutable objects, use `dataclasses` or `namedtuple`.
+
+<Code lang="python" title="Immutable Data Classes" code={`
+from dataclasses import dataclass
+
+@dataclass(frozen=True)  # ✅ Makes all fields immutable
+class Point:
+    x: int
+    y: int
+
+p = Point(1, 2)
+# p.x = 10  # ❌ FrozenInstanceError: cannot assign to field 'x'
+`} />
+
+---
+
+## 🆚 Java vs Python: Modifier Comparison
+
+<table>
+  <thead>
+    <tr>
+      <th>Concept</th>
+      <th>Java</th>
+      <th>Python</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Public</strong></td>
+      <td><code>public class Foo</code></td>
+      <td><code>class Foo</code> (Default)</td>
+    </tr>
+    <tr>
+      <td><strong>Protected</strong></td>
+      <td><code>protected void bar()</code></td>
+      <td><code>def _bar(self)</code> (Convention)</td>
+    </tr>
+    <tr>
+      <td><strong>Private</strong></td>
+      <td><code>private int x</code></td>
+      <td><code>self.__x</code> (Name Mangling)</td>
+    </tr>
+    <tr>
+      <td><strong>Abstract Class</strong></td>
+      <td><code>abstract class Foo</code></td>
+      <td><code>class Foo(ABC)</code></td>
+    </tr>
+    <tr>
+      <td><strong>Abstract Method</strong></td>
+      <td><code>abstract void bar()</code></td>
+      <td><code>@abstractmethod def bar(self)</code></td>
+    </tr>
+    <tr>
+      <td><strong>Final Class</strong></td>
+      <td><code>final class Foo</code></td>
+      <td><code>@final class Foo</code> (Type Hint)</td>
+    </tr>
+    <tr>
+      <td><strong>Static Class</strong></td>
+      <td><code>static class Inner</code></td>
+      <td>Use module-level functions or <code>@staticmethod</code></td>
+    </tr>
+    <tr>
+      <td><strong>Strictfp</strong></td>
+      <td><code>strictfp class Calc</code></td>
+      <td>N/A (Floats are always IEEE 754 double)</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you make a method private in Python?" icon="information">
+    Use double underscores: `def __method(self)`.  
+    This triggers **name mangling** (`_Class__method`), making it harder (but not impossible) to access from outside.
+  </Card>
+  
+  <Card title="Q: What is the difference between `_var` and `__var`?" icon="approve-check">
+    - `_var`: **Convention**. "Please don't touch this." Used for internal APIs.  
+    - `__var`: **Name Mangling**. "I really mean it." Used to avoid subclass naming conflicts.
+  </Card>
+
+  <Card title="Q: Can you instantiate an Abstract Base Class?" icon="error">
+    **NO ❌**. If a class inherits from `ABC` and has unimplemented `@abstractmethod`s, Python raises a `TypeError` at instantiation.
+  </Card>
+
+  <Card title="Q: Does `@final` prevent subclassing at runtime?" icon="backspace">
+    **NO ❌**. It’s a **static type hint**. `mypy` will complain, but the Python interpreter will allow it. It’s for developer communication, not enforcement.
+  </Card>
+
+  <Card title="Q: How do you create a constant in Python?" icon="shield">
+    Python has no `const` keyword.  
+    - Convention: Use `UPPER_CASE` variables.  
+    - Enforcement: Use `@dataclass(frozen=True)` or properties with no setter.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Template Method Pattern
+
+Just like Java, Python uses ABCs for the **Template Method Pattern**.
+
+<Code lang="python" title="Sorting Algorithm Framework" code={`
+from abc import ABC, abstractmethod
+
+class SortingAlgorithm(ABC):
+    def sort(self, arr: list[int]) -> list[int]:
+        """Template Method"""
+        if not arr: return []
+        self.pre_process(arr)
+        self.do_sort(arr)  # Abstract step
+        self.post_process(arr)
+        return arr
+
+    def pre_process(self, arr): pass  # Hook
+    def post_process(self, arr): pass # Hook
+    
+    @abstractmethod
+    def do_sort(self, arr): pass
+
+class BubbleSort(SortingAlgorithm):
+    def do_sort(self, arr):
+        n = len(arr)
+        for i in range(n):
+            for j in range(0, n-i-1):
+                if arr[j] > arr[j+1]:
+                    arr[j], arr[j+1] = arr[j+1], arr[j]
+
+# Usage
+algo = BubbleSort()
+print(algo.sort([5, 3, 8, 1]))  # [1, 3, 5, 8]
+`} />
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Goal | Python Technique |
+|------|------------------|
+| **Public** | `def method(self)` |
+| **Protected** | `def _method(self)` |
+| **Private** | `def __method(self)` |
+| **Abstract Class** | `class Foo(ABC)` |
+| **Abstract Method** | `@abstractmethod` |
+| **Final Class** | `@final` (from `typing`) |
+| **Immutable Object** | `@dataclass(frozen=True)` |
+| **Static Method** | `@staticmethod` |
+| **Class Method** | `@classmethod` |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Python access control is **conventional**, not enforced.
+2. ✅ Use `_` for internal use, `__` for name mangling.
+3. ✅ Use `ABC` + `@abstractmethod` for interfaces/blueprints.
+4. ✅ Use `@final` to signal "do not subclass" to type checkers.
+5. ✅ Use `frozen=True` dataclasses for immutability.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the output/error" code={`
+from abc import ABC, abstractmethod
+
+# Q1: Access Control
+class Test:
+    def __init__(self):
+        self.public = 1
+        self._protected = 2
+        self.__private = 3
+
+t = Test()
+print(t.public)       # ?
+print(t._protected)   # ?
+# print(t.__private)  # ? (Commented out to avoid crash)
+
+# Q2: Abstract Class
+class Base(ABC):
+    @abstractmethod
+    def speak(self): pass
+
+# b = Base()  # ? (What happens?)
+
+# Q3: Name Mangling
+class Parent:
+    def __init__(self):
+        self.__val = 10
+
+class Child(Parent):
+    def __init__(self):
+        super().__init__()
+        self.__val = 20  # Does this overwrite Parent's __val?
+
+c = Child()
+print(c._Parent__val)   # ?
+print(c._Child__val)    # ?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 
+1 (Public is accessible)
+2 (Protected is accessible by convention)
+# AttributeError (Private is mangled to _Test__private)
+
+Q2: 
+TypeError: Can't instantiate abstract class Base with abstract method speak
+
+Q3: 
+10 (Parent's mangled variable)
+20 (Child's mangled variable)
+# Name mangling prevents collision!
+```
+</details>
+
+> 🚀 **Final Wisdom**: In Python, modifiers are about **communication**. `_protected` says "Stay out," `@final` says "Don't extend," and `ABC` says "Implement me." Trust your teammates, follow conventions, and use type checkers to keep your code robust! 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔒 Python Class Modifiers
+
+---
+
+## 🧠 Mental Model First
+
+```
+Python has NO access control keywords like Java/C++.
+  Java:   private, protected, public, final, static, abstract
+  Python: ZERO enforcement keywords — only CONVENTIONS + MECHANISMS
+
+What Python actually has:
+┌─────────────────────────────────────────────────────────────┐
+│  NAMING CONVENTIONS   →  signal intent, no enforcement      │
+│    _single            →  "internal use" (convention)        │
+│    __double           →  name mangling (weak protection)    │
+│    __dunder__         →  protocol/magic methods             │
+│                                                             │
+│  DECORATORS           →  actual behavior modification       │
+│    @classmethod       →  bound to class, not instance       │
+│    @staticmethod      →  no binding at all                  │
+│    @property          →  controlled attribute access        │
+│    @abstractmethod    →  forces subclass implementation     │
+│    @dataclass         →  auto-generate boilerplate          │
+│    @final             →  signals no override (3.8+)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Access Convention — Naming Modifiers
+
+### `public` — No Prefix (Default)
+
+```python
+class BankAccount:
+    def __init__(self):
+        self.balance = 1000       # public — accessible everywhere
+        self.owner = "Ali"        # public
+
+acc = BankAccount()
+acc.balance         # ✅ direct access — no restriction
+acc.owner = "Bob"   # ✅ direct mutation — no restriction
+```
+
+---
+
+### `_single_underscore` — Internal / Protected (Convention Only)
+
+```python
+class BankAccount:
+    def __init__(self):
+        self._balance = 1000      # "internal" — don't touch from outside
+        self._transaction_log = []
+
+    def _validate_amount(self, amount):   # internal method
+        return amount > 0
+
+acc = BankAccount()
+acc._balance        # ✅ Python ALLOWS it — no enforcement
+acc._balance = 9999 # ✅ Python ALLOWS mutation too
+```
+
+```
+_single means:
+  "I, the author, consider this internal.
+   If you access it, you're on your own.
+   It may change without notice."
+
+Used for:
+  ├── Internal helper methods
+  ├── Protected attributes (subclasses can use)
+  ├── Module-level internals (from x import * skips _names)
+  └── "Private" by convention
+```
+
+---
+
+### `__double_underscore` — Name Mangling
+
+```python
+class BankAccount:
+    def __init__(self):
+        self.__balance = 1000     # triggers name mangling
+
+acc = BankAccount()
+acc.__balance                     # 💥 AttributeError
+acc._BankAccount__balance         # ✅ still accessible — mangled name
+```
+
+### 🔬 Name Mangling Internals
+
+```
+At COMPILE TIME (not runtime), CPython rewrites:
+  __attr  inside class MyClass  →  _MyClass__attr
+
+This happens in:
+  - Instance attributes:  self.__x     → self._ClassName__x
+  - Class attributes:     __class_var  → _ClassName__class_var
+  - Method definitions:   def __method → def _ClassName__method
+```
+
+```python
+import dis, ast
+
+class Foo:
+    def __init__(self):
+        self.__x = 42
+
+# CPython rewrites self.__x to self._Foo__x at compile time
+# Check:
+foo = Foo()
+foo.__dict__              # {'_Foo__x': 42}  ← mangled name in __dict__
+foo._Foo__x               # 42  ← direct access to mangled name
+```
+
+```
+WHY NAME MANGLING EXISTS:
+  Prevents accidental override in subclasses — NOT security.
+
+class Base:
+    def __init__(self):
+        self.__id = "base_secret"   # _Base__id
+
+class Child(Base):
+    def __init__(self):
+        super().__init__()
+        self.__id = "child_id"      # _Child__id — DIFFERENT attribute!
+
+c = Child()
+c._Base__id    # "base_secret"   ← base attribute preserved
+c._Child__id   # "child_id"      ← child attribute separate
+```
+
+---
+
+### `__dunder__` — Protocol / Magic Methods
+
+```python
+class Vector:
+    def __init__(self, x, y):         # constructor
+        self.x, self.y = x, y
+
+    def __repr__(self):               # developer repr
+        return f"Vector({self.x}, {self.y})"
+
+    def __str__(self):                # user string
+        return f"({self.x}, {self.y})"
+
+    def __add__(self, other):         # + operator
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __len__(self):                # len()
+        return 2
+
+    def __eq__(self, other):          # == operator
+        return self.x == other.x and self.y == other.y
+```
+
+```
+__dunder__ names:
+  ├── Reserved by Python — don't invent your own
+  ├── Called implicitly by operators, built-ins, protocols
+  ├── Defined in class body — affect ALL instances
+  └── Never call directly: use +, len(), str(), == etc.
+```
+
+---
+
+## 2️⃣ `@staticmethod` — No Binding
+
+```python
+class MathUtils:
+    @staticmethod
+    def add(a, b):          # NO self, NO cls parameter
+        return a + b
+
+    @staticmethod
+    def is_prime(n):
+        if n < 2: return False
+        for i in range(2, int(n**0.5) + 1):
+            if n % i == 0: return False
+        return True
+```
+
+```python
+# Call via class OR instance:
+MathUtils.add(3, 4)         # 7  ← class call
+MathUtils().add(3, 4)       # 7  ← instance call (self ignored)
+```
+
+### 🔬 Internals — Descriptor Protocol
+
+```
+@staticmethod wraps function in a StaticMethod descriptor.
+When accessed via class or instance:
+  StaticMethod.__get__(instance, owner) → returns raw function
+  No binding occurs — neither instance nor class passed.
+
+vs regular method:
+  Function.__get__(instance, owner) → returns bound method (with self)
+```
+
+```python
+import inspect
+
+class Foo:
+    def regular(self): pass
+    @staticmethod
+    def static(): pass
+
+inspect.isfunction(Foo.__dict__['regular'])  # True (unbound)
+inspect.isfunction(Foo.__dict__['static'])   # True (raw function)
+
+type(Foo.regular)   # <class 'function'>  (unbound in Python 3)
+type(Foo.static)    # <class 'function'>  (same — no wrapper visible)
+
+type(Foo().regular) # <class 'method'>    (bound — self injected)
+type(Foo().static)  # <class 'function'>  (NO binding — still raw)
+```
+
+### When to Use
+
+```python
+class UserService:
+    @staticmethod
+    def _hash_password(raw: str) -> str:
+        import hashlib
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def create_user(self, name, password):
+        hashed = self._hash_password(password)  # call via self or class
+        ...
+```
+
+```
+Use @staticmethod when:
+  ├── Method doesn't need class or instance state
+  ├── Logically belongs to the class (namespace grouping)
+  └── Pure utility — could be a module function but lives here
+```
+
+---
+
+## 3️⃣ `@classmethod` — Bound to Class
+
+```python
+class Date:
+    def __init__(self, year, month, day):
+        self.year  = year
+        self.month = month
+        self.day   = day
+
+    @classmethod
+    def from_string(cls, date_string):    # cls = the class itself
+        year, month, day = map(int, date_string.split("-"))
+        return cls(year, month, day)      # cls() → calls __init__
+
+    @classmethod
+    def today(cls):
+        import datetime
+        d = datetime.date.today()
+        return cls(d.year, d.month, d.day)
+```
+
+```python
+d = Date.from_string("2024-05-17")   # Date.from_string called with cls=Date
+d.year    # 2024
+```
+
+### 🔬 `cls` vs `self` — The Critical Difference
+
+```python
+class Animal:
+    sound = "..."
+
+    @classmethod
+    def speak(cls):
+        print(f"{cls.__name__} says {cls.sound}")
+
+class Dog(Animal):
+    sound = "Woof"
+
+class Cat(Animal):
+    sound = "Meow"
+
+Animal.speak()  # Animal says ...
+Dog.speak()     # Dog says Woof    ← cls = Dog, not Animal
+Cat.speak()     # Cat says Meow    ← cls = Cat, not Animal
+```
+
+```
+@classmethod receives the ACTUAL class — even when inherited.
+This enables polymorphic factory methods.
+
+If it were @staticmethod — cls wouldn't exist, always creates Animal.
+If it were a regular method — self would be an instance, not the class.
+```
+
+### Alternative Constructors Pattern
+
+```python
+class Config:
+    def __init__(self, data: dict):
+        self._data = data
+
+    @classmethod
+    def from_file(cls, path: str) -> "Config":
+        import json
+        with open(path) as f:
+            return cls(json.load(f))
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        import os
+        return cls({k: v for k, v in os.environ.items()})
+
+    @classmethod
+    def empty(cls) -> "Config":
+        return cls({})
+```
+
+---
+
+## 4️⃣ `@property` — Controlled Attribute Access
+
+```python
+class Temperature:
+    def __init__(self, celsius: float):
+        self._celsius = celsius   # private backing store
+
+    @property
+    def celsius(self) -> float:           # GETTER
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value: float):      # SETTER
+        if value < -273.15:
+            raise ValueError("Below absolute zero!")
+        self._celsius = value
+
+    @celsius.deleter
+    def celsius(self):                    # DELETER
+        del self._celsius
+
+    @property
+    def fahrenheit(self) -> float:        # computed property — no setter
+        return self._celsius * 9/5 + 32
+```
+
+```python
+t = Temperature(100)
+t.celsius              # 100.0   ← calls getter
+t.celsius = 200        # calls setter — validates
+t.celsius = -300       # 💥 ValueError: Below absolute zero!
+t.fahrenheit           # 212.0   ← computed on access, read-only
+t.fahrenheit = 100     # 💥 AttributeError: can't set attribute
+del t.celsius          # calls deleter
+```
+
+### 🔬 Internals — Descriptor Protocol
+
+```
+@property creates a property object — a DATA DESCRIPTOR.
+
+class property:
+    def __get__(self, obj, objtype=None):
+        if obj is None: return self   # class access → return property itself
+        return self.fget(obj)         # instance access → call getter
+
+    def __set__(self, obj, value):
+        self.fset(obj, value)
+
+    def __delete__(self, obj):
+        self.fdel(obj)
+
+Data descriptor (has __set__) takes priority over instance __dict__.
+This means property always intercepts — instance can't shadow it.
+```
+
+```python
+# Order of attribute lookup:
+# 1. Data descriptors on type (property, __set__ defined)
+# 2. Instance __dict__
+# 3. Non-data descriptors on type (methods, __get__ only)
+
+# property is DATA descriptor → always wins over instance dict
+```
+
+### Cached Property (3.8+)
+
+```python
+from functools import cached_property
+
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+
+    @cached_property
+    def area(self):             # computed ONCE, cached in instance __dict__
+        import math
+        return math.pi * self.radius ** 2
+
+c = Circle(5)
+c.area      # computed: 78.539...
+c.area      # returned from __dict__ cache — no recompute
+```
+
+```
+cached_property is a NON-DATA descriptor (no __set__).
+First access: computes → stores in instance.__dict__["area"]
+Subsequent access: instance.__dict__ takes priority over non-data descriptor
+→ returns cached value without calling fget again.
+```
+
+---
+
+## 5️⃣ `@abstractmethod` — Forces Implementation
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):                       # inherit from ABC
+    @abstractmethod
+    def area(self) -> float:            # must be implemented by subclass
+        ...
+
+    @abstractmethod
+    def perimeter(self) -> float:
+        ...
+
+    def describe(self):                 # concrete method — shared
+        return f"Area={self.area():.2f}, Perimeter={self.perimeter():.2f}"
+
+
+class Circle(Shape):
+    def __init__(self, r):
+        self.r = r
+
+    def area(self) -> float:            # ✅ implemented
+        import math
+        return math.pi * self.r ** 2
+
+    def perimeter(self) -> float:       # ✅ implemented
+        import math
+        return 2 * math.pi * self.r
+
+
+class Rectangle(Shape):
+    def __init__(self, w, h):
+        self.w, self.h = w, h
+
+    def area(self) -> float:
+        return self.w * self.h
+
+    # ❌ forgot perimeter
+```
+
+```python
+Shape()       # 💥 TypeError: Can't instantiate abstract class Shape
+              # with abstract methods area, perimeter
+
+Rectangle(3, 4)  # 💥 TypeError: Can't instantiate abstract class Rectangle
+                 # with abstract method perimeter
+
+Circle(5)     # ✅ all abstract methods implemented
+```
+
+### 🔬 How ABC Enforcement Works
+
+```
+ABC uses metaclass ABCMeta.
+ABCMeta.__call__ checks before __init__:
+  → collects all @abstractmethod methods from MRO
+  → if any not overridden in concrete class → TypeError
+
+Stored in:  Shape.__abstractmethods__ = frozenset({'area', 'perimeter'})
+Check:      if cls.__abstractmethods__: raise TypeError
+```
+
+```python
+Shape.__abstractmethods__      # frozenset({'area', 'perimeter'})
+Circle.__abstractmethods__     # frozenset()  ← all implemented
+```
+
+### Combining with Other Decorators
+
+```python
+class Base(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str:          # abstract property
+        ...
+
+    @classmethod
+    @abstractmethod
+    def create(cls) -> "Base":      # abstract classmethod
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def validate(data) -> bool:     # abstract staticmethod
+        ...
+```
+
+---
+
+## 6️⃣ `@dataclass` — Auto-Generate Boilerplate (3.7+)
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class User:
+    name:  str
+    email: str
+    age:   int = 0
+    tags:  list = field(default_factory=list)  # mutable default
+```
+
+```python
+# Auto-generated:
+#   __init__(self, name, email, age=0, tags=<factory>)
+#   __repr__(self)
+#   __eq__(self, other)
+
+u = User("Ali", "ali@x.com", age=20)
+print(u)       # User(name='Ali', email='ali@x.com', age=20, tags=[])
+u == User("Ali", "ali@x.com", age=20)  # True
+```
+
+### `@dataclass` Parameters
+
+```python
+@dataclass(
+    init=True,       # generate __init__      (default True)
+    repr=True,       # generate __repr__      (default True)
+    eq=True,         # generate __eq__        (default True)
+    order=False,     # generate __lt__,__gt__ (default False)
+    frozen=False,    # make immutable         (default False)
+    slots=False,     # use __slots__          (default False, 3.10+)
+)
+class Point:
+    x: float
+    y: float
+```
+
+```python
+# frozen=True → immutable, hashable:
+@dataclass(frozen=True)
+class Point:
+    x: float
+    y: float
+
+p = Point(1.0, 2.0)
+p.x = 3.0       # 💥 FrozenInstanceError
+hash(p)         # ✅ hashable because frozen
+
+# order=True → enables sorting:
+@dataclass(order=True)
+class Priority:
+    level: int
+    name: str
+
+sorted([Priority(3,"c"), Priority(1,"a"), Priority(2,"b")])
+# [Priority(level=1,..), Priority(level=2,..), Priority(level=3,..)]
+```
+
+---
+
+## 7️⃣ `@final` — No Subclassing / No Override (3.8+)
+
+```python
+from typing import final, Final
+
+@final
+class Singleton:                    # cannot be subclassed
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+class MySingleton(Singleton):       # mypy ERROR: Cannot inherit from final class
+    pass                            # Python runtime: ✅ no enforcement
+```
+
+```python
+class Base:
+    @final
+    def critical_method(self):      # cannot be overridden
+        return "base implementation"
+
+class Child(Base):
+    def critical_method(self):      # mypy ERROR: Cannot override final method
+        return "override"           # Python runtime: ✅ no enforcement
+```
+
+> `@final` is a **type-checker hint only** — zero runtime enforcement. Python lets you subclass and override. `mypy`/`pyright` catch violations statically.
+
+---
+
+## 8️⃣ `__slots__` — Memory Optimization
+
+```python
+class Point:
+    __slots__ = ("x", "y")    # replaces __dict__ with fixed C struct
+
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+```
+
+```python
+import sys
+
+class PointDict:           # normal class
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+class PointSlots:
+    __slots__ = ("x", "y")
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+p1 = PointDict(1, 2)
+p2 = PointSlots(1, 2)
+
+sys.getsizeof(p1) + sys.getsizeof(p1.__dict__)  # ~232 bytes
+sys.getsizeof(p2)                                # ~56 bytes  ← 4x smaller
+```
+
+```
+Without __slots__:  each instance has __dict__ (hash map overhead)
+With __slots__:     each instance has fixed C struct (array of pointers)
+
+Restrictions with __slots__:
+  ├── Cannot add arbitrary attributes at runtime
+  ├── No __dict__ (unless 'dict' in __slots__)
+  ├── No __weakref__ (unless 'weakref' in __slots__)
+  └── All classes in MRO must define __slots__ for full benefit
+```
+
+---
+
+## 🔬 Descriptor Protocol — How All This Works
+
+```
+EVERYTHING above uses the descriptor protocol underneath.
+
+An object is a DESCRIPTOR if it defines:
+  __get__(self, obj, objtype)    → non-data descriptor
+  __set__(self, obj, value)      → data descriptor (with __get__)
+  __delete__(self, obj)
+
+Attribute lookup order on instance.attr:
+  1. type(instance).__mro__ → data descriptors   (property, __slots__)
+  2. instance.__dict__                            (instance vars)
+  3. type(instance).__mro__ → non-data descriptors (methods, cached_property)
+  4. AttributeError
+```
+
+```python
+# Regular method IS a descriptor:
+class Foo:
+    def bar(self): pass
+
+# Foo.__dict__['bar'] is a plain function
+# function.__get__(instance, Foo) → returns bound method (injects self)
+# This is how self gets injected — descriptor protocol!
+```
+
+---
+
+## 📊 Full Comparison Table
+
+```
+┌────────────────┬──────────────┬──────────────┬────────────────────────┐
+│ Modifier       │ Access self? │ Access cls?  │ Use Case               │
+├────────────────┼──────────────┼──────────────┼────────────────────────┤
+│ regular method │ ✅           │ via self     │ instance operations    │
+│ @classmethod   │ ❌           │ ✅           │ factory, alt ctor      │
+│ @staticmethod  │ ❌           │ ❌           │ pure utility           │
+│ @property      │ ✅ (via self)│ ❌           │ computed/validated attr│
+│ @abstractmethod│ —            │ —            │ interface enforcement  │
+│ @dataclass     │ ✅           │ ✅           │ data container classes │
+│ @final         │ ✅           │ ✅           │ prevent subclass/override│
+│ __slots__      │ ✅           │ ✅           │ memory optimization    │
+└────────────────┴──────────────┴──────────────┴────────────────────────┘
+```
+
+---
+
+## 🚀 Real-World Production Pattern
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import final
+
+@dataclass
+class Config:
+    host: str
+    port: int = 5432
+    options: dict = field(default_factory=dict)
+
+
+class BaseRepository(ABC):
+    def __init__(self, config: Config):
+        self._config = config
+
+    @cached_property
+    def connection_string(self) -> str:          # computed once
+        return f"postgresql://{self._config.host}:{self._config.port}/db"
+
+    @classmethod
+    def from_env(cls, **kwargs) -> "BaseRepository":
+        import os
+        config = Config(
+            host=os.environ["DB_HOST"],
+            port=int(os.environ.get("DB_PORT", 5432)),
+        )
+        return cls(config, **kwargs)
+
+    @abstractmethod
+    def find(self, id: int): ...
+
+    @abstractmethod
+    def save(self, entity): ...
+
+    @staticmethod
+    def _serialize(obj) -> dict:
+        return vars(obj)
+
+    @final
+    def transaction(self):                       # cannot be overridden
+        return self._begin_transaction()
+
+    def _begin_transaction(self):                # can be overridden
+        ...
+```
+
+---
+
+## 💀 Interview Trap 1 — Name Mangling Breaks Across Classes
+
+```python
+class Base:
+    def __init__(self):
+        self.__secret = "base"   # _Base__secret
+
+    def get(self):
+        return self.__secret     # _Base__secret — works
+
+class Child(Base):
+    def get_from_child(self):
+        return self.__secret     # 💀 _Child__secret — AttributeError!
+        # mangling uses the CLASS WHERE THE CODE IS WRITTEN
+        # not the instance's actual class
+```
+
+---
+
+## 💀 Interview Trap 2 — `@classmethod` in `__init_subclass__`
+
+```python
+class Plugin(ABC):
+    _registry = {}
+
+    def __init_subclass__(cls, name: str, **kwargs):
+        super().__init_subclass__(**kwargs)
+        Plugin._registry[name] = cls   # auto-register subclasses
+
+class MyPlugin(Plugin, name="my"):
+    pass
+
+Plugin._registry   # {"my": MyPlugin}
+```
+
+---
+
+## 💀 Interview Trap 3 — Mutable Default in `@dataclass`
+
+```python
+@dataclass
+class Bag:
+    items: list = []       # 💥 ValueError: mutable default not allowed
+                           # dataclass detects this and raises at CLASS definition
+
+# Fix:
+@dataclass
+class Bag:
+    items: list = field(default_factory=list)   # ✅
+```
+
+---
+
+## 💀 Interview Trap 4 — `@property` Without Setter Raises AttributeError
+
+```python
+class Circle:
+    @property
+    def area(self):
+        return 3.14 * self.r ** 2
+
+c = Circle()
+c.area = 50     # 💥 AttributeError: can't set attribute
+                # no setter defined — read-only property
+
+# Surprising to devs who forget it's a property, not a plain attribute
+```
+
+---
+
+## 💀 Interview Trap 5 — `__slots__` and Inheritance
+
+```python
+class Base:
+    __slots__ = ("x",)
+
+class Child(Base):
+    pass                # NO __slots__ defined
+                        # Child gets __dict__ back!
+
+c = Child()
+c.x = 1         # ✅ (from Base's slot)
+c.y = 2         # ✅ (from Child's __dict__ — leaked back in!)
+```
+
+> If any class in the inheritance chain lacks `__slots__`, the memory benefit is lost — that class has `__dict__`. You must define `__slots__` at every level.
+
+---

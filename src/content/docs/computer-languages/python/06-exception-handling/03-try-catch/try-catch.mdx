@@ -1,0 +1,337 @@
+---
+title: Python Exception Handling (try/except)
+slug: computer-languages/python/exception-handling/try-except
+description: Master Python's try/except/else/finally blocks. Understand the EAFP philosophy, exception chaining, and how Python differs from Java's checked exceptions.
+sidebar:
+  label: "Try / Except"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [python, exceptions, try-except, eafp, control-flow, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🎯 The `try` / `except` Block
+
+> In Java, you `try` and `catch`. In Python, you `try` and `except`.  
+> Python follows the **EAFP** principle: **E**asier to **A**sk **F**orgiveness than **P**ermission. Instead of checking if a file exists before opening it, just try to open it and handle the error if it fails.
+
+---
+
+### 🔬 Syntax — Every Valid Form
+
+```python
+# Form 1: Basic
+try:
+    # risky code
+except ExceptionType as e:
+    # handler
+
+# Form 2: Multiple excepts
+try:
+    # risky code
+except ValueError:
+    # handler 1
+except KeyError:
+    # handler 2
+
+# Form 3: With else (Unique to Python!)
+try:
+    # risky code
+except Exception:
+    # handler
+else:
+    # runs ONLY if no exception occurred
+
+# Form 4: With finally
+try:
+    # risky code
+except Exception:
+    # handler
+finally:
+    # ALWAYS runs (cleanup)
+
+# Form 5: Tuple Catch (Multi-catch)
+try:
+    # risky code
+except (IOError, OSError) as e:
+    # handles both
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `try`: "I hope this works."  
+- `except`: "Oops, here's Plan B."  
+- `else`: "Great! Since it worked, do this extra step."  
+- `finally`: "No matter what, clean up the mess."
+</Aside>
+
+---
+
+### 🔬 Execution Flow
+
+```text
+Enter try block
+       │
+       ▼
+  Execute statements
+       │
+       ├── No Exception? ──► Skip except blocks ──► Run else (if present) ──► Run finally ──► Continue
+       │
+       └── Exception Thrown?
+              │
+              ▼
+         Stop try block immediately
+              │
+              ▼
+         Check except blocks (Top → Bottom)
+              │
+              ├── Match Found? ──► Run except block ──► Run finally ──► Continue
+              │
+              └── No Match? ──► Run finally ──► Propagate Exception Upwards
+```
+
+---
+
+### 💻 Real-World Code — Payment Service
+
+```python
+class PaymentService:
+    def charge(self, customer_id: str, amount: float):
+        try:
+            self.validate_amount(amount)      # Raises ValueError
+            customer = self.load_customer(customer_id) # Raises KeyError
+            result = self.gateway.charge(customer.token, amount) # Raises ConnectionError
+            return {"status": "success", "id": result.id}
+
+        except ValueError as e:
+            # Bad input - don't retry
+            logger.warning(f"Invalid amount: {e}")
+            return {"status": "error", "code": "INVALID_INPUT"}
+
+        except KeyError:
+            # Customer missing
+            logger.warning(f"Customer {customer_id} not found")
+            return {"status": "error", "code": "NOT_FOUND"}
+
+        except ConnectionError as e:
+            # Network issue - maybe retry?
+            logger.error(f"Gateway down: {e}")
+            raise ServiceUnavailableError("Payment gateway unreachable") from e
+```
+
+<Aside type="caution">
+**Java vs Python**:  
+- Java: You must declare `throws IOException` if it's checked.  
+- Python: No checked exceptions. You don't declare what you throw. Documentation is key!
+</Aside>
+
+---
+
+### 🔬 The `as e` Variable
+
+The variable `e` holds the exception object. It is scoped **only** to the `except` block.
+
+```python
+try:
+    x = 1 / 0
+except ZeroDivisionError as e:
+    print(type(e))       # <class 'ZeroDivisionError'>
+    print(e.args)        # ('division by zero',)
+    print(str(e))        # 'division by zero'
+    
+# print(e) ❌ NameError: e is not defined outside the block
+```
+
+---
+
+## 🔄 The `else` Clause
+
+Python has a unique `else` block for `try/except`. It runs **only if no exception was raised**.
+
+**Why use it?**  
+It keeps your `try` block small. If you put code in `try` that *doesn't* raise errors, you might accidentally catch an exception from the wrong line.
+
+```python
+# ❌ Bad Practice
+try:
+    data = get_data()
+    process(data) # If this fails, you might catch it wrongly
+except DataError:
+    handle_error()
+
+# ✅ Good Practice
+try:
+    data = get_data()
+except DataError:
+    handle_error()
+else:
+    process(data) # Only runs if get_data() succeeded
+```
+
+---
+
+## 🧹 The `finally` Clause
+
+Runs **no matter what**. Even if you `return`, `break`, or `continue`.
+
+```python
+def open_file(path):
+    f = None
+    try:
+        f = open(path)
+        return f.read()
+    except IOError:
+        print("Failed to read")
+        return None
+    finally:
+        if f:
+            f.close() # Always closes, even if read() failed
+```
+
+> **Note**: In modern Python, use `with open(path) as f:` (Context Managers) instead of manual `finally` blocks for resources.
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Bare Except" icon="error">
+    ```python
+    try:
+        do_something()
+    except: 
+        # ❌ DANGEROUS
+        # Catches SystemExit, KeyboardInterrupt, etc.
+        # Your program becomes unkillable!
+        pass
+        
+    # ✅ Fix:
+    except Exception:
+        pass
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Order Matters" icon="warning">
+    ```python
+    try:
+        ...
+    except Exception:
+        print("General")
+    except ValueError:
+        print("Specific") # ❌ Unreachable!
+        
+    # ✅ Fix: Specific first, General last.
+    ```
+  </Card>
+
+  <Card title="Trap 3: Swallowing Errors" icon="shield">
+    ```python
+    try:
+        save_db()
+    except:
+        pass # ❌ Silent failure. Debugging nightmare.
+        
+    # ✅ Fix: Log it!
+    except Exception as e:
+        logger.error(e)
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔀 Exception Chaining (`raise ... from`)
+
+In Java, you wrap exceptions (`new Ex("msg", cause)`). In Python, use `raise ... from`.
+
+```python
+try:
+    open("file.txt")
+except FileNotFoundError as e:
+    # Chain the new error to the old one
+    raise ConfigError("Config missing") from e
+```
+
+**Output**:
+```text
+ConfigError: Config missing
+
+The above exception was the direct cause of the following exception:
+FileNotFoundError: [Errno 2] No such file or directory: 'file.txt'
+```
+
+This preserves the **original traceback**, which is crucial for debugging.
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is EAFP?
+    A: Easier to Ask Forgiveness than Permission. Try it, handle errors if they occur.
+    
+    Q: Does Python have Checked Exceptions?
+    A: No. All exceptions are runtime.
+    ```
+  </Card>
+  
+  <Card title="Syntax" icon="shield">
+    ```text
+    Q: When does 'else' run?
+    A: Only if NO exception occurred in 'try'.
+    
+    Q: When does 'finally' run?
+    A: Always. Even if there's a return statement.
+    ```
+  </Card>
+
+  <Card title="Best Practices" icon="rocket">
+    ```text
+    Q: Should you catch Exception?
+    A: Generally yes, but avoid bare 'except:'.
+    
+    Q: How to preserve stack traces?
+    A: Use 'raise NewError() from old_error'.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+def demo():
+    try:
+        print("A")
+        return "B"
+    except:
+        print("C")
+        return "D"
+    finally:
+        print("E")
+
+print(demo())
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+A
+E
+B
+```
+*Reason: `try` runs ("A"). `return "B"` is prepared. `finally` runs ("E"). Then the function returns "B". `except` is skipped.*
+</details>
+
+> 🚀 **Final Wisdom**: Keep `try` blocks small. Catch specific errors. Use `else` for success logic. And never, ever silence an exception without logging it. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+

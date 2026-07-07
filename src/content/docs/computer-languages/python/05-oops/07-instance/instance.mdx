@@ -1,0 +1,1192 @@
+---
+title: Python Instance Initialization Flow
+slug: computer-languages/python/internals/instance-initialization
+description: Master Python's `__new__` and `__init__` lifecycle. Understand execution order, inheritance via `super()`, and why Python doesn't have "Instance Initializer Blocks."
+sidebar:
+  label: "Instance Flow"
+  badge:
+    text: Python Internals
+    variant: tip
+tags: [python, initialization, __init__, __new__, oop, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 🏗️ Python Instance Initialization
+
+> **Python does not have "Instance Initializer Blocks" (IIBs) or a multi-phase static analysis like Java.**  
+> Instead, object creation is a **two-step process**:  
+> 1. `__new__`: Creates the instance (memory allocation).  
+> 2. `__init__`: Initializes the instance (sets attributes).  
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `__init__` as the **Constructor Body**.  
+Unlike Java, there is no separate "Phase 2" for field assignments.  
+- **Java**: `int x = 10;` runs in Phase 2, before constructor.  
+- **Python**: `self.x = 10` runs **inside** `__init__`, line-by-line.  
+⚠️ Execution is strictly **top-to-bottom** within `__init__`.
+</Aside>
+
+---
+
+## 🔬 The Two Phases (Per Object Creation)
+
+```
+obj = MyClass() called
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 1 — CREATION (__new__)               │
+│  1. Allocate memory                         │
+│  2. Return new instance object              │
+│  (Rarely overridden in user code)           │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 2 — INITIALIZATION (__init__)        │
+│  1. Receive 'self' (the new instance)       │
+│  2. Execute body top-to-bottom              │
+│     - Set attributes (self.x = 10)          │
+│     - Call methods                          │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  RETURN                                     │
+│  Reference returned to caller               │
+└─────────────────────────────────────────────┘
+```
+
+### The Execution Order 📜
+```
+Interview Critical: 
+1. __new__ (Creation)
+2. __init__ (Initialization)
+
+🏛️ Flow Diagram (Inheritance):
+
++---------------------+
+|   Child()           |
++---------------------+
+         |
+         v
++---------------------+
+| 1. Parent __new__   | 
++---------------------+
+         |
+         v
++---------------------+
+| 2. Child __new__    | (Usually just calls super)
++---------------------+
+         |
+         v
++---------------------+
+| 3. Parent __init__  | 
++---------------------+
+         |
+         v
++---------------------+
+| 4. Child __init__   | 
++---------------------+
+```
+
+---
+
+## 💻 Real-World Code — The "Trap" Pattern
+
+In Java, you worry about IIBs running before constructors. In Python, you worry about **attribute access before assignment**.
+
+<Code lang="python" title="DBConnection — Watch the order!" code={`
+class DBConnection:
+    def __init__(self):
+        # Line 1
+        self.retries = 3
+        
+        # Line 2: Accessing timeout BEFORE it's defined
+        # ❌ AttributeError: 'DBConnection' object has no attribute 'timeout'
+        print(f"Block 1 — timeout: {self.timeout}") 
+        
+        # Line 3
+        self.timeout = 5000
+
+# new DBConnection() → CRASHES
+`} />
+
+<Code lang="python" title="✅ Fix: Define before use" code={`
+class DBConnection:
+    def __init__(self):
+        self.retries = 3
+        self.timeout = 5000  # Define first
+        
+        # Now safe to access
+        print(f"Timeout: {self.timeout}") 
+`} />
+
+<Aside type="danger">
+**🚨 Production Bug**: Unlike Java, Python objects **do not** have default values (`0`/`null`) for attributes that haven't been assigned yet. Accessing them raises an `AttributeError` immediately.
+</Aside>
+
+---
+
+## 🔁 Inheritance — Full Flow
+
+> **Rule**: You must explicitly call `super().__init__()` to initialize the parent. If you don't, the parent's attributes are never set.
+
+<Code lang="python" title="Parent/Child Initialization Order" code={`
+class Parent:
+    def __init__(self):
+        self.x = 10
+        print("Parent init — x:", self.x)
+        self.show()  # ⚠️ DANGER: Polymorphic call
+
+    def show(self):
+        print("Parent.show()")
+
+class Child(Parent):
+    def __init__(self):
+        super().__init__()  # Initializes Parent FIRST
+        self.y = 20
+        print("Child init — y:", self.y)
+
+    def show(self):
+        # Called from Parent.__init__
+        # At this point, self.y DOES NOT EXIST YET!
+        print("Child.show() — y:", getattr(self, 'y', "NOT SET")) 
+
+# Output:
+# Parent init — x: 10
+# Child.show() — y: NOT SET  ← ⚠️ TRAP
+# Child init — y: 20
+`} />
+
+<Aside type="caution">
+**Key Insight**: When `Child()` is instantiated:  
+1. `Child.__init__` starts.  
+2. `super().__init__()` calls `Parent.__init__`.  
+3. `Parent.__init__` sets `x=10` and calls `show()`.  
+4. Because `self` is a `Child` instance, `Child.show()` runs.  
+5. But `Child.__init__` hasn't reached `self.y = 20` yet!  
+6. `Parent.__init__` finishes. Control returns to `Child`.  
+7. `self.y = 20` executes.
+</Aside>
+
+---
+
+## ⚠️ Forward References & Attributes
+
+Python doesn't have "forward reference" compiler errors for attributes. It has **Runtime AttributeErrors**.
+
+<CardGrid>
+  <Card title="❌ Access Before Assignment" icon="error">
+    ```python
+    class Service:
+        def __init__(self):
+            print(self.limit)  # ❌ AttributeError
+            self.limit = 50
+    ```
+  </Card>
+  
+  <Card title="✅ Safe Access" icon="approve-check">
+    ```python
+    class Service:
+        def __init__(self):
+            self.limit = 50  # Define first
+            print(self.limit)  # ✅ Prints 50
+    ```
+  </Card>
+
+  <Card title="ℹ️ Class Variables vs Instance Vars" icon="information">
+    ```python
+    class Service:
+        limit = 50  # Class Variable (Shared)
+
+        def __init__(self):
+            print(self.limit)  # ✅ Finds it on Class
+            self.limit = 100   # Creates Instance Var (Shadows Class Var)
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔀 `super()` Chaining Flow
+
+In Java, `this()` chains constructors. In Python, you usually just call `super().__init__()`.
+
+<Code lang="python" title="Initialization Chain" code={`
+class HttpClient:
+    def __init__(self, host, port=80, timeout=3000):
+        print("Init running...")
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        print("Init done")
+
+# Usage
+client = HttpClient("api.service.com")
+# Output:
+# Init running...
+# Init done
+`} />
+
+<Aside type="note">
+**Python Simplicity**: Python doesn't have multiple constructors. We use **default arguments** or `@classmethod` factories instead. This eliminates the complex "Phase 2 runs once" logic found in Java.
+</Aside>
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="🪤 Trap 1: Overridden Method in Parent `__init__`" icon="error">
+    ```python
+    class Animal:
+        def __init__(self):
+            self.type = "animal"
+            self.init()  # Polymorphic call
+
+        def init(self):
+            pass
+
+    class Dog(Animal):
+        def __init__(self):
+            super().__init__()
+            self.breed = "Labrador"
+
+        def init(self):
+            # Called from Animal.__init__
+            # self.breed DOES NOT EXIST YET!
+            print(self.breed.upper())  # ❌ AttributeError
+            
+    # Dog() → CRASHES
+    ```    
+    **Fix**: Avoid calling overridable methods from `__init__`. Or ensure attributes are set *before* the call.
+  </Card>
+  
+  <Card title="🪤 Trap 2: Mutable Default Arguments" icon="caution">
+    ```python
+    class Config:
+        # ❌ DANGEROUS: Shared across ALL instances
+        def __init__(self, items=[]): 
+            self.items = items
+
+    c1 = Config()
+    c1.items.append(1)
+    
+    c2 = Config()
+    print(c2.items)  # [1] 😱
+    
+    # ✅ Fix: Use None
+    def __init__(self, items=None):
+        self.items = items or []
+    ```
+  </Card>
+
+  <Card title="🪤 Trap 3: Forgetting `super().__init__()`" icon="shield">
+    ```python
+    class Base:
+        def __init__(self):
+            self.x = 10
+
+    class Derived(Base):
+        def __init__(self):
+            # Forgot super().__init__()
+            self.y = 20
+
+    d = Derived()
+    print(d.x)  # ❌ AttributeError: 'Derived' object has no attribute 'x'
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 Internals — `__new__` vs `__init__`
+
+### The `<init>` Equivalent
+
+Python splits creation and initialization.
+
+1. `__new__(cls)`: Static method. Creates the object. Returns `instance`.
+2. `__init__(self)`: Instance method. Initializes the object. Returns `None`.
+
+```python
+class MyClass:
+    def __new__(cls):
+        print("1. Creating instance")
+        instance = super().__new__(cls)
+        return instance
+
+    def __init__(self):
+        print("2. Initializing instance")
+        self.x = 10
+
+obj = MyClass()
+# Output:
+# 1. Creating instance
+# 2. Initializing instance
+```
+
+<Aside type="note">
+**When to override `__new__`?**  
+Only when subclassing immutable types (like `str`, `int`, `tuple`) or implementing Singletons/Metaclasses. For 99% of classes, just use `__init__`.
+</Aside>
+
+---
+
+## 📊 Java vs Python Initialization
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>Java</th>
+      <th>Python</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Field Defaults</strong></td><td>Automatic (`0`, `null`)</td><td>None (Must assign)</td></tr>
+    <tr><td><strong>Initializer Blocks</strong></td><td>Yes (`{ ... }`)</td><td>No (Use `__init__`)</td></tr>
+    <tr><td><strong>Execution Order</strong></td><td>Vars → Blocks → Constructor</td><td>Line-by-line in `__init__`</td></tr>
+    <tr><td><strong>Parent Init</strong></td><td>Implicit `super()`</td><td>Explicit `super().__init__()`</td></tr>
+    <tr><td><strong>Forward Refs</strong></td><td>Compile Error (Direct)</td><td>Runtime `AttributeError`</td></tr>
+  </tbody>
+</table>
+
+---
+
+## 🏭 SDE/SRE Relevance
+
+<CardGrid>
+  <Card title="🔴 MUST KNOW" icon="alert">
+    ```text
+    • Always call super().__init__() in subclasses
+    • Don't access attributes before assigning them
+    • Avoid calling virtual methods from __init__
+    • Beware of mutable default arguments in __init__
+    ```
+  </Card>
+  
+  <Card title="🟡 GOOD TO KNOW" icon="information">
+    ```text
+    • __new__ controls creation (rarely used)
+    • __init__ controls initialization
+    • Class variables vs Instance variables scope
+    • MRO (Method Resolution Order) in super()
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Execution Order" icon="information">
+    ```text
+    Q: What is the order of initialization?
+    A: Parent __new__ → Child __new__ → Parent __init__ → Child __init__.
+    
+    Q: Do I need to call super().__init__()?
+    A: Yes, if the parent has initialization logic.
+    ```
+  </Card>
+  
+  <Card title="Attributes & Errors" icon="shield">
+    ```text
+    Q: What happens if I read an attribute before setting it?
+    A: AttributeError. Python doesn't have default null/0 for instance attrs.
+    
+    Q: Can I define methods in __init__?
+    A: Yes, but it's bad practice. Define them at class level.
+    ```
+  </Card>
+
+  <Card title="Polymorphism & Init" icon="rocket">
+    ```text
+    Q: Is it safe to call self.method() from __init__?
+    A: Only if method() doesn't rely on child attributes set later.
+    
+    Q: How do I handle multiple constructors?
+    A: Use default args or @classmethod factories.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+PYTHON INSTANCE FLOW CHECKLIST
+
+1. Trigger:
+   MyClass() → __new__ → __init__
+
+2. Parent First:
+   You MUST call super().__init__() explicitly.
+
+3. Linear Execution:
+   Code runs top-to-bottom in __init__.
+   - Assign self.x = 10
+   - Assign self.y = 20
+   
+4. No Defaults:
+   - Accessing undefined attr → AttributeError.
+
+5. Polymorphism Warning:
+   - Calling self.override() in Parent.__init__
+     runs Child.override().
+   - Child attrs may not exist yet!
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always initialize attributes in `__init__`.
+2. ✅ Call `super().__init__()` in subclasses.
+3. ✅ Avoid complex logic in `__init__`; use methods.
+4. ✅ Use `@dataclass` to auto-generate `__init__` for simple classes.
+
+Mastering initialization prevents `AttributeError` crashes and ensures your objects start in a valid state. 🐍✨
+</Aside>
+
+---
+
+# 🏭 Python Instance Control Flow
+
+---
+
+## 🧠 Mental Model First
+
+```
+INSTANCE CONTROL FLOW = everything that happens when you create,
+                        use, and destroy an object instance.
+
+MyClass(args)   ← what actually happens here?
+
+FULL LIFECYCLE:
+┌─────────────────────────────────────────────────────────────────┐
+│  PHASE 1: CREATION                                              │
+│    type.__call__()          ← metaclass dispatches             │
+│    MyClass.__new__()        ← allocates memory, creates object │
+│    MyClass.__init__()       ← initializes the object           │
+│                                                                 │
+│  PHASE 2: USE                                                   │
+│    attribute access         ← __getattribute__, __get__        │
+│    method calls             ← descriptor protocol              │
+│    operator use             ← dunder methods                   │
+│    context manager          ← __enter__, __exit__              │
+│                                                                 │
+│  PHASE 3: DESTRUCTION                                           │
+│    reference count → 0      ← CPython GC trigger              │
+│    __del__()                ← finalizer (unreliable)           │
+│    memory freed             ← PyObject deallocated            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ `type.__call__` — The Invisible Entry Point
+
+```python
+# This line:
+obj = MyClass(1, 2)
+
+# Is ACTUALLY:
+obj = type(MyClass).__call__(MyClass, 1, 2)
+# For normal classes: type.__call__(MyClass, 1, 2)
+```
+
+```
+type.__call__ SOURCE (conceptual Python):
+
+def __call__(cls, *args, **kwargs):
+    # Step 1 — allocate + create object:
+    obj = cls.__new__(cls, *args, **kwargs)
+
+    # Step 2 — initialize ONLY if __new__ returned correct type:
+    if isinstance(obj, cls):
+        obj.__init__(*args, **kwargs)
+
+    # Step 3 — return the object:
+    return obj
+```
+
+```python
+# Proof — __init__ only called if __new__ returns correct type:
+class Weird:
+    def __new__(cls, *args):
+        return 42          # return an int, not Weird instance
+
+    def __init__(self):
+        print("__init__ called")   # NEVER prints
+
+w = Weird()
+print(w)   # 42  ← __init__ skipped — __new__ returned wrong type
+print(type(w))  # <class 'int'>
+```
+
+---
+
+## 2️⃣ `__new__` — Object Allocation
+
+```python
+class MyClass:
+    def __new__(cls, *args, **kwargs):
+        print(f"__new__: allocating {cls.__name__}")
+        instance = super().__new__(cls)  # allocates memory
+        print(f"__new__: allocated {id(instance)}")
+        return instance
+
+    def __init__(self, x: int):
+        print(f"__init__: initializing with x={x}")
+        self.x = x
+```
+
+```python
+obj = MyClass(10)
+# __new__: allocating MyClass
+# __new__: allocated 140234567890
+# __init__: initializing with x=10
+```
+
+### `__new__` vs `__init__`
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│              __new__              │           __init__         │
+├────────────────────────────────────┼───────────────────────────┤
+│ Static method (implicitly)         │ Instance method           │
+│ First arg: cls (the class)         │ First arg: self (instance)│
+│ Returns: NEW OBJECT                │ Returns: None (always)    │
+│ Allocates memory                   │ Initializes state         │
+│ Called BEFORE __init__             │ Called AFTER __new__      │
+│ Called even for immutables         │ Not called if wrong type  │
+│ Can return different type          │ Cannot change return      │
+└────────────────────────────────────┴───────────────────────────┘
+```
+
+### `__new__` for Immutable Types
+
+```python
+# Immutable types MUST use __new__ to set value — __init__ is too late:
+class PositiveInt(int):
+    def __new__(cls, value: int):
+        if value <= 0:
+            raise ValueError(f"Must be positive, got {value}")
+        return super().__new__(cls, value)   # value baked into int
+
+    def __init__(self, value: int):
+        super().__init__()                   # int.__init__ does nothing
+        # self.value = value  ← would work but int value already set by __new__
+
+p = PositiveInt(5)
+print(p)          # 5
+print(p + 3)      # 8
+PositiveInt(-1)   # 💥 ValueError: Must be positive
+```
+
+```python
+# Same for str, tuple, frozenset:
+class UpperStr(str):
+    def __new__(cls, value: str):
+        return super().__new__(cls, value.upper())
+
+s = UpperStr("hello")
+print(s)          # HELLO
+print(type(s))    # <class 'UpperStr'>
+```
+
+---
+
+## 3️⃣ `__init__` — Object Initialization
+
+```python
+class Connection:
+    def __init__(self, host: str, port: int = 5432):
+        # __init__ MUST return None — any other return → TypeError
+        self.host     = host
+        self.port     = port
+        self._socket  = None
+        self._connected = False
+        self._queries   = 0
+```
+
+```python
+# __init__ returning non-None:
+class Bad:
+    def __init__(self):
+        return 42    # 💥 TypeError: __init__() should return None
+
+Bad()
+# TypeError: __init__() should return None (not 'int')
+```
+
+### Inheritance + `__init__` Flow
+
+```python
+class Animal:
+    def __init__(self, name: str):
+        print(f"  Animal.__init__: {name}")
+        self.name = name
+
+class Dog(Animal):
+    def __init__(self, name: str, breed: str):
+        print(f"  Dog.__init__ start")
+        super().__init__(name)             # delegate up
+        self.breed = breed
+        print(f"  Dog.__init__ end")
+
+class GuideDog(Dog):
+    def __init__(self, name: str, breed: str, owner: str):
+        print(f"  GuideDog.__init__ start")
+        super().__init__(name, breed)      # delegate up
+        self.owner = owner
+        print(f"  GuideDog.__init__ end")
+```
+
+```python
+g = GuideDog("Rex", "Lab", "Ali")
+#   GuideDog.__init__ start
+#   Dog.__init__ start
+#   Animal.__init__: Rex
+#   Dog.__init__ end
+#   GuideDog.__init__ end
+```
+
+```
+FLOW:
+GuideDog.__init__
+  → super() → Dog.__init__
+      → super() → Animal.__init__
+          → super() → object.__init__ (no-op)
+      ← Animal returns
+  ← Dog continues
+← GuideDog continues
+```
+
+---
+
+## 4️⃣ Full Creation Flow With Metaclass
+
+```python
+class Meta(type):
+    def __call__(cls, *args, **kwargs):
+        print(f"Meta.__call__: {cls.__name__}{args}")
+        instance = super().__call__(*args, **kwargs)
+        print(f"Meta.__call__: returning {instance}")
+        return instance
+
+    def __new__(mcs, name, bases, namespace):
+        print(f"Meta.__new__: creating class {name}")
+        return super().__new__(mcs, name, bases, namespace)
+
+    def __init__(cls, name, bases, namespace):
+        print(f"Meta.__init__: initializing class {name}")
+        super().__init__(name, bases, namespace)
+
+
+class MyClass(metaclass=Meta):
+    def __new__(cls, x):
+        print(f"  MyClass.__new__")
+        return super().__new__(cls)
+
+    def __init__(self, x):
+        print(f"  MyClass.__init__: x={x}")
+        self.x = x
+```
+
+```python
+# CLASS CREATION (static time):
+# Meta.__new__: creating class MyClass
+# Meta.__init__: initializing class MyClass
+
+# INSTANCE CREATION (runtime):
+obj = MyClass(42)
+# Meta.__call__: MyClass(42,)
+#   MyClass.__new__
+#   MyClass.__init__: x=42
+# Meta.__call__: returning <MyClass object>
+```
+
+---
+
+## 5️⃣ Singleton Pattern — Controlling `__new__`
+
+```python
+class Singleton:
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance        # always returns SAME object
+
+    def __init__(self, config: dict = None):
+        if not hasattr(self, '_initialized'):
+            self._config = config or {}
+            self._initialized = True
+        # subsequent __init__ calls skip re-initialization
+
+
+s1 = Singleton({"key": "val"})
+s2 = Singleton({"other": "data"})
+
+s1 is s2            # True  ← same object
+s2._config          # {"key": "val"}  ← first init preserved
+```
+
+```
+FLOW:
+  s1 = Singleton({"key": "val"})
+    __new__: _instance is None → create → store → return new obj
+    __init__: _initialized not set → set config, set _initialized
+
+  s2 = Singleton({"other": "data"})
+    __new__: _instance is NOT None → return existing obj
+    __init__: _initialized IS set → skip re-initialization
+```
+
+---
+
+## 6️⃣ `__post_init__` — Dataclass Initialization Hook
+
+```python
+from dataclasses import dataclass, field
+from typing import ClassVar
+
+@dataclass
+class Point:
+    x: float
+    y: float
+    z: float = 0.0
+
+    # Called AFTER auto-generated __init__:
+    def __post_init__(self):
+        print(f"  __post_init__: ({self.x}, {self.y}, {self.z})")
+        if self.z < 0:
+            raise ValueError("z cannot be negative")
+        self._magnitude = (self.x**2 + self.y**2 + self.z**2) ** 0.5
+```
+
+```python
+p = Point(3.0, 4.0)
+# __post_init__: (3.0, 4.0, 0.0)
+
+p._magnitude   # 5.0
+
+Point(1.0, 2.0, -1.0)   # 💥 ValueError: z cannot be negative
+```
+
+```python
+# __post_init__ with InitVar — init-only fields:
+from dataclasses import dataclass, field, InitVar
+
+@dataclass
+class Circle:
+    radius: float
+    diameter: InitVar[float] = None    # passed to __post_init__ only
+
+    def __post_init__(self, diameter: float):
+        if diameter is not None:
+            self.radius = diameter / 2
+
+c1 = Circle(radius=5.0)
+c2 = Circle(radius=0, diameter=10.0)
+c2.radius    # 5.0
+c2.diameter  # 💥 AttributeError — InitVar not stored
+```
+
+---
+
+## 7️⃣ `__del__` — Finalizer (Destruction Phase)
+
+```python
+class Resource:
+    def __init__(self, name: str):
+        self.name = name
+        print(f"  CREATED: {self.name}")
+
+    def __del__(self):
+        print(f"  DESTROYED: {self.name}")
+        # cleanup here — but DO NOT rely on timing!
+```
+
+```python
+r = Resource("db_connection")
+# CREATED: db_connection
+
+del r
+# DESTROYED: db_connection  ← CPython: immediate (refcount → 0)
+                             # PyPy, Jython: unpredictable timing!
+```
+
+```
+__del__ PROBLEMS:
+  ├── NOT guaranteed to be called      (process kill, interpreter shutdown)
+  ├── NOT guaranteed timing            (non-CPython implementations)
+  ├── NOT called in circular refs      (GC may not call it)
+  ├── Exception in __del__ ignored    (printed to stderr, swallowed)
+  └── __del__ during interpreter shutdown → globals may be None!
+
+USE INSTEAD:
+  context managers (__enter__ / __exit__)
+  try/finally blocks
+  contextlib.closing()
+  weakref.finalize()
+```
+
+---
+
+## 8️⃣ Context Manager — Lifecycle Control
+
+```python
+class DatabaseConnection:
+    def __init__(self, url: str):
+        self.url = url
+        self._conn = None
+
+    def __enter__(self):
+        print(f"  __enter__: connecting to {self.url}")
+        self._conn = connect(self.url)     # establish connection
+        return self                         # what 'as' receives
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"  __exit__: exc_type={exc_type}")
+        if self._conn:
+            if exc_type:                   # exception occurred
+                self._conn.rollback()
+                print("  __exit__: rolled back")
+            else:
+                self._conn.commit()
+                print("  __exit__: committed")
+            self._conn.close()
+        return False                       # False: don't suppress exception
+                                           # True:  suppress exception
+```
+
+```python
+with DatabaseConnection("postgresql://localhost/db") as conn:
+    conn.execute("INSERT INTO users VALUES (1, 'Ali')")
+    conn.execute("INSERT INTO orders VALUES (1, 100)")
+#   __enter__: connecting...
+#   __exit__: exc_type=None
+#   __exit__: committed
+
+# Exception case:
+with DatabaseConnection("postgresql://localhost/db") as conn:
+    conn.execute("INSERT ...")
+    raise RuntimeError("Something failed")
+#   __enter__: connecting...
+#   __exit__: exc_type=<class 'RuntimeError'>
+#   __exit__: rolled back
+#   RuntimeError propagates (return False)
+```
+
+### `__exit__` Exception Parameters
+
+```
+exc_type:  exception class (None if no exception)
+exc_val:   exception instance (None if no exception)
+exc_tb:    traceback object (None if no exception)
+
+return True  → suppress the exception (swallow it)
+return False → propagate the exception (re-raise)
+return None  → same as False (None is falsy)
+```
+
+---
+
+## 9️⃣ Reference Counting — When Objects Die
+
+```python
+import sys
+
+class Tracked:
+    def __init__(self, name):
+        self.name = name
+    def __del__(self):
+        print(f"  {self.name} destroyed")
+
+a = Tracked("A")
+print(sys.getrefcount(a))    # 2 (a + getrefcount's temporary ref)
+
+b = a                         # refcount: 3
+c = a                         # refcount: 4
+
+del b                         # refcount: 3
+del c                         # refcount: 2
+del a                         # refcount: 1 → 0 → __del__ called
+#   A destroyed
+```
+
+```
+REFERENCE COUNT SOURCES for object X:
+  ├── Variable bindings:   x = obj
+  ├── Container elements:  [obj], {obj}
+  ├── Function arguments:  func(obj) ← temporary ref
+  ├── Return values:       return obj ← temporary ref
+  ├── Attribute bindings:  self.obj = obj
+  └── sys.getrefcount()    ← adds 1 itself!
+```
+
+### Circular Reference — Why `__del__` Can Fail
+
+```python
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.other = None
+    def __del__(self):
+        print(f"  {self.name} destroyed")
+
+a = Node("A")
+b = Node("B")
+a.other = b       # A → B
+b.other = a       # B → A   ← CYCLE
+
+del a             # refcount(A) = 1 (b.other still points to it)
+del b             # refcount(B) = 1 (a.other still points to it)
+# NEITHER __del__ called yet!
+# CPython's cyclic GC will eventually collect them
+# but timing is unpredictable
+```
+
+```python
+import gc
+gc.collect()      # force collection
+# A destroyed
+# B destroyed
+```
+
+---
+
+## 🔬 Full Instance Creation Internals — CPython
+
+```
+MyClass(42)
+
+STEP 1: EVALUATE MyClass(42)
+  → look up MyClass in current namespace
+  → LOAD_GLOBAL 'MyClass'
+
+STEP 2: type(MyClass).__call__(MyClass, 42)
+  → type.__call__(MyClass, 42)
+
+STEP 3: type.__call__ calls MyClass.__new__(MyClass, 42)
+  → object.__new__(MyClass) (usually)
+  → malloc(sizeof(PyObject) + sizeof(instance dict pointer))
+  → sets ob_refcnt = 1
+  → sets ob_type = MyClass
+  → returns PyObject*
+
+STEP 4: isinstance(result, MyClass) → True
+  → type.__call__ calls result.__init__(42)
+  → MyClass.__init__(result, 42) runs
+  → sets instance attributes in result.__dict__
+
+STEP 5: type.__call__ returns result
+  → STORE_FAST 'obj'  (refcount stays at 1)
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Linked List with controlled instance flow:
+class ListNode:
+    __slots__ = ('val', 'next')      # static layout — memory efficient
+
+    def __new__(cls, val=0, next=None):
+        obj = super().__new__(cls)   # no __init__ args needed for allocation
+        return obj
+
+    def __init__(self, val: int = 0, next: "ListNode" = None):
+        self.val  = val
+        self.next = next
+
+    def __repr__(self):
+        vals = []
+        curr = self
+        seen = set()
+        while curr and id(curr) not in seen:
+            seen.add(id(curr))
+            vals.append(str(curr.val))
+            curr = curr.next
+        return " → ".join(vals)
+
+
+# Controlled creation for BST:
+class TreeNode:
+    __slots__ = ('val', 'left', 'right')
+
+    def __init__(self, val: int = 0,
+                 left: "TreeNode" = None,
+                 right: "TreeNode" = None):
+        self.val   = val
+        self.left  = left
+        self.right = right
+
+    @classmethod
+    def from_list(cls, values: list) -> "TreeNode":
+        """Level-order construction — factory classmethod."""
+        if not values:
+            return None
+        from collections import deque
+        root  = cls(values[0])
+        queue = deque([root])
+        i = 1
+        while queue and i < len(values):
+            node = queue.popleft()
+            if i < len(values) and values[i] is not None:
+                node.left = cls(values[i])
+                queue.append(node.left)
+            i += 1
+            if i < len(values) and values[i] is not None:
+                node.right = cls(values[i])
+                queue.append(node.right)
+            i += 1
+        return root
+```
+
+---
+
+## 💀 Interview Trap 1 — `__init__` Called Twice on Singleton
+
+```python
+class Singleton:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        print("__init__ called")
+        self.value = 0
+
+s1 = Singleton()   # __init__ called → value = 0
+s2 = Singleton()   # __init__ called AGAIN! → value reset to 0
+                   # __new__ returns same object → __init__ runs again!
+
+s1.value = 99
+s2 = Singleton()
+s1.value          # 0  ← reset by second __init__ call!
+```
+
+```python
+# Fix — guard in __init__:
+def __init__(self):
+    if hasattr(self, '_initialized'):
+        return                         # skip re-initialization
+    self.value = 0
+    self._initialized = True
+```
+
+---
+
+## 💀 Interview Trap 2 — `__del__` During Interpreter Shutdown
+
+```python
+class Cleanup:
+    def __init__(self):
+        import os
+        self.os = os                   # store reference to module
+
+    def __del__(self):
+        self.os.remove("temp.txt")     # 💀 during shutdown, os may be None!
+        # AttributeError: 'NoneType' object has no attribute 'remove'
+```
+
+```
+During Python interpreter shutdown:
+  Global variables set to None
+  Modules may be unloaded
+  __del__ called but references may be gone
+
+Fix — store what you need locally:
+def __del__(self):
+    import os                          # local import — still valid
+    try:
+        os.remove("temp.txt")
+    except Exception:
+        pass
+```
+
+---
+
+## 💀 Interview Trap 3 — `__new__` Must Return Instance of `cls`
+
+```python
+class Factory:
+    def __new__(cls, type_name: str):
+        if type_name == "circle":
+            return Circle()            # ← not Factory instance!
+        return super().__new__(cls)
+
+    def __init__(self, type_name: str):
+        print(f"__init__: {type_name}")  # called IF __new__ returns Factory
+                                          # NOT called if __new__ returns Circle
+
+f = Factory("circle")       # Circle() returned, __init__ skipped
+type(f)                     # <class 'Circle'>
+
+f = Factory("other")        # Factory instance returned, __init__ called
+# __init__: other
+type(f)                     # <class 'Factory'>
+```
+
+---
+
+## 💀 Interview Trap 4 — `__exit__` Suppress Exception With `True`
+
+```python
+class SilentError:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is ValueError:
+            print(f"Suppressing: {exc_val}")
+            return True    # ← suppresses ONLY ValueError
+        return False       # ← other exceptions propagate
+
+with SilentError():
+    raise ValueError("harmless")   # suppressed — code after with continues
+print("still running")             # ✅ printed
+
+with SilentError():
+    raise RuntimeError("serious")  # NOT suppressed → propagates
+print("never reached")             # ❌ not printed
+```
+
+---
+
+## 💀 Interview Trap 5 — `super().__new__` With Wrong Args
+
+```python
+class MyInt(int):
+    def __new__(cls, value, base=10):
+        return super().__new__(cls, value, base)   # ✅ pass to int.__new__
+
+    def __init__(self, value, base=10):
+        super().__init__()                         # ✅ int.__init__ takes no args
+
+# Common mistake:
+class BadClass:
+    def __new__(cls, x, y):
+        return super().__new__(cls, x, y)          # 💥 object.__new__ takes no args
+                                                    # (other than cls)
+
+# Fix:
+class GoodClass:
+    def __new__(cls, x, y):
+        return super().__new__(cls)                # ✅ object.__new__ only needs cls
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+```
+
+---

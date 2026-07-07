@@ -1,0 +1,1678 @@
+---
+title: Java Custom Exceptions
+slug: computer-languages/java/runtime/custom-exceptions
+description: Learn how to create and use custom exceptions in Java for precise error handling and better domain modeling.
+sidebar:
+  label: "Custom Exceptions"
+  badge:
+    text: Exception Mechanics
+    variant: tip
+tags: [java, exception-handling, custom-exceptions, interview]
+---
+
+## 🛠️ Customized Exceptions
+
+---
+
+### 🧠 What It Is
+
+A custom exception is a **user-defined class** that extends `Exception`, `RuntimeException`, or any existing exception subclass. It exists to represent domain-specific failure conditions that JDK exceptions cannot express precisely. `SQLException` tells you the DB failed — `InsufficientFundsException` tells you *why* the business operation failed.
+
+---
+
+### 🔬 Why Custom Exceptions Exist
+
+```
+JDK exceptions describe TECHNICAL failures:
+  IOException        → IO system failed
+  SQLException       → DB operation failed
+  NullPointerException → null dereference
+
+Custom exceptions describe DOMAIN failures:
+  InsufficientFundsException  → business rule violated
+  AccountNotFoundException    → entity missing
+  PaymentDeclinedException    → gateway rejected
+  RateLimitExceededException  → quota enforced
+
+Callers can catch exactly what they understand.
+Logs show domain language, not infrastructure noise.
+```
+
+---
+
+### 🔬 Two Types — Checked vs Unchecked Custom
+
+```
+Custom Exception
+├── extends Exception          → Checked custom exception
+│   └── caller MUST handle or declare
+│   └── use when: caller can meaningfully recover
+│
+└── extends RuntimeException   → Unchecked custom exception
+    └── caller not forced to handle
+    └── use when: programming error or unrecoverable condition
+```
+
+---
+
+### 🔬 Minimum Valid Custom Exception
+
+```java
+// Checked
+class InsufficientFundsException extends Exception {
+    InsufficientFundsException(String message) {
+        super(message);
+    }
+}
+
+// Unchecked
+class AccountNotFoundException extends RuntimeException {
+    AccountNotFoundException(String message) {
+        super(message);
+    }
+}
+```
+
+---
+
+### 🔬 Production-Grade Custom Exception — Full Structure
+
+```java
+public class PaymentException extends Exception {
+
+    // Domain-specific fields — beyond what message string can carry
+    private final String transactionId;
+    private final ErrorCode errorCode;
+    private final boolean retryable;
+
+    // Enum for machine-readable error classification
+    public enum ErrorCode {
+        CARD_DECLINED,
+        INSUFFICIENT_FUNDS,
+        CARD_EXPIRED,
+        GATEWAY_TIMEOUT,
+        FRAUD_SUSPECTED
+    }
+
+    // Constructor 1 — message only
+    public PaymentException(String message) {
+        super(message);
+        this.transactionId = null;
+        this.errorCode     = null;
+        this.retryable     = false;
+    }
+
+    // Constructor 2 — message + cause (wrap infrastructure exception)
+    public PaymentException(String message, Throwable cause) {
+        super(message, cause);
+        this.transactionId = null;
+        this.errorCode     = null;
+        this.retryable     = false;
+    }
+
+    // Constructor 3 — full domain context
+    public PaymentException(String message, String transactionId,
+                            ErrorCode errorCode, boolean retryable) {
+        super(message);
+        this.transactionId = transactionId;
+        this.errorCode     = errorCode;
+        this.retryable     = retryable;
+    }
+
+    // Constructor 4 — full domain context + cause
+    public PaymentException(String message, Throwable cause,
+                            String transactionId, ErrorCode errorCode,
+                            boolean retryable) {
+        super(message, cause);
+        this.transactionId = transactionId;
+        this.errorCode     = errorCode;
+        this.retryable     = retryable;
+    }
+
+    // Accessors — immutable fields
+    public String    getTransactionId() { return transactionId; }
+    public ErrorCode getErrorCode()     { return errorCode; }
+    public boolean   isRetryable()      { return retryable; }
+
+    // Meaningful toString — logs show domain context
+    @Override
+    public String toString() {
+        return String.format(
+            "PaymentException[txn=%s, code=%s, retryable=%s]: %s",
+            transactionId, errorCode, retryable, getMessage()
+        );
+    }
+}
+```
+
+---
+
+### 🔬 Exception Hierarchy Design — Domain Exception Tree
+
+```
+AppException (base — all domain exceptions)
+├── extends RuntimeException
+├── carries: correlationId, timestamp
+│
+├── ResourceException
+│   ├── ResourceNotFoundException    (404)
+│   │   ├── UserNotFoundException
+│   │   ├── OrderNotFoundException
+│   │   └── ProductNotFoundException
+│   └── ResourceConflictException    (409)
+│       └── DuplicateOrderException
+│
+├── PaymentException                 (402)
+│   ├── InsufficientFundsException
+│   ├── PaymentDeclinedException
+│   └── PaymentGatewayException
+│
+├── ValidationException              (400)
+│   ├── InvalidInputException
+│   └── BusinessRuleViolationException
+│
+└── ServiceException                 (503)
+    ├── RepositoryException
+    └── ExternalServiceException
+```
+
+```java
+// Base exception — carries cross-cutting context
+public class AppException extends RuntimeException {
+
+    private final String correlationId;
+    private final int    httpStatus;
+
+    public AppException(String message, int httpStatus, String correlationId) {
+        super(message);
+        this.httpStatus    = httpStatus;
+        this.correlationId = correlationId;
+    }
+
+    public AppException(String message, Throwable cause,
+                        int httpStatus, String correlationId) {
+        super(message, cause);
+        this.httpStatus    = httpStatus;
+        this.correlationId = correlationId;
+    }
+
+    public int    getHttpStatus()    { return httpStatus; }
+    public String getCorrelationId() { return correlationId; }
+}
+
+// Leaf exception — specific domain failure
+public class UserNotFoundException extends AppException {
+
+    private final long userId;
+
+    public UserNotFoundException(long userId, String correlationId) {
+        super("User not found: " + userId, 404, correlationId);
+        this.userId = userId;
+    }
+
+    public long getUserId() { return userId; }
+}
+```
+
+---
+
+### 💻 Real-World Code — Full Payment Service
+
+```java
+// Custom exceptions
+public class InsufficientFundsException extends Exception {
+    private final BigDecimal available;
+    private final BigDecimal required;
+
+    public InsufficientFundsException(BigDecimal available, BigDecimal required) {
+        super(String.format(
+            "Insufficient funds: available=%.2f required=%.2f",
+            available, required
+        ));
+        this.available = available;
+        this.required  = required;
+    }
+
+    public BigDecimal getAvailable() { return available; }
+    public BigDecimal getRequired()  { return required; }
+    public BigDecimal getShortfall() { return required.subtract(available); }
+}
+
+public class AccountFrozenException extends Exception {
+    private final String accountId;
+    private final String reason;
+
+    public AccountFrozenException(String accountId, String reason) {
+        super("Account frozen: " + accountId + " reason: " + reason);
+        this.accountId = accountId;
+        this.reason    = reason;
+    }
+
+    public String getAccountId() { return accountId; }
+    public String getReason()    { return reason; }
+}
+
+// Service using custom exceptions
+public class PaymentService {
+
+    public TransferReceipt transfer(String fromId, String toId,
+                                    BigDecimal amount)
+            throws InsufficientFundsException,
+                   AccountFrozenException {
+
+        Account from = accounts.findById(fromId)
+            .orElseThrow(() -> new AccountNotFoundException(fromId));
+
+        Account to = accounts.findById(toId)
+            .orElseThrow(() -> new AccountNotFoundException(toId));
+
+        if (from.isFrozen()) {
+            throw new AccountFrozenException(fromId, from.getFreezeReason());
+        }
+
+        if (from.balance().compareTo(amount) < 0) {
+            throw new InsufficientFundsException(from.balance(), amount);
+            // Caller gets: available, required, shortfall — not just "failed"
+        }
+
+        // execute transfer...
+        return new TransferReceipt(fromId, toId, amount);
+    }
+}
+
+// Caller — precise handling per failure type
+public class TransferController {
+
+    public Response transfer(TransferRequest req) {
+        try {
+            TransferReceipt receipt = paymentService.transfer(
+                req.fromId(), req.toId(), req.amount()
+            );
+            return Response.ok(receipt);
+
+        } catch (AccountNotFoundException e) {
+            return Response.status(404)
+                .entity("Account not found: " + e.getAccountId())
+                .build();
+
+        } catch (AccountFrozenException e) {
+            return Response.status(403)
+                .entity("Account frozen: " + e.getReason())
+                .build();
+
+        } catch (InsufficientFundsException e) {
+            return Response.status(402)
+                .entity(Map.of(
+                    "error",     "INSUFFICIENT_FUNDS",
+                    "available", e.getAvailable(),
+                    "required",  e.getRequired(),
+                    "shortfall", e.getShortfall()
+                ))
+                .build();
+        }
+    }
+}
+```
+
+🔴 **What breaks if wrong:** Throwing `RuntimeException("transfer failed")` → controller catches `Exception` → returns 500 for every failure type → client retries insufficient funds endlessly → duplicate debit attempts → financial data corruption.
+
+---
+
+### 🔬 Serialization — Custom Exception Must Be Serializable
+
+```java
+public class OrderException extends Exception {
+
+    private static final long serialVersionUID = 1L;   // ✅ required
+
+    private final String orderId;                       // must be Serializable
+
+    public OrderException(String orderId, String message) {
+        super(message);
+        this.orderId = orderId;
+    }
+
+    public String getOrderId() { return orderId; }
+}
+```
+
+```
+Throwable implements Serializable.
+Custom exception extends Throwable → also Serializable.
+
+If serialVersionUID not declared:
+  JVM generates one from class structure
+  Class changes (new field, method rename) → new UID
+  Deserialization of old serialized exception → InvalidClassException
+  RPC systems, message queues, caches — all break silently
+
+Always declare serialVersionUID = 1L on custom exceptions.
+```
+
+---
+
+### 🔬 Anti-Patterns — What Not to Do
+
+```java
+// ❌ Anti-pattern 1 — exception with no message
+throw new PaymentException();
+// catch block: e.getMessage() → null
+// Logs: "PaymentException: null" — useless
+
+// ❌ Anti-pattern 2 — exception carrying mutable state
+public class OrderException extends Exception {
+    private Order order;                    // mutable — caller can modify
+    public void setOrder(Order o) { this.order = o; }
+}
+// Exception state mutated by catch handler — unpredictable
+
+// ❌ Anti-pattern 3 — extends wrong base
+public class UserNotFoundException extends Exception { }
+// Should be RuntimeException — caller has no meaningful recovery
+// Forces useless try-catch everywhere
+
+// ❌ Anti-pattern 4 — exception used for flow control
+for (String item : items) {
+    try {
+        process(item);
+    } catch (ItemProcessedException e) {  // thrown to signal "done"
+        break;                            // using exception as goto
+    }
+}
+// Exceptions for flow control = O(n) stack captures = performance disaster
+
+// ❌ Anti-pattern 5 — swallowing cause
+catch (SQLException e) {
+    throw new RepositoryException("DB failed");   // cause NOT chained
+    // original SQLException — its message, SQLState, error code — GONE
+}
+// ✅ correct:
+throw new RepositoryException("DB failed", e);   // cause chained
+```
+
+---
+
+## ✅ Checked Custom Exception
+
+---
+
+### 🧠 What It Is
+
+A checked custom exception is a **user-defined class extending `Exception`** (but not `RuntimeException`). The compiler **enforces** that every caller either catches it or declares it in `throws`. It represents a failure condition **the caller is expected to anticipate and handle** — not a bug, not a JVM failure, but a known possible outcome of a business operation.
+
+---
+
+### 🔬 Minimal Structure
+
+```java
+public class InsufficientFundsException extends Exception {
+
+    public InsufficientFundsException(String message) {
+        super(message);
+    }
+
+    public InsufficientFundsException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+```
+extends Exception         → checked
+extends RuntimeException  → unchecked
+extends Error             → never do this
+
+Compiler enforces:
+  every method that throws InsufficientFundsException
+  MUST declare: throws InsufficientFundsException
+  OR catch it internally
+```
+
+---
+
+### 🔬 Compiler Enforcement — Every Call Site
+
+```java
+// Method declares — compiler satisfied
+void transfer(BigDecimal amount) throws InsufficientFundsException {
+    if (balance.compareTo(amount) < 0)
+        throw new InsufficientFundsException("balance too low");
+}
+
+// Caller option 1 — catch it
+void processPayment(BigDecimal amount) {
+    try {
+        transfer(amount);
+    } catch (InsufficientFundsException e) {
+        // handle here
+    }
+}
+
+// Caller option 2 — redeclare
+void processPayment(BigDecimal amount) throws InsufficientFundsException {
+    transfer(amount);               // passes responsibility up
+}
+
+// Caller option 3 — wrap in unchecked
+void processPayment(BigDecimal amount) {
+    try {
+        transfer(amount);
+    } catch (InsufficientFundsException e) {
+        throw new RuntimeException(e);   // escape hatch — loses checked contract
+    }
+}
+
+// Missing handling — COMPILE ERROR
+void processPayment(BigDecimal amount) {
+    transfer(amount);               // ❌ unhandled InsufficientFundsException
+}
+```
+
+---
+
+### 🔬 Full Production-Grade Structure
+
+```java
+public class OrderFulfillmentException extends Exception {
+
+    private static final long serialVersionUID = 1L;
+
+    // Machine-readable reason — not just message string
+    public enum Reason {
+        OUT_OF_STOCK,
+        WAREHOUSE_UNAVAILABLE,
+        SHIPPING_RESTRICTED,
+        ADDRESS_UNDELIVERABLE
+    }
+
+    private final String orderId;
+    private final Reason reason;
+    private final boolean retryable;
+
+    // Wrapping infrastructure exception
+    public OrderFulfillmentException(String orderId, Reason reason,
+                                     boolean retryable, Throwable cause) {
+        super(buildMessage(orderId, reason), cause);
+        this.orderId   = orderId;
+        this.reason    = reason;
+        this.retryable = retryable;
+    }
+
+    // No underlying cause — pure domain failure
+    public OrderFulfillmentException(String orderId, Reason reason,
+                                     boolean retryable) {
+        super(buildMessage(orderId, reason));
+        this.orderId   = orderId;
+        this.reason    = reason;
+        this.retryable = retryable;
+    }
+
+    private static String buildMessage(String orderId, Reason reason) {
+        return String.format("Order %s fulfillment failed: %s", orderId, reason);
+    }
+
+    public String  getOrderId()   { return orderId; }
+    public Reason  getReason()    { return reason; }
+    public boolean isRetryable()  { return retryable; }
+}
+```
+
+---
+
+### 🔬 When to Use Checked Custom Exception
+
+```
+Use checked custom exception when ALL of these are true:
+  ├── failure is a KNOWN possible outcome (not a bug)
+  ├── caller has CONTEXT to decide recovery strategy
+  ├── multiple callers need DIFFERENT recovery paths
+  └── failure is EXTERNAL (user input, resource state, business rule)
+
+Examples:
+  InsufficientFundsException     → caller: decline or request top-up
+  AccountNotFoundException       → caller: return 404 or create account
+  SlotUnavailableException       → caller: offer alternative slot
+  QuotaExceededException         → caller: return 429 or upgrade prompt
+
+Do NOT use checked when:
+  ├── failure is a programming error (use unchecked)
+  ├── used inside streams/lambdas (use unchecked)
+  ├── propagates through many layers unchanged (use unchecked)
+  └── caller has no meaningful recovery (use unchecked)
+```
+
+---
+
+### 💻 Real-World Code — Appointment Booking Service
+
+```java
+// Domain exceptions — checked, each carries specific context
+public class SlotUnavailableException extends Exception {
+    private static final long serialVersionUID = 1L;
+
+    private final LocalDateTime requestedSlot;
+    private final List<LocalDateTime> availableSlots;
+
+    public SlotUnavailableException(LocalDateTime requested,
+                                    List<LocalDateTime> available) {
+        super("Slot unavailable: " + requested);
+        this.requestedSlot  = requested;
+        this.availableSlots = Collections.unmodifiableList(available);
+    }
+
+    public LocalDateTime       getRequestedSlot()  { return requestedSlot; }
+    public List<LocalDateTime> getAvailableSlots() { return availableSlots; }
+}
+
+public class DoctorNotFoundException extends Exception {
+    private static final long serialVersionUID = 1L;
+
+    private final String doctorId;
+
+    public DoctorNotFoundException(String doctorId) {
+        super("Doctor not found: " + doctorId);
+        this.doctorId = doctorId;
+    }
+
+    public String getDoctorId() { return doctorId; }
+}
+
+public class PatientIneligibleException extends Exception {
+    private static final long serialVersionUID = 1L;
+
+    private final String patientId;
+    private final String ineligibilityReason;
+
+    public PatientIneligibleException(String patientId, String reason) {
+        super(String.format("Patient %s ineligible: %s", patientId, reason));
+        this.patientId          = patientId;
+        this.ineligibilityReason = reason;
+    }
+
+    public String getPatientId()           { return patientId; }
+    public String getIneligibilityReason() { return ineligibilityReason; }
+}
+
+// Service — declares all checked exceptions explicitly
+public class AppointmentService {
+
+    public Appointment book(String patientId,
+                            String doctorId,
+                            LocalDateTime slot)
+            throws DoctorNotFoundException,
+                   PatientIneligibleException,
+                   SlotUnavailableException {
+
+        Doctor doctor = doctorRepo.find(doctorId)
+            .orElseThrow(() -> new DoctorNotFoundException(doctorId));
+
+        Patient patient = patientRepo.find(patientId)
+            .orElseThrow(() -> new RuntimeException("patient missing"));
+
+        if (!patient.isEligibleFor(doctor.getSpecialty())) {
+            throw new PatientIneligibleException(
+                patientId, "insurance does not cover " + doctor.getSpecialty()
+            );
+        }
+
+        List<LocalDateTime> available = doctor.getAvailableSlots();
+        if (!available.contains(slot)) {
+            throw new SlotUnavailableException(slot, available);
+            // caller receives alternatives — can offer rebooking
+        }
+
+        return appointmentRepo.create(patientId, doctorId, slot);
+    }
+}
+
+// Controller — different HTTP response per exception type
+public class AppointmentController {
+
+    public Response book(BookingRequest req) {
+        try {
+            Appointment appt = service.book(
+                req.patientId(), req.doctorId(), req.slot()
+            );
+            return Response.ok(appt).build();
+
+        } catch (DoctorNotFoundException e) {
+            return Response.status(404)
+                .entity("Doctor not found: " + e.getDoctorId())
+                .build();
+
+        } catch (PatientIneligibleException e) {
+            return Response.status(403)
+                .entity(Map.of(
+                    "error",  "INELIGIBLE",
+                    "reason", e.getIneligibilityReason()
+                ))
+                .build();
+
+        } catch (SlotUnavailableException e) {
+            return Response.status(409)
+                .entity(Map.of(
+                    "error",      "SLOT_UNAVAILABLE",
+                    "requested",  e.getRequestedSlot(),
+                    "available",  e.getAvailableSlots()   // offer alternatives
+                ))
+                .build();
+        }
+    }
+}
+```
+
+🔴 **What breaks if wrong:** Single `RuntimeException("booking failed")` → controller catches `Exception` → returns 500 for slot conflict → client has no alternative slots → user gives up → lost booking revenue.
+
+---
+
+### 🔬 Checked Exception + Multi-Layer Propagation
+
+```java
+// Layer 3: DAO — raw infrastructure
+class AppointmentDao {
+    Appointment insert(Appointment a) throws SQLException {
+        // raw JDBC
+    }
+}
+
+// Layer 2: Repository — translates to domain exception
+class AppointmentRepository {
+    Appointment save(Appointment a) throws RepositoryException {  // checked
+        try {
+            return dao.insert(a);
+        } catch (SQLIntegrityConstraintViolationException e) {
+            throw new RepositoryException("Duplicate appointment", e);
+        } catch (SQLException e) {
+            throw new RepositoryException("DB failure", e);
+        }
+        // SQLException does NOT escape this layer
+    }
+}
+
+// Layer 1: Service — translates to service exception
+class AppointmentService {
+    Appointment book(String p, String d, LocalDateTime s)
+            throws SlotUnavailableException {     // only domain exceptions escape
+        try {
+            return repository.save(build(p, d, s));
+        } catch (RepositoryException e) {
+            if (e.isDuplicate())
+                throw new SlotUnavailableException(s, alternatives(d));
+            throw new ServiceUnavailableException("Booking system down", e);
+        }
+    }
+}
+```
+
+```
+SQLException         → caught at Repository
+RepositoryException  → caught at Service
+SlotUnavailableException → caught at Controller
+ServiceUnavailableException → caught at Controller
+
+Each layer: speaks its own language
+No infrastructure exception crosses domain boundary
+```
+
+---
+
+### 🔬 Checked Exception in Interface — Design Rules
+
+```java
+// Interface declares the contract
+public interface PaymentGateway {
+    PaymentResult charge(String token, BigDecimal amount)
+        throws PaymentDeclinedException,      // ✅ specific checked
+               GatewayUnavailableException;   // ✅ specific checked
+}
+
+// Implementations can narrow
+public class StripeGateway implements PaymentGateway {
+
+    @Override
+    public PaymentResult charge(String token, BigDecimal amount)
+            throws PaymentDeclinedException {  // ✅ narrower — GatewayUnavailable removed
+        // Stripe never throws GatewayUnavailableException in this impl
+    }
+}
+
+public class MockGateway implements PaymentGateway {
+
+    @Override
+    public PaymentResult charge(String token, BigDecimal amount) {
+        // ✅ no throws at all — always succeeds (mock)
+        return PaymentResult.success("mock-txn-" + UUID.randomUUID());
+    }
+}
+```
+
+---
+
+### 🔬 Checked Exception + `Optional` — Modern Pattern
+
+```java
+// Old: throws checked exception for "not found"
+User findById(long id) throws UserNotFoundException;
+
+// Modern: Optional + checked only for infrastructure failure
+Optional<User> findById(long id) throws RepositoryException;
+
+// Caller:
+Optional<User> user = repository.findById(userId);   // RepositoryException must be handled
+user.orElseThrow(() -> new UserNotFoundException(userId));
+// UserNotFoundException unchecked — caller decides to throw or not
+```
+
+```
+Optional vs checked exception for "not found":
+  Optional → caller decides what "empty" means — no forced handling
+  Checked  → caller forced to decide immediately — more explicit
+
+Use Optional when: absence is a common, normal outcome
+Use checked when: absence requires explicit caller decision at every call site
+```
+
+---
+
+## 💥 Unchecked Custom Exception
+
+---
+
+### 🧠 What It Is
+
+An unchecked custom exception is a **user-defined class extending `RuntimeException`**. The compiler **does not enforce** handling or declaration. It propagates freely through any number of frames without appearing in any `throws` clause. It represents failures that are either **programming errors**, **unrecoverable conditions**, or **failures where forcing every caller to handle would add noise without value**.
+
+---
+
+### 🔬 Minimal Structure
+
+```java
+public class AccountNotFoundException extends RuntimeException {
+
+    public AccountNotFoundException(String message) {
+        super(message);
+    }
+
+    public AccountNotFoundException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+```
+extends RuntimeException  → unchecked — compiler silent
+extends Exception         → checked — compiler enforces
+extends Error             → never
+
+No throws declaration needed anywhere in call chain.
+No try-catch required at any call site.
+Propagates silently through every frame until caught or thread dies.
+```
+
+---
+
+### 🔬 Compiler Behavior — Unchecked Is Invisible to Compiler
+
+```java
+// No declaration needed — compiles fine
+void loadUser(long id) {
+    User user = repo.find(id);
+    if (user == null)
+        throw new AccountNotFoundException("User: " + id);  // ✅ no throws needed
+}
+
+// No catch needed — compiles fine
+void processRequest(long userId) {
+    User user = loadUser(userId);   // AccountNotFoundException may emerge — compiler silent
+    process(user);
+}
+
+// Caller of caller — still no requirement
+void handleRequest(Request req) {
+    processRequest(req.userId());   // exception can arrive here — compiler doesn't know
+}
+
+// Catches it if it wants — optional
+void entryPoint(Request req) {
+    try {
+        handleRequest(req);
+    } catch (AccountNotFoundException e) {   // ✅ valid but not required
+        return Response.notFound();
+    }
+}
+```
+
+---
+
+### 🔬 When to Use Unchecked Custom Exception
+
+```
+Use unchecked when:
+  ├── Programming contract violated
+  │     null passed where non-null required
+  │     method called in wrong object state
+  │     invalid argument that should never happen if caller is correct
+  │
+  ├── Caller cannot meaningfully recover
+  │     config missing at startup
+  │     required service permanently down
+  │     data corruption detected
+  │
+  ├── Propagates through many layers unchanged
+  │     infrastructure exception traveling to top-level handler
+  │     checked would force useless throws on every intermediate method
+  │
+  ├── Used in streams / lambdas / functional interfaces
+  │     checked exceptions don't compile in Function<T,R>
+  │
+  └── Internal application logic
+        not part of public API contract
+        callers are internal — same team, same codebase
+
+Do NOT use unchecked when:
+  ├── caller has meaningful recovery strategy
+  ├── failure is a known, expected business outcome
+  └── API is public — callers need compiler enforcement
+```
+
+---
+
+### 🔬 Full Production-Grade Structure
+
+```java
+public class ConfigurationException extends RuntimeException {
+
+    private static final long serialVersionUID = 1L;
+
+    private final String configKey;
+    private final String configSource;
+
+    public enum FailureType {
+        MISSING,
+        INVALID_FORMAT,
+        PERMISSION_DENIED,
+        SOURCE_UNAVAILABLE
+    }
+
+    private final FailureType failureType;
+
+    // No cause — pure config problem
+    public ConfigurationException(String configKey,
+                                  String configSource,
+                                  FailureType failureType) {
+        super(buildMessage(configKey, configSource, failureType));
+        this.configKey    = configKey;
+        this.configSource = configSource;
+        this.failureType  = failureType;
+    }
+
+    // With cause — wrapping underlying exception
+    public ConfigurationException(String configKey,
+                                  String configSource,
+                                  FailureType failureType,
+                                  Throwable cause) {
+        super(buildMessage(configKey, configSource, failureType), cause);
+        this.configKey    = configKey;
+        this.configSource = configSource;
+        this.failureType  = failureType;
+    }
+
+    private static String buildMessage(String key,
+                                       String source,
+                                       FailureType type) {
+        return String.format(
+            "Config failure [%s] key='%s' source='%s'",
+            type, key, source
+        );
+    }
+
+    public String      getConfigKey()    { return configKey; }
+    public String      getConfigSource() { return configSource; }
+    public FailureType getFailureType()  { return failureType; }
+}
+```
+
+---
+
+### 💻 Real-World Code — E-Commerce Order Service
+
+```java
+// Unchecked domain exceptions
+public class OrderNotFoundException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private final String orderId;
+
+    public OrderNotFoundException(String orderId) {
+        super("Order not found: " + orderId);
+        this.orderId = orderId;
+    }
+
+    public OrderNotFoundException(String orderId, Throwable cause) {
+        super("Order not found: " + orderId, cause);
+        this.orderId = orderId;
+    }
+
+    public String getOrderId() { return orderId; }
+}
+
+public class OrderStateException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private final String  orderId;
+    private final String  currentState;
+    private final String  attemptedOperation;
+
+    public OrderStateException(String orderId,
+                               String currentState,
+                               String attemptedOperation) {
+        super(String.format(
+            "Cannot %s order %s in state %s",
+            attemptedOperation, orderId, currentState
+        ));
+        this.orderId            = orderId;
+        this.currentState       = currentState;
+        this.attemptedOperation = attemptedOperation;
+    }
+
+    public String getOrderId()            { return orderId; }
+    public String getCurrentState()       { return currentState; }
+    public String getAttemptedOperation() { return attemptedOperation; }
+}
+
+public class InventoryException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private final String  sku;
+    private final int     requested;
+    private final int     available;
+
+    public InventoryException(String sku, int requested, int available) {
+        super(String.format(
+            "Insufficient inventory for SKU %s: requested=%d available=%d",
+            sku, requested, available
+        ));
+        this.sku       = sku;
+        this.requested = requested;
+        this.available = available;
+    }
+
+    public String getSku()       { return sku; }
+    public int    getRequested() { return requested; }
+    public int    getAvailable() { return available; }
+    public int    getShortfall() { return requested - available; }
+}
+
+// Service — no throws declaration needed
+public class OrderService {
+
+    public Order cancelOrder(String orderId) {
+        Order order = orderRepo.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+        // ↑ unchecked — no throws on this method needed
+
+        if (!order.isCancellable()) {
+            throw new OrderStateException(
+                orderId, order.getState(), "cancel"
+            );
+        }
+
+        inventoryService.restock(order);
+        order.cancel();
+        orderRepo.save(order);
+        return order;
+    }
+
+    public Order addItem(String orderId, String sku, int qty) {
+        Order order = orderRepo.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (!order.isEditable()) {
+            throw new OrderStateException(orderId, order.getState(), "add item");
+        }
+
+        int available = inventoryService.getAvailable(sku);
+        if (available < qty) {
+            throw new InventoryException(sku, qty, available);
+        }
+
+        order.addItem(sku, qty);
+        return orderRepo.save(order);
+    }
+}
+
+// Controller — global exception handler catches all unchecked
+@RestController
+public class OrderController {
+
+    // No try-catch needed for every endpoint — global handler covers it
+    public Response cancelOrder(String orderId) {
+        Order order = orderService.cancelOrder(orderId);
+        return Response.ok(order).build();
+    }
+
+    public Response addItem(String orderId, String sku, int qty) {
+        Order order = orderService.addItem(orderId, sku, qty);
+        return Response.ok(order).build();
+    }
+}
+
+// Global exception handler — one place for all unchecked domain exceptions
+@ExceptionHandler
+public class GlobalExceptionHandler {
+
+    public Response handle(OrderNotFoundException e) {
+        log.warn("Order not found: {}", e.getOrderId());
+        return Response.status(404).entity(e.getMessage()).build();
+    }
+
+    public Response handle(OrderStateException e) {
+        log.warn("Invalid order operation: {} on {} in state {}",
+            e.getAttemptedOperation(), e.getOrderId(), e.getCurrentState());
+        return Response.status(409).entity(e.getMessage()).build();
+    }
+
+    public Response handle(InventoryException e) {
+        log.warn("Inventory shortage: SKU={} shortfall={}",
+            e.getSku(), e.getShortfall());
+        return Response.status(422)
+            .entity(Map.of(
+                "error",     "INSUFFICIENT_INVENTORY",
+                "sku",       e.getSku(),
+                "shortfall", e.getShortfall()
+            ))
+            .build();
+    }
+}
+```
+
+🔴 **What breaks if wrong:** Throwing `RuntimeException("order not found")` → global handler catches `Exception` → logs generic error → returns 500 → client retries → order service flooded → rate limiting triggers → cascading failure.
+
+---
+
+### 🔬 Unchecked in Streams — The Primary Use Case
+
+```java
+// Checked exception in stream — compile error
+List<String> orderIds = List.of("o1", "o2", "o3");
+
+// ❌ Checked exception doesn't compile in Function<T,R>
+orderIds.stream()
+        .map(id -> orderRepo.findById(id)           // throws checked RepositoryException
+                            .orElseThrow(...))
+        .collect(Collectors.toList());
+
+// ✅ Unchecked — works naturally in streams
+orderIds.stream()
+        .map(id -> orderRepo.findById(id)
+                            .orElseThrow(() ->
+                                new OrderNotFoundException(id)))  // unchecked
+        .filter(order -> order.getStatus() == ACTIVE)
+        .collect(Collectors.toList());
+
+// ✅ Wrapping checked in unchecked for stream use
+orderIds.stream()
+        .map(id -> {
+            try {
+                return slowRepo.findById(id);       // throws checked IOException
+            } catch (IOException e) {
+                throw new RepositoryException(      // unchecked wrapper
+                    "Failed to load order: " + id, e
+                );
+            }
+        })
+        .collect(Collectors.toList());
+```
+
+---
+
+### 🔬 Unchecked + Global Handler Pattern
+
+```java
+// Without unchecked — every method needs try-catch
+public Response getOrder(String id) {
+    try {
+        Order o = orderService.find(id);        // throws checked
+        return Response.ok(o).build();
+    } catch (OrderNotFoundException e) {
+        return Response.status(404).build();
+    } catch (RepositoryException e) {
+        return Response.serverError().build();
+    }
+}
+
+// With unchecked + global handler — controller is clean
+public Response getOrder(String id) {
+    Order o = orderService.find(id);            // unchecked — no try-catch
+    return Response.ok(o).build();
+    // GlobalExceptionHandler maps exceptions to HTTP responses
+}
+```
+
+```
+Unchecked + GlobalExceptionHandler pattern:
+
+Request → Controller (no try-catch)
+               ↓ unchecked exception thrown
+          Service (no try-catch, no throws)
+               ↓ propagates freely
+          Repository (no try-catch, no throws)
+               ↓ propagates freely
+          GlobalExceptionHandler
+               ↓ maps to HTTP response
+          Response returned to client
+
+One place for all exception-to-response mapping.
+Controllers stay clean.
+All exceptions logged consistently.
+```
+
+---
+
+### 🔬 Wrapping Checked in Unchecked — Escape Hatch
+
+```java
+// UncheckedIOException — JDK built-in wrapper for IOException
+try {
+    Files.readAllBytes(Path.of("config.yml"));
+} catch (IOException e) {
+    throw new UncheckedIOException(e);          // JDK-provided unchecked wrapper
+}
+
+// Custom wrapper for SQL
+public class DataAccessException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public DataAccessException(String message, Throwable cause) {
+        super(message, cause);                  // cause preserved
+    }
+}
+
+// Repository wraps all SQLExceptions
+public User findById(long id) {                 // no throws needed
+    try (Connection conn = dataSource.getConnection();
+         PreparedStatement stmt = conn.prepareStatement(SQL)) {
+        stmt.setLong(1, id);
+        ResultSet rs = stmt.executeQuery();
+        if (!rs.next()) throw new UserNotFoundException(id);
+        return mapRow(rs);
+    } catch (SQLException e) {
+        throw new DataAccessException(          // wrapped — no throws on method
+            "Failed to find user: " + id, e
+        );
+    }
+}
+```
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — Custom exception fields not serialized if not `Serializable`**
+
+```java
+public class ServiceException extends RuntimeException {
+    private final HttpClient client;    // HttpClient — not Serializable
+
+    public ServiceException(String msg, HttpClient client) {
+        super(msg);
+        this.client = client;
+    }
+}
+
+// When serialized (RPC, distributed tracing):
+// NotSerializableException thrown during serialization
+// Original ServiceException lost — replaced by serialization failure
+// Prod: distributed system loses exception context across service boundary
+```
+
+All fields in a custom exception must be `Serializable` or marked `transient`.
+
+---
+
+**🪤 Trap 2 — Catching base custom exception masks specific subtypes**
+
+```java
+// Exception hierarchy:
+// AppException → PaymentException → InsufficientFundsException
+
+try {
+    transfer(from, to, amount);
+} catch (AppException e) {              // catches ALL subtypes
+    return Response.serverError();      // InsufficientFundsException = 500?
+}
+// InsufficientFundsException is a 402 — not a 500
+// Catching base class masks specific subtype handling
+// All payment failures treated as server errors
+// Client retries — triggers more insufficient fund attempts
+```
+
+---
+
+**🪤 Trap 3 — `super(message, cause)` vs `super(message)` — cause chain silently broken**
+
+```java
+// Wrong — cause not passed to super
+public class RepositoryException extends RuntimeException {
+    public RepositoryException(String message, Throwable cause) {
+        super(message);         // ← cause NOT passed — getCause() returns null
+        // cause object exists in scope but not stored
+    }
+}
+
+// Logging:
+catch (RepositoryException e) {
+    log.error("failed", e);     // only logs RepositoryException
+                                // original SQLException: invisible
+}
+
+// ✅ Correct:
+public RepositoryException(String message, Throwable cause) {
+    super(message, cause);      // cause stored in Throwable.cause field
+}
+```
+
+Forgetting to pass `cause` to `super()` is the single most common custom exception bug. `getCause()` returns `null`. Original stack trace gone. Root cause permanently lost.
+
+---
+
+**🪤 Trap 4 — Custom checked exception on `@Override` — inheritance constraint**
+
+```java
+interface PaymentGateway {
+    void charge(BigDecimal amount);         // no throws declared
+}
+
+class StripeGateway implements PaymentGateway {
+    @Override
+    public void charge(BigDecimal amount) throws PaymentException {  // ❌ COMPILE ERROR
+        // interface declared no checked exception
+        // implementation cannot add PaymentException (checked)
+    }
+}
+
+// Fix option 1: make PaymentException unchecked
+class PaymentException extends RuntimeException { }    // ✅
+
+// Fix option 2: declare in interface
+interface PaymentGateway {
+    void charge(BigDecimal amount) throws PaymentException;  // ✅
+}
+```
+
+---
+
+**🪤 Trap 1 — Checked exception in lambda — compile error**
+
+```java
+List<String> ids = List.of("u1", "u2", "u3");
+
+// ❌ COMPILE ERROR — checked exception in lambda
+ids.stream()
+   .map(id -> userRepo.findById(id))    // throws UserNotFoundException (checked)
+   .collect(Collectors.toList());
+
+// ✅ Fix 1 — wrap in unchecked inside lambda
+ids.stream()
+   .map(id -> {
+       try {
+           return userRepo.findById(id);
+       } catch (UserNotFoundException e) {
+           throw new RuntimeException(e);   // unchecked wrapper
+       }
+   })
+   .collect(Collectors.toList());
+
+// ✅ Fix 2 — helper method that wraps
+ids.stream()
+   .map(this::findUserSafe)              // wraps checked internally
+   .collect(Collectors.toList());
+
+private User findUserSafe(String id) {
+    try {
+        return userRepo.findById(id);
+    } catch (UserNotFoundException e) {
+        throw new UserLookupException(e); // unchecked wrapper
+    }
+}
+```
+
+`Function<T,R>` interface declares no checked exceptions. Any lambda implementing it cannot propagate checked exceptions. Compiler enforces this at lambda definition — not at call site.
+
+---
+
+**🪤 Trap 2 — Catching checked exception not declared by any called method**
+
+```java
+void method() {
+    try {
+        int x = Integer.parseInt("123");  // throws NumberFormatException (unchecked)
+    } catch (IOException e) {             // ❌ COMPILE ERROR
+        // IOException is checked
+        // parseInt() declares no checked exceptions
+        // compiler proves IOException is unreachable — error
+    }
+}
+
+// But:
+void method() {
+    try {
+        int x = Integer.parseInt("123");
+    } catch (RuntimeException e) {        // ✅ compiles — unchecked always allowed
+        // NumberFormatException is RuntimeException — reachable
+    }
+}
+```
+
+---
+
+**🪤 Trap 3 — `throws` declaration doesn't guarantee exception is thrown**
+
+```java
+// Method declares but never throws — valid, misleading
+public Appointment book(String p, String d, LocalDateTime s)
+        throws SlotUnavailableException {
+
+    // Implementation always succeeds — exception never thrown
+    return new Appointment(p, d, s);
+}
+
+// Callers write dead try-catch:
+try {
+    Appointment a = service.book(p, d, s);
+} catch (SlotUnavailableException e) {
+    // dead code — never fires
+    // but compiler requires it — can't remove
+}
+```
+
+Declared checked exception that's never thrown forces dead `catch` blocks on every caller. Accumulates over time as implementation changes — `throws` declaration becomes a lie.
+
+---
+
+**🪤 Trap 4 — Checked exception identity across ClassLoaders**
+
+```java
+// Plugin system — different ClassLoaders
+ClassLoader pluginLoader = new URLClassLoader(urls);
+Class<?> serviceClass    = pluginLoader.loadClass("com.plugin.Service");
+
+try {
+    serviceClass.getMethod("run").invoke(instance);
+} catch (InvocationTargetException e) {
+    Throwable cause = e.getCause();
+    // cause is InsufficientFundsException — but loaded by pluginLoader
+    // InsufficientFundsException loaded by app ClassLoader is DIFFERENT class
+    // cause instanceof InsufficientFundsException → FALSE
+    // catch(InsufficientFundsException) → NEVER fires
+}
+```
+
+Same class name, different ClassLoaders = different `Class` objects = `instanceof` returns `false`. Checked exception caught by class name string match — not type check — in plugin architectures.
+
+---
+
+**🪤 Trap 1 — Unchecked exception silently bypasses all intermediate catch(Exception) blocks**
+
+```java
+void controller() {
+    try {
+        service();
+    } catch (Exception e) {
+        log.error("caught in controller", e);   // catches unchecked too
+        return Response.serverError();
+    }
+}
+
+void service() {
+    try {
+        repository();
+    } catch (RepositoryException e) {           // specific catch
+        throw new ServiceException("service failed", e);
+    }
+    // OrderNotFoundException (unchecked) from repository()
+    // NOT caught here — bypasses this try-catch
+    // propagates directly to controller's catch(Exception)
+    // ServiceException never thrown — controller sees OrderNotFoundException
+}
+
+void repository() {
+    throw new OrderNotFoundException("o-99");   // unchecked — no declaration
+}
+```
+
+`catch(Exception)` catches unchecked but **specific** `catch(RepositoryException)` does not catch `OrderNotFoundException` — even though both are `RuntimeException`. Type must match. Unchecked exceptions silently bypass specific handlers just like checked ones.
+
+---
+
+**🪤 Trap 2 — Unchecked from `finally` suppresses everything**
+
+```java
+void process(String orderId) {
+    try {
+        Order order = loadOrder(orderId);
+        charge(order);                          // throws PaymentException (unchecked)
+    } finally {
+        cleanup(orderId);                       // throws OrderStateException (unchecked)
+        // OrderStateException REPLACES PaymentException
+        // PaymentException: gone — not chained, not logged
+    }
+}
+// Caller sees: OrderStateException
+// PaymentException: completely invisible
+// Payment may have been charged — no record
+```
+
+🔴 **Prod consequence:** Payment charged but `OrderStateException` from cleanup masks it. No refund triggered. Customer charged, order not fulfilled. Financial discrepancy.
+
+---
+
+**🪤 Trap 3 — `orElseThrow` with unchecked — lambda must return `RuntimeException` subtype**
+
+```java
+// ❌ Wrong — Supplier returns Exception (checked)
+User user = repo.findById(id)
+    .orElseThrow(() -> new Exception("not found"));     // COMPILE ERROR
+// orElseThrow(Supplier<? extends X extends Throwable>)
+// but method signature: <X extends Throwable> T orElseThrow(Supplier<? extends X>)
+// Checked exception version requires throws declaration
+
+// ✅ Unchecked — compiles naturally
+User user = repo.findById(id)
+    .orElseThrow(() -> new UserNotFoundException(id));  // RuntimeException subtype
+
+// ✅ Also valid — checked with throws on enclosing method
+User findUser(long id) throws UserCheckedException {
+    return repo.findById(id)
+               .orElseThrow(() -> new UserCheckedException(id)); // checked + declared
+}
+```
+
+---
+
+**🪤 Trap 4 — Unchecked exception in `@Transactional` — rollback rules**
+
+```java
+@Service
+public class OrderService {
+
+    @Transactional                              // Spring default: rollback on RuntimeException
+    public void placeOrder(Order order) {
+        orderRepo.save(order);
+        inventoryService.deduct(order);         // throws InventoryException (unchecked)
+        // transaction ROLLS BACK — unchecked triggers rollback by default
+    }
+
+    @Transactional(noRollbackFor = InventoryException.class)
+    public void placeOrderNoRollback(Order order) {
+        orderRepo.save(order);
+        inventoryService.deduct(order);         // throws InventoryException
+        // transaction COMMITS — noRollbackFor overrides default
+        // order saved even though inventory failed
+        // 🔴 data inconsistency
+    }
+}
+```
+
+Spring `@Transactional` rolls back on `RuntimeException` by default — unchecked triggers rollback. `noRollbackFor` can override. Wrong configuration = committed partial data + unchecked exception = silent data corruption.
+
+---
+
+**🪤 Trap 5 — Unchecked exception identity lost after `ExecutionException` unwrap**
+
+```java
+ExecutorService exec = Executors.newSingleThreadExecutor();
+Future<Order> future = exec.submit(() -> orderService.find("o-99"));
+// orderService.find() throws OrderNotFoundException (unchecked)
+
+try {
+    future.get();
+} catch (ExecutionException e) {
+    // e.getCause() = OrderNotFoundException
+    // but e itself is ExecutionException (checked)
+
+    if (e.getCause() instanceof OrderNotFoundException onfe) {
+        log.warn("Order not found: {}", onfe.getOrderId());  // ✅ correct unwrap
+    }
+
+    // ❌ Common mistake:
+    catch (OrderNotFoundException onfe) { }   // NEVER fires — ExecutionException wraps it
+}
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Class hierarchy + vtable + object layout**
+
+```
+Custom exception = regular Java class with special inheritance:
+
+Object layout on heap:
+┌──────────────────────────────────────────────┐
+│  mark word (GC + lock)                       │
+│  klass pointer → InsufficientFundsException  │
+│  detailMessage  : "available=50 required=100"│  ← from Throwable
+│  cause          : null                       │  ← from Throwable
+│  stackTrace     : StackTraceElement[8]       │  ← from Throwable
+│  suppressed     : []                         │  ← from Throwable
+│  available      : BigDecimal(50)             │  ← domain field
+│  required       : BigDecimal(100)            │  ← domain field
+└──────────────────────────────────────────────┘
+
+instanceof chain:
+  InsufficientFundsException
+    instanceof PaymentException  → true
+    instanceof Exception         → true
+    instanceof Throwable         → true
+    instanceof Object            → true
+
+catch(PaymentException e) catches InsufficientFundsException
+because JVM instanceof check walks inheritance chain upward.
+```
+
+**Underlying primitive: Compile-time dataflow analysis — definite exception tracking**
+
+```
+Compiler tracks checked exceptions like definite assignment:
+
+void method() throws A, B {
+    if (condition) throw new A();   // A possibly thrown
+    helper();                       // helper() throws B
+}
+
+Compiler builds exception flow graph:
+  node: throw new A()   → edge: A propagates
+  node: helper()        → edge: B propagates (from throws decl)
+  method exit           → must declare A and B in throws
+
+Rules enforced at compile time:
+  1. Any checked exception that can exit a method
+     must be declared in throws
+  2. catch(CheckedException) must be reachable
+     (at least one called method declares it)
+  3. Override: thrown set must be ⊆ parent's thrown set
+
+This is static analysis — no runtime component.
+Bytecode exceptions attribute = result of this analysis stored in .class
+```
+
+**Underlying primitive: Inheritance chain + exception table type matching**
+
+```
+Unchecked exception type hierarchy:
+
+Object
+  └── Throwable
+        └── Exception
+              └── RuntimeException          ← unchecked root
+                    ├── NullPointerException
+                    ├── IllegalArgumentException
+                    ├── OrderNotFoundException    ← your custom
+                    ├── InventoryException        ← your custom
+                    └── ConfigurationException    ← your custom
+
+JVM exception table matching:
+  catch(RuntimeException e)        → catches ALL custom unchecked
+  catch(OrderNotFoundException e)  → catches ONLY OrderNotFoundException
+  catch(Exception e)               → catches ALL checked + ALL unchecked
+  catch(Throwable t)               → catches EVERYTHING including Error
+
+Compiler for unchecked:
+  NO dataflow analysis
+  NO throws tracking
+  NO catch reachability check (for unchecked types)
+  Result: zero compile-time overhead for unchecked propagation
+```
+
+---
+
+### 📊 Checked vs Unchecked Custom — Decision Guide
+
+| Situation | Use |
+|-----------|-----|
+| Caller can meaningfully recover | Checked (`extends Exception`) |
+| Multiple callers need different recovery | Checked — forces handling decision |
+| Programming error / contract violation | Unchecked (`extends RuntimeException`) |
+| Unrecoverable domain failure | Unchecked |
+| Library/API — explicit contract | Checked |
+| Internal application logic | Unchecked |
+| Used across thread boundaries | Either — both work with `Future` |
+| Used in streams/lambdas | Unchecked — checked doesn't compile in functional interfaces |
+
+---
+
+### 📊 Checked Custom Exception — Design Checklist
+
+| Rule | Why |
+|------|-----|
+| `extends Exception` not `extends RuntimeException` | Makes it checked |
+| `serialVersionUID = 1L` | Safe serialization across versions |
+| All fields `Serializable` or `transient` | RPC / distributed systems |
+| Constructor with `(String message, Throwable cause)` | Cause chain preserved |
+| Pass cause to `super(message, cause)` | `getCause()` works |
+| Domain fields with getters | Machine-readable context for callers |
+| Immutable fields | Exception state not mutated by handlers |
+| Meaningful `toString()` | Logs show domain context |
+| Specific name — not `BusinessException` | Callers catch precisely |
+| Declared in interface — not just impl | Contract visible to callers |
+
+---
+
+### 📊 Checked vs Unchecked Custom — Side by Side
+
+| | Checked Custom | Unchecked Custom |
+|--|---------------|-----------------|
+| **Extends** | `Exception` | `RuntimeException` |
+| **Compiler enforces** | ✅ catch or declare | ❌ silent |
+| **`throws` declaration** | Required at every frame | Never required |
+| **Stream / lambda** | ❌ compile error | ✅ works naturally |
+| **Global handler** | Can use — but still declared | ✅ primary pattern |
+| **Caller forced to decide** | ✅ at compile time | ❌ optional |
+| **Propagation** | Declared at every hop | Silent through all frames |
+| **`@Transactional` rollback** | ❌ no rollback by default | ✅ rollback by default |
+| **Best for** | Public API, known recovery | Internal logic, programming errors |
+| **`serialVersionUID`** | ✅ required | ✅ required |
+
+---

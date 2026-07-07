@@ -1,0 +1,1991 @@
+---
+title: Java Synchronization
+slug: computer-languages/java/multithreading/fundamentals/synchronization
+---
+
+## 🔒 Synchronization in Java
+1. Synchronized is the keyword applicable for methods and blocks but not for classes and variables.
+2. If a method or block declared as the synchronized then at a time only one Thread is allow to execute that method or block on the given object.
+3. The main advantage of synchronized keyword is we can resolve date
+inconsistency problems.
+4. But the main disadvantage of synchronized keyword is it increases waiting time of the Thread and effects performance of the system.
+5. Hence if there is no specific requirement then never recommended to use synchronized keyword.
+6. Internally synchronization concept is implemented by using lock concept.
+7. Every object in java has a unique lock. Whenever we are using synchronized keyword then only lock concept will come into the picture.
+8. If a Thread wants to execute any synchronized method on the given object 1st it has to get the lock of that object. Once a Thread got the lock of that object then it's allow to execute any synchronized method on that object. If the synchronized method execution completes then automatically Thread releases lock.
+9. While a Thread executing any synchronized method the remaining Threads are not allowed execute any synchronized method on that object simultaneously. But remaining Threads are allowed to execute any non-synchronized method simultaneously. [lock concept is implemented based on object but not based on method].
+
+```java
+class Display {
+    public synchronized void wish(String name) {
+        for(int i=0;i<5;i++) {
+            System.out.print("good morning:");
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {}
+            System.out.println(name);
+        }
+    }
+}
+
+class MyThread extends Thread {
+    Display d;
+    String name;
+    MyThread(Display d,String name) {
+        this.d=d;
+        this.name=name;
+    }
+    public void run() {
+        d.wish(name);
+    }
+}
+
+class SynchronizedDemo {
+    public static void main(String[] args) {
+        Display d1=new Display();
+        MyThread t1=new MyThread(d1,"dhoni");
+        MyThread t2=new MyThread(d1,"yuvaraj");
+        t1.start();
+        t2.start();
+    }
+}
+If we are not declaring wish() method as synchronized then both Threads will be executed simultaneously and we will get irregular output.
+Output:
+good morning:good morning:yuvaraj
+good morning:dhoni
+good morning:yuvaraj
+good morning:dhoni
+good morning:yuvaraj
+good morning:dhoni
+good morning:yuvaraj
+good morning:dhoni
+good morning:yuvaraj
+good morning:dhoni
+
+If we declare wish() method as synchronized then the Threads will be executed one by one that is until completing the 1st Thread the 2nd Thread will wait in this case we will get regular output which is nothing but
+Output:
+good morning:dhoni
+good morning:dhoni
+good morning:dhoni
+good morning:dhoni
+good morning:dhoni
+good morning:yuvaraj
+good morning:yuvaraj
+good morning:yuvaraj
+good morning:yuvaraj
+good morning:yuvaraj
+
+
+Case study:
+Case 1:
+    Display d1=new Display();
+    Display d2=new Display();
+    MyThread t1=new MyThread(d1,"dhoni");
+    MyThread t2=new MyThread(d2,"yuvaraj");
+    t1.start();
+    t2.start();
+
+Even though we declared wish() method as synchronized but we will get irregular output in this case, because both Threads are operating on different objects.
+
+Conclusion : If multiple threads are operating on multiple objects then there is no impact of Syncronization. If multiple threads are operating on same java objects then syncronized concept is required(applicable).
+
+Class level lock:
+1. Every class in java has a unique lock. If a Thread wants to execute a static synchronized method then it required class level lock.
+2. Once a Thread got class level lock then it is allow to execute any static synchronized method of that class.
+3. While a Thread executing any static synchronized method the remaining Threads are not allow to execute any static synchronized method of that class simultaneously.
+4. But remaining Threads are allowed to execute normal synchronized methods, normal static methods, and normal instance methods simultaneously.
+5. Class level lock and object lock both are different and there is no relationship between these two.
+
+class Display {
+    public synchronized void displayN() {
+        for(int i=0;i<10;i++) {
+            System.out.print(i);
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {}
+        }
+    }
+
+    public synchronized void displayC() {
+        for(int i=0;i<75;i++) {
+            System.out.print(i);
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {}
+        }
+    }
+}
+
+class MyThread1 extends Thread {
+    Display d;
+    MyThread(Display d,String name) {
+        this.d=d;
+    }
+    public void run() {
+        d.displayN();
+    }
+}
+
+class MyThread2 extends Thread {
+    Display d;
+    MyThread(Display d,String name) {
+        this.d=d;
+    }
+    public void run() {
+        d.displayC();
+    }
+}
+
+class SynchronizedDemo {
+    public static void main(String[] args) {
+        Display d1=new Display();
+        MyThread t1=new MyThread1(d1);
+        MyThread t2=new MyThread2(d1);
+        t1.start();
+        t2.start();
+    }
+}
+without sync:
+O/P:
+Mixed Values
+
+with sync
+O/P:
+Int Values
+Character Values
+or vica versa
+
+
+Synchronized block:
+1. If very few lines of the code required synchronization then it's never
+recommended to declare entire method as synchronized we have to enclose those few lines of the code with in synchronized block.
+2. The main advantage of synchronized block over synchronized method is it reduces waiting time of Thread and improves performance of the system.
+
+Example 1: To get lock of current object we can declare synchronized block as follows.
+If Thread got lock of current object then only it is allowed to execute this block.
+
+Synchronized(this){}
+
+Example 2: To get the lock of a particular object 'b' we have to declare a synchronized block as follows.
+If thread got lock of 'b' object then only it is allowed to execute this block.
+
+Synchronized(b){}
+
+Example 3: To get class level lock we have to declare synchronized block as follows.
+Synchronized(Display.class){}
+
+If thread got class level lock of Display then only it allowed to execute this block.
+
+
+Note:As the argument to the synchronized block we can pass either object reference or ".class file" and we can't pass primitive values as argument [because lock concept is dependent only for objects and classes but not for primitives].
+
+Example:
+Int x=b;
+Synchronized(x){}
+Output:
+Compile time error. Unexpected type.
+    Found: int
+    Required: reference
+
+
+```
+
+## 🔬 Step 1 — Why Synchronization Is Needed
+
+### Race Condition
+
+```java
+// Shared mutable state — no synchronization
+class Counter {
+    private int count = 0;
+
+    public void increment() {
+        count++;    // NOT atomic — three operations:
+                    // 1. read count
+                    // 2. add 1
+                    // 3. write count
+    }
+
+    public int getCount() { return count; }
+}
+
+Counter counter = new Counter();
+
+// 1000 threads each increment once
+List<Thread> threads = new ArrayList<>();
+for (int i = 0; i < 1000; i++) {
+    threads.add(new Thread(counter::increment));
+}
+threads.forEach(Thread::start);
+threads.forEach(t -> {
+    try { t.join(); } catch (InterruptedException e) { }
+});
+
+System.out.println(counter.getCount());
+// Expected: 1000
+// Actual:   600-999 — RACE CONDITION — non-deterministic
+```
+
+```
+Race condition timeline:
+  Thread A: read count = 5
+  Thread B: read count = 5    ← reads before A writes
+  Thread A: write count = 6
+  Thread B: write count = 6   ← overwrites A's write
+  Result: 6 instead of 7 — one increment LOST
+```
+
+### Memory Visibility Problem
+
+```java
+// Without synchronization — visibility not guaranteed
+class StopFlag {
+    private boolean stopped = false;   // not volatile
+
+    public void stop() {
+        stopped = true;
+    }
+
+    public void run() {
+        while (!stopped) {      // may NEVER see stopped=true
+            doWork();           // CPU cache may hold stale false
+        }
+    }
+}
+```
+
+```
+CPU cache problem:
+  Core 1 (writer thread):           Core 2 (reader thread):
+  stopped = true → L1 cache         while(!stopped) → reads L1 cache
+  may not flush to main memory       L1 cache still has: stopped=false
+                                     NEVER sees update — infinite loop
+```
+
+---
+
+## 🔬 Step 2 — synchronized Method (Instance)
+
+```java
+public class BankAccount {
+
+    private double balance;
+    private final String accountId;
+
+    public BankAccount(String accountId, double initialBalance) {
+        this.accountId = accountId;
+        this.balance   = initialBalance;
+    }
+
+    // synchronized instance method — locks on 'this'
+    public synchronized void deposit(double amount) {
+        if (amount <= 0)
+            throw new IllegalArgumentException("Amount must be positive");
+        balance += amount;
+        log.info("{}: Deposited {} — balance={}", accountId, amount, balance);
+    }
+
+    public synchronized void withdraw(double amount) {
+        if (amount <= 0)
+            throw new IllegalArgumentException("Amount must be positive");
+        if (amount > balance)
+            throw new IllegalStateException("Insufficient funds");
+        balance -= amount;
+        log.info("{}: Withdrew {} — balance={}", accountId, amount, balance);
+    }
+
+    public synchronized double getBalance() {
+        return balance;     // read also needs sync — visibility
+    }
+
+    // Non-synchronized — safe because accountId is final
+    public String getAccountId() {
+        return accountId;
+    }
+}
+```
+
+```
+synchronized instance method:
+  Lock object: 'this' (the instance)
+  Thread A calls account.deposit() → acquires account's monitor
+  Thread B calls account.deposit() → BLOCKED until A releases
+  Thread B calls account.withdraw() → BLOCKED — same lock ('this')
+  Thread C calls differentAccount.deposit() → NOT blocked — different lock
+
+  Key: lock is per INSTANCE — different objects = different locks
+```
+
+---
+
+## 🔬 Step 3 — synchronized Method (Static)
+
+```java
+public class ConnectionPool {
+
+    private static int    activeConnections = 0;
+    private static int    maxConnections    = 100;
+    private static final List<Connection> pool = new ArrayList<>();
+
+    // synchronized static method — locks on ConnectionPool.class
+    public static synchronized Connection acquire()
+            throws NoConnectionAvailableException {
+        if (activeConnections >= maxConnections) {
+            throw new NoConnectionAvailableException(
+                "Pool exhausted: " + activeConnections + "/" + maxConnections
+            );
+        }
+        Connection conn = pool.remove(pool.size() - 1);
+        activeConnections++;
+        return conn;
+    }
+
+    public static synchronized void release(Connection conn) {
+        pool.add(conn);
+        activeConnections--;
+    }
+
+    public static synchronized int getActiveConnections() {
+        return activeConnections;
+    }
+}
+```
+
+```
+synchronized static method:
+  Lock object: Class object (ConnectionPool.class)
+  One lock for ALL instances — class-level lock
+  Thread A: ConnectionPool.acquire() → locks ConnectionPool.class
+  Thread B: ConnectionPool.acquire() → BLOCKED
+  Thread C: anyInstance.acquire()   → BLOCKED (same lock — class object)
+
+  Instance lock ≠ Class lock:
+  Thread A: account.deposit()    → locks 'this' (instance)
+  Thread B: ConnectionPool.acquire() → locks ConnectionPool.class
+  → NOT the same lock — do NOT block each other
+```
+
+---
+
+## 🔬 Step 4 — synchronized Block
+
+```java
+public class OrderProcessor {
+
+    private final Object inventoryLock = new Object();  // dedicated lock
+    private final Object paymentLock   = new Object();  // dedicated lock
+
+    private int availableInventory = 1000;
+    private BigDecimal revenue     = BigDecimal.ZERO;
+
+    public void processOrder(Order order) {
+
+        // Only lock what needs protection — minimize lock scope
+        synchronized (inventoryLock) {
+            if (availableInventory < order.getQuantity()) {
+                throw new OutOfStockException("Insufficient inventory");
+            }
+            availableInventory -= order.getQuantity();
+        }
+        // inventoryLock released here — payment can happen concurrently
+        // with inventory updates for DIFFERENT orders
+
+        // Expensive operation — NOT under lock
+        PaymentResult result = paymentGateway.charge(order);   // IO call
+
+        synchronized (paymentLock) {
+            if (result.isSuccess()) {
+                revenue = revenue.add(order.total());
+            }
+        }
+        // paymentLock released here
+    }
+
+    // Can use 'this' as lock — less preferred (exposes lock)
+    public void updateConfig(Config config) {
+        synchronized (this) {
+            applyConfig(config);
+        }
+    }
+}
+```
+
+### Lock Scope — Minimize It
+
+```java
+// ❌ Too wide — locks during IO — performance killer
+public synchronized void processWithIO(Order order) {
+    validate(order);                    // locked
+    PaymentResult r = callStripeAPI();  // locked — IO blocks others!
+    saveToDatabase(r);                  // locked — IO blocks others!
+}
+
+// ✅ Minimize lock scope — IO outside lock
+public void processWithIO(Order order) {
+    validate(order);                    // no lock needed
+
+    PaymentResult r = callStripeAPI();  // no lock — IO in parallel
+
+    synchronized (this) {               // lock only for state update
+        updateState(r);                 // fast — just memory update
+    }
+}
+```
+
+---
+
+## 🔬 Step 5 — Monitor and Reentrancy
+
+### Every Object Has a Monitor
+
+```
+Object on heap:
+┌────────────────────────────────────────┐
+│ mark word (8 bytes)                    │
+│   ├── lock state bits                  │
+│   ├── owner thread pointer (if locked) │
+│   ├── recursion count                  │
+│   └── hash code (when unlocked)        │
+│ klass pointer                          │
+│ instance fields...                     │
+└────────────────────────────────────────┘
+
+Mark word lock states:
+  Unlocked:     biased/thin/fat lock bits = 01
+  Biased:       locked by one thread without CAS
+  Thin (stack): lightweight CAS-based lock
+  Fat (inflated):full monitor object — contention
+```
+
+### Reentrancy
+
+```java
+// Java synchronized is REENTRANT
+// Same thread can acquire same lock multiple times
+
+public class ReentrantExample {
+
+    public synchronized void outer() {
+        System.out.println("outer: acquired lock");
+        inner();    // calls another synchronized method — same lock!
+    }
+
+    public synchronized void inner() {
+        System.out.println("inner: re-acquired lock");
+        // Same thread already holds lock — no deadlock
+        // Recursion count incremented (2)
+    }
+}
+
+// Without reentrancy: outer() holds lock → inner() tries to acquire → DEADLOCK
+// With reentrancy: same thread → lock count++ → allowed in
+// Release: inner() exits → count-- → outer() exits → count-- → lock released
+```
+
+---
+
+## 🔬 Step 6 — What synchronized Guarantees
+
+```
+synchronized provides TWO guarantees:
+
+1. MUTUAL EXCLUSION:
+   Only ONE thread executes synchronized block at a time
+   Other threads BLOCKED until lock released
+
+2. MEMORY VISIBILITY (happens-before):
+   All writes before releasing lock → visible to thread acquiring same lock
+   Thread A writes x=5 in synchronized block → releases lock
+   Thread B acquires same lock → sees x=5 guaranteed
+
+   Without synchronization: writes may stay in CPU cache
+   With synchronization: lock release flushes writes to main memory
+                         lock acquire reads from main memory
+```
+
+```java
+// Memory visibility example
+class SharedData {
+    private int value = 0;
+    private final Object lock = new Object();
+
+    public void writer() {
+        synchronized (lock) {
+            value = 42;         // write under lock
+        }                       // lock release → flushes value to memory
+    }
+
+    public int reader() {
+        synchronized (lock) {   // lock acquire → reads from memory
+            return value;       // guaranteed to see 42 after writer ran
+        }
+    }
+}
+```
+
+---
+
+## 🔬 Step 7 — synchronized Limitations
+
+```java
+// Problem 1: Cannot try to acquire without blocking
+synchronized (lock) {           // blocks indefinitely — no timeout
+    // ...
+}
+
+// Problem 2: Cannot interrupt thread waiting for lock
+// Thread.interrupt() does NOT unblock BLOCKED thread on synchronized
+
+// Problem 3: Cannot acquire lock in one method, release in another
+
+// Solution: java.util.concurrent.locks.ReentrantLock
+ReentrantLock lock = new ReentrantLock();
+
+// Try with timeout
+if (lock.tryLock(5, TimeUnit.SECONDS)) {
+    try {
+        // critical section
+    } finally {
+        lock.unlock();      // MUST be in finally
+    }
+} else {
+    // lock not acquired in 5s — handle gracefully
+}
+
+// Interruptible lock acquisition
+lock.lockInterruptibly();   // throws InterruptedException if interrupted
+
+// Try immediately without waiting
+if (lock.tryLock()) {
+    try { /* ... */ }
+    finally { lock.unlock(); }
+}
+```
+
+---
+
+## 💻 Real-World Code — Thread-Safe Cache
+
+```java
+public class ThreadSafeCache<K, V> {
+
+    private final Map<K, V>   store;
+    private final int          maxSize;
+    private final Object       lock = new Object();
+
+    // Statistics — separate lock to avoid contention
+    private final Object       statsLock = new Object();
+    private       long         hits      = 0;
+    private       long         misses    = 0;
+
+    public ThreadSafeCache(int maxSize) {
+        this.maxSize = maxSize;
+        this.store   = new LinkedHashMap<>(maxSize, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<K,V> eldest) {
+                return size() > maxSize;    // LRU eviction
+            }
+        };
+    }
+
+    public V get(K key) {
+        synchronized (lock) {
+            V value = store.get(key);
+            if (value != null) {
+                incrementHits();
+                return value;
+            }
+        }
+        // cache miss — load outside lock
+        incrementMisses();
+        return null;
+    }
+
+    public void put(K key, V value) {
+        Objects.requireNonNull(key,   "key required");
+        Objects.requireNonNull(value, "value required");
+        synchronized (lock) {
+            store.put(key, value);
+        }
+    }
+
+    public V getOrLoad(K key, Supplier<V> loader) {
+        // Double-checked — check without lock first
+        synchronized (lock) {
+            V existing = store.get(key);
+            if (existing != null) {
+                incrementHits();
+                return existing;
+            }
+        }
+
+        // Load outside lock — don't hold lock during IO/computation
+        V loaded = loader.get();
+
+        synchronized (lock) {
+            // Check again — another thread may have loaded
+            V existing = store.get(key);
+            if (existing != null) return existing;  // another thread loaded
+            store.put(key, loaded);
+        }
+
+        incrementMisses();
+        return loaded;
+    }
+
+    public void remove(K key) {
+        synchronized (lock) {
+            store.remove(key);
+        }
+    }
+
+    public int size() {
+        synchronized (lock) {
+            return store.size();
+        }
+    }
+
+    private void incrementHits() {
+        synchronized (statsLock) { hits++; }
+    }
+
+    private void incrementMisses() {
+        synchronized (statsLock) { misses++; }
+    }
+
+    public CacheStats getStats() {
+        synchronized (statsLock) {
+            return new CacheStats(hits, misses);
+        }
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** No synchronization on `store` → `LinkedHashMap` structural modification during iteration → `ConcurrentModificationException` → cache lookup crashes → downstream service unavailable → cascading failure.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — Synchronizing on wrong object**
+
+```java
+class BadSync {
+    private Integer count = 0;      // wrapper — autoboxed
+
+    public void increment() {
+        synchronized (count) {      // ❌ WRONG — count changes reference on autobox
+            count++;                // autoboxes new Integer — lock object changes!
+        }
+    }
+}
+
+// count++ : unbox → add → box new Integer → assign
+// new Integer object each time
+// Next synchronized(count) → locks DIFFERENT object
+// No mutual exclusion achieved
+
+// ✅ Fix: lock on final dedicated object
+class GoodSync {
+    private final Object lock = new Object();   // stable reference
+    private int count = 0;
+
+    public void increment() {
+        synchronized (lock) {
+            count++;
+        }
+    }
+}
+```
+
+---
+
+**🪤 Trap 2 — Synchronizing on String literals — shared locks**
+
+```java
+// String literals are interned — shared across JVM
+synchronized ("LOCK") {     // ❌ "LOCK" interned — shared across ALL classes
+    // other code synchronized on "LOCK" anywhere in JVM
+    // → they all share same lock
+    // → unexpected lock contention and deadlocks
+}
+
+// String created with new — unique object
+synchronized (new String("LOCK")) {  // ❌ new object every time — no mutual exclusion
+
+// ✅ Always use dedicated final private lock objects
+private final Object lock = new Object();
+synchronized (lock) { }
+```
+
+---
+
+**🪤 Trap 3 — Partial synchronization — visibility gap**
+
+```java
+class Broken {
+    private int value = 0;
+
+    public synchronized void write(int v) {
+        value = v;          // synchronized write
+    }
+
+    public int read() {     // ❌ unsynchronized read
+        return value;       // may see stale value
+    }
+}
+// synchronized write establishes happens-before to synchronized READ
+// unsynchronized read has no happens-before → stale value possible
+// BOTH read and write must be synchronized on same lock
+
+// Fix: synchronize read too
+public synchronized int read() { return value; }
+// Or: use volatile (simpler for single variable)
+private volatile int value = 0;
+```
+
+---
+
+**🪤 Trap 4 — Instance lock vs class lock — different locks**
+
+```java
+class MixedLocks {
+    private static int classCount = 0;
+    private        int instCount  = 0;
+
+    // locks on 'this' — instance lock
+    public synchronized void instanceMethod() {
+        instCount++;
+    }
+
+    // locks on MixedLocks.class — class lock
+    public static synchronized void staticMethod() {
+        classCount++;
+    }
+}
+
+// Thread A: obj.instanceMethod() → locks obj (instance)
+// Thread B: MixedLocks.staticMethod() → locks MixedLocks.class
+// → NOT the same lock → run concurrently → no mutual exclusion between them
+
+// If staticMethod modifies shared state that instanceMethod also accesses
+// → race condition — different locks don't protect each other
+```
+
+---
+
+**🪤 Trap 5 — Deadlock from lock ordering**
+
+```java
+// Classic deadlock — two threads, two locks, opposite order
+Object lockA = new Object();
+Object lockB = new Object();
+
+Thread t1 = new Thread(() -> {
+    synchronized (lockA) {
+        sleep(100);
+        synchronized (lockB) {  // waits for t2 to release lockB
+            System.out.println("T1 done");
+        }
+    }
+}, "T1");
+
+Thread t2 = new Thread(() -> {
+    synchronized (lockB) {
+        sleep(100);
+        synchronized (lockA) {  // waits for t1 to release lockA
+            System.out.println("T2 done");
+        }
+    }
+}, "T2");
+
+t1.start();
+t2.start();
+// DEADLOCK — T1 holds lockA waits for lockB
+//            T2 holds lockB waits for lockA
+
+// Fix: ALWAYS acquire locks in SAME ORDER
+Thread t1fixed = new Thread(() -> {
+    synchronized (lockA) {
+        synchronized (lockB) { System.out.println("T1 done"); }
+    }
+});
+Thread t2fixed = new Thread(() -> {
+    synchronized (lockA) {      // same order as t1 — no deadlock
+        synchronized (lockB) { System.out.println("T2 done"); }
+    }
+});
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: Object monitor + CAS (Compare-And-Swap) + memory barrier**
+
+```
+synchronized bytecode:
+
+  synchronized (obj) { body }
+
+Compiles to:
+  monitorenter  ← acquire obj's monitor
+  [body bytecode]
+  monitorexit   ← release obj's monitor
+  [exception handler]
+  monitorexit   ← release on exception path (guaranteed)
+
+HotSpot lock optimization progression:
+
+1. Biased Locking (Java 6-14, removed 18+):
+   First thread: mark word stores thread ID
+   Same thread re-enters: check thread ID — no CAS needed
+   Very fast for single-threaded access patterns
+
+2. Thin Lock (Lightweight):
+   CAS on mark word — no OS involvement
+   Stack-allocated lock record
+   Fast for low-contention scenarios
+
+3. Fat Lock (Heavyweight/Inflated):
+   OS mutex (pthread_mutex on Linux)
+   Thread enters BLOCKED state (OS level)
+   Used when actual contention detected
+
+Memory barrier on lock release/acquire:
+  monitorexit  → StoreStore + StoreLoad barrier
+                 flushes CPU store buffer to memory
+  monitorenter → LoadLoad + LoadStore barrier
+                 invalidates CPU load buffer
+                 reads from main memory
+
+This is what "happens-before" means physically:
+  Writer releases lock → memory barrier → writes visible
+  Reader acquires lock → memory barrier → sees all prior writes
+```
+
+---
+
+## ⚡ volatile + Locks + Atomic Classes
+
+---
+
+## 🗺️ The Full Map
+
+```
+Advanced Synchronization
+│
+├── volatile
+│   ├── Visibility guarantee — no caching
+│   ├── Ordering guarantee — no reordering
+│   └── NOT atomic for compound operations
+│
+├── Locks (java.util.concurrent.locks)
+│   ├── ReentrantLock  — flexible synchronized replacement
+│   ├── ReadWriteLock  — multiple readers OR one writer
+│   └── StampedLock    — optimistic reading (Java 8+)
+│
+└── Atomic Classes (java.util.concurrent.atomic)
+    ├── AtomicInteger / AtomicLong  — lock-free int/long
+    ├── AtomicBoolean               — lock-free boolean
+    └── AtomicReference<V>          — lock-free object reference
+```
+
+---
+
+## 🔬 01 — volatile Keyword
+
+### What volatile Provides
+
+```
+volatile provides TWO guarantees:
+
+1. VISIBILITY:
+   Write to volatile variable → immediately visible to ALL threads
+   No CPU cache — reads/writes go directly to main memory
+   Prevents stale value problem
+
+2. ORDERING (happens-before):
+   Write to volatile X happens-before any subsequent read of X
+   Prevents instruction reordering around volatile access
+   Compiler + CPU cannot reorder volatile operations
+
+volatile does NOT provide:
+   ❌ Atomicity for compound operations (check-then-act, read-modify-write)
+   ❌ Mutual exclusion
+   ❌ count++ is still not atomic even with volatile
+```
+
+### Visibility Without volatile — The Problem
+
+```java
+// Without volatile — visibility NOT guaranteed
+class StopFlag {
+    private boolean stopped = false;   // NOT volatile
+
+    public void stop() {
+        stopped = true;                // write stays in CPU cache
+    }
+
+    public void run() {
+        while (!stopped) {             // may read stale false forever
+            doWork();
+        }
+        // may NEVER exit — thread sees cached false
+    }
+}
+```
+
+```
+CPU cache problem:
+
+Core 1 (writer):              Core 2 (reader):
+L1 cache: stopped=true        L1 cache: stopped=false (stale)
+main memory: stopped=false     reads from L1 → sees false
+(not flushed yet)              infinite loop
+```
+
+### volatile — Fixes Visibility
+
+```java
+// With volatile — visibility guaranteed
+class StopFlag {
+    private volatile boolean stopped = false;  // volatile
+
+    public void stop() {
+        stopped = true;     // write goes directly to main memory
+    }                       // all caches invalidated
+
+    public void run() {
+        while (!stopped) {  // reads from main memory — sees true
+            doWork();
+        }
+        // exits cleanly when stop() called
+    }
+}
+```
+
+### volatile — Prevents Reordering
+
+```java
+// Double-Checked Locking — volatile CRITICAL
+public class Singleton {
+
+    // WITHOUT volatile — broken:
+    // instance = new Singleton() compiles to 3 steps:
+    //   1. allocate memory
+    //   2. initialize object
+    //   3. assign reference
+    // JVM/CPU may reorder to: 1 → 3 → 2
+    // Another thread sees non-null reference → partially initialized object
+
+    private static volatile Singleton instance;  // volatile prevents reorder
+
+    public static Singleton getInstance() {
+        if (instance == null) {                     // first check — no lock
+            synchronized (Singleton.class) {
+                if (instance == null) {             // second check — under lock
+                    instance = new Singleton();     // volatile write — ordered
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+
+### volatile — When to Use
+
+```java
+// ✅ Use volatile for:
+
+// 1. Simple flag read/written by multiple threads
+private volatile boolean running = true;
+
+// 2. Status/state variable — one writer, many readers
+private volatile String  status  = "STARTING";
+
+// 3. Singleton DCL pattern
+private static volatile MySingleton instance;
+
+// 4. Reference to immutable object — published safely
+private volatile Config currentConfig;  // replaced atomically
+public void updateConfig(Config newConfig) {
+    currentConfig = newConfig;  // volatile write — safe publication
+}
+
+// ❌ Do NOT use volatile for:
+// Compound operations — still need synchronization
+
+private volatile int count = 0;
+count++;    // ❌ NOT atomic — read-modify-write — race condition
+            // volatile only makes read and write individually visible
+            // but count++ is THREE operations: read, add, write
+```
+
+### volatile vs synchronized
+
+```
+┌────────────────┬──────────────────────┬──────────────────────┐
+│ Aspect         │ volatile             │ synchronized         │
+├────────────────┼──────────────────────┼──────────────────────┤
+│ Visibility     │ ✅ yes               │ ✅ yes               │
+│ Atomicity      │ ❌ reads/writes only │ ✅ compound ops      │
+│ Mutual exclusion│ ❌ no              │ ✅ yes               │
+│ Blocking       │ ❌ never blocks      │ ✅ blocks waiters    │
+│ Performance    │ faster               │ slower               │
+│ Use for        │ flags, references    │ compound operations  │
+└────────────────┴──────────────────────┴──────────────────────┘
+```
+
+---
+
+## 🔬 02 — ReentrantLock
+
+### Why ReentrantLock
+
+```
+synchronized limitations:
+  ❌ No timeout — blocks indefinitely
+  ❌ Cannot interrupt blocked thread
+  ❌ Cannot try-lock without blocking
+  ❌ Must release in same method that acquired
+  ❌ No fairness control
+
+ReentrantLock solutions:
+  ✅ tryLock()             — acquire or return false immediately
+  ✅ tryLock(timeout)      — acquire or timeout
+  ✅ lockInterruptibly()   — acquire or throw if interrupted
+  ✅ fair constructor       — longest-waiting gets lock first
+  ✅ unlock() anywhere     — flexible acquire/release
+  ✅ Condition objects      — multiple wait sets per lock
+```
+
+### Basic Usage
+
+```java
+import java.util.concurrent.locks.ReentrantLock;
+
+public class SafeCounter {
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private       int           count = 0;
+
+    public void increment() {
+        lock.lock();                    // acquire — blocks if held
+        try {
+            count++;                    // critical section
+        } finally {
+            lock.unlock();              // ALWAYS in finally — guaranteed release
+        }
+    }
+
+    public int getCount() {
+        lock.lock();
+        try {
+            return count;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+> 🔑 **ALWAYS unlock in `finally`**. If unlock is not in finally — exception in critical section = lock never released = deadlock.
+
+### tryLock() — Non-Blocking Acquire
+
+```java
+public class ResourceManager {
+
+    private final ReentrantLock lock = new ReentrantLock();
+
+    // Try immediately — no wait
+    public boolean tryProcess(Task task) {
+        if (lock.tryLock()) {           // returns true/false immediately
+            try {
+                process(task);
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+        return false;   // lock not available — caller decides what to do
+    }
+
+    // Try with timeout — wait up to N ms
+    public boolean tryProcessWithTimeout(Task task)
+            throws InterruptedException {
+
+        if (lock.tryLock(5, TimeUnit.SECONDS)) {
+            try {
+                process(task);
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+        log.warn("Could not acquire lock in 5s — skipping task");
+        return false;
+    }
+}
+```
+
+### lockInterruptibly() — Interruptible Acquisition
+
+```java
+public class InterruptibleWorker {
+
+    private final ReentrantLock lock = new ReentrantLock();
+
+    public void doWork() throws InterruptedException {
+
+        lock.lockInterruptibly();   // throws InterruptedException if interrupted
+                                    // unlike synchronized — which ignores interrupt
+        try {
+            heavyWork();
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+// Usage — thread can be interrupted while waiting for lock
+Thread worker = new Thread(() -> {
+    try {
+        worker.doWork();
+    } catch (InterruptedException e) {
+        System.out.println("Interrupted while waiting for lock");
+        Thread.currentThread().interrupt();
+    }
+});
+worker.start();
+worker.interrupt();     // ✅ works — lockInterruptibly() responds to interrupt
+```
+
+### Condition — Multiple Wait Sets
+
+```java
+// ReentrantLock.newCondition() — like wait/notify but per condition
+public class BoundedBuffer<T> {
+
+    private final ReentrantLock lock      = new ReentrantLock();
+    private final Condition     notFull   = lock.newCondition();
+    private final Condition     notEmpty  = lock.newCondition();
+
+    private final Queue<T> buffer;
+    private final int      capacity;
+
+    public BoundedBuffer(int capacity) {
+        this.capacity = capacity;
+        this.buffer   = new LinkedList<>();
+    }
+
+    public void put(T item) throws InterruptedException {
+        lock.lock();
+        try {
+            while (buffer.size() == capacity) {
+                notFull.await();        // release lock — wait on notFull
+            }
+            buffer.offer(item);
+            notEmpty.signal();          // wake ONE consumer — precise
+            // vs notifyAll() — only wakes consumers not producers
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public T take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (buffer.isEmpty()) {
+                notEmpty.await();       // release lock — wait on notEmpty
+            }
+            T item = buffer.poll();
+            notFull.signal();           // wake ONE producer — precise
+            return item;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+// Advantage over wait/notify:
+// notFull.signal()  → wakes ONLY waiting producers
+// notEmpty.signal() → wakes ONLY waiting consumers
+// With wait/notify: notifyAll() wakes EVERYONE — wastes effort
+```
+
+### Fair vs Unfair Lock
+
+```java
+ReentrantLock unfair = new ReentrantLock();        // default
+ReentrantLock fair   = new ReentrantLock(true);    // FIFO ordering
+
+// Unfair: newly requesting thread may barge ahead of waiting threads
+//   → higher throughput — less context switching
+//   → risk: starvation of long-waiting threads
+
+// Fair: longest-waiting thread gets lock next
+//   → prevents starvation — all threads eventually get lock
+//   → lower throughput — ~30% overhead vs unfair
+
+// Diagnostic methods
+lock.isLocked();                    // is lock currently held?
+lock.isHeldByCurrentThread();       // does current thread hold it?
+lock.getHoldCount();                // recursion depth (reentrant count)
+lock.getQueueLength();              // how many threads waiting?
+lock.hasQueuedThreads();            // any threads waiting?
+```
+
+---
+
+## 🔬 03 — ReadWriteLock
+
+### The Problem It Solves
+
+```
+synchronized / ReentrantLock:
+  Only ONE thread at a time — even for reads
+  10 reader threads → all serialized → poor throughput
+
+ReadWriteLock insight:
+  Multiple readers: SAFE — reads don't modify state
+  One writer:       EXCLUSIVE — modifies state
+  Reader + writer:  EXCLUSIVE — writer needs consistent view
+
+Rules:
+  ├── Multiple readers → can run SIMULTANEOUSLY
+  ├── One writer → exclusive — no readers or other writers
+  └── Readers and writers NEVER concurrent
+```
+
+### ReentrantReadWriteLock
+
+```java
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+public class UserCache {
+
+    private final ReadWriteLock rwLock   = new ReentrantReadWriteLock();
+    private final Lock          readLock  = rwLock.readLock();
+    private final Lock          writeLock = rwLock.writeLock();
+
+    private final Map<Long, User> cache = new HashMap<>();
+
+    // READ operation — multiple threads can read simultaneously
+    public User getUser(long userId) {
+        readLock.lock();            // acquire READ lock
+        try {
+            return cache.get(userId);
+            // Multiple threads can be here simultaneously
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    // WRITE operation — exclusive access
+    public void putUser(User user) {
+        writeLock.lock();           // acquire WRITE lock — exclusive
+        try {
+            cache.put(user.getId(), user);
+            // Only ONE thread here — no readers during write
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void removeUser(long userId) {
+        writeLock.lock();
+        try {
+            cache.remove(userId);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public int size() {
+        readLock.lock();
+        try {
+            return cache.size();
+        } finally {
+            readLock.unlock();
+        }
+    }
+}
+```
+
+### ReadWriteLock Performance Benefit
+
+```
+Scenario: 90% reads, 10% writes — 10 threads
+
+synchronized:
+  All 10 threads serialized — even pure readers
+  Throughput: 1 thread at a time
+
+ReadWriteLock:
+  Up to 9 readers simultaneously (when no writer)
+  Writers still exclusive
+  Throughput: up to 9x for read-heavy workloads
+```
+
+### Lock Downgrading
+
+```java
+// Lock downgrading: write → read (atomic)
+// Allows: write, then continue reading without releasing
+
+public void updateAndRead(long userId, User newUser) {
+    writeLock.lock();
+    try {
+        cache.put(userId, newUser);     // write
+
+        // Downgrade: acquire read lock BEFORE releasing write
+        readLock.lock();
+    } finally {
+        writeLock.unlock();             // release write — now hold read only
+    }
+
+    try {
+        User current = cache.get(userId);   // read — still consistent
+        process(current);
+    } finally {
+        readLock.unlock();
+    }
+}
+
+// ❌ Lock UPGRADING not supported:
+// Cannot go from read → write without releasing read first
+// ReadWriteLock does not support upgrade — deadlock risk
+```
+
+---
+
+## 🔬 04 — StampedLock (Java 8+)
+
+### What StampedLock Adds
+
+```
+ReentrantReadWriteLock problem:
+  Read lock still has overhead — CAS + contention tracking
+  Writer waits for ALL readers to finish — can cause writer starvation
+
+StampedLock adds OPTIMISTIC READ:
+  Try read WITHOUT acquiring any lock
+  Check if write happened during read — validate stamp
+  If valid → no locking needed at all
+  If invalid → fall back to pessimistic read lock
+
+Three modes:
+  ├── Write lock        — exclusive write (like write lock)
+  ├── Read lock         — shared read (like read lock)
+  └── Optimistic read   — no lock — validate afterward
+```
+
+### StampedLock Usage
+
+```java
+import java.util.concurrent.locks.StampedLock;
+
+public class Point {
+
+    private final StampedLock lock = new StampedLock();
+    private double x;
+    private double y;
+
+    // WRITE — exclusive
+    public void move(double deltaX, double deltaY) {
+        long stamp = lock.writeLock();      // acquire — returns stamp
+        try {
+            x += deltaX;
+            y += deltaY;
+        } finally {
+            lock.unlockWrite(stamp);        // release using stamp
+        }
+    }
+
+    // PESSIMISTIC READ — shared
+    public double distancePessimistic() {
+        long stamp = lock.readLock();       // shared read lock
+        try {
+            return Math.sqrt(x * x + y * y);
+        } finally {
+            lock.unlockRead(stamp);
+        }
+    }
+
+    // OPTIMISTIC READ — no lock acquired
+    public double distanceOptimistic() {
+        long stamp = lock.tryOptimisticRead();  // stamp — no lock
+        double currentX = x;
+        double currentY = y;
+
+        if (!lock.validate(stamp)) {
+            // A writer modified x or y during our read — try again with lock
+            stamp = lock.readLock();        // fall back to pessimistic read
+            try {
+                currentX = x;
+                currentY = y;
+            } finally {
+                lock.unlockRead(stamp);
+            }
+        }
+
+        // stamp valid — no write happened — values are consistent
+        return Math.sqrt(currentX * currentX + currentY * currentY);
+    }
+
+    // LOCK CONVERSION — optimistic → read if needed
+    public double distanceWithConversion() {
+        long stamp = lock.tryOptimisticRead();
+        double currentX = x;
+        double currentY = y;
+
+        if (!lock.validate(stamp)) {
+            // Convert to read lock
+            stamp = lock.tryConvertToReadLock(stamp);
+            if (stamp == 0L) {
+                // Conversion failed — acquire read lock directly
+                stamp = lock.readLock();
+            }
+            try {
+                currentX = x;
+                currentY = y;
+            } finally {
+                lock.unlock(stamp);
+            }
+        }
+
+        return Math.sqrt(currentX * currentX + currentY * currentY);
+    }
+}
+```
+
+### StampedLock vs ReadWriteLock
+
+```
+┌────────────────┬───────────────────────┬───────────────────────┐
+│ Feature        │ ReadWriteLock         │ StampedLock           │
+├────────────────┼───────────────────────┼───────────────────────┤
+│ Optimistic read│ ❌                    │ ✅ no lock needed     │
+│ Reentrant      │ ✅                    │ ❌ NOT reentrant      │
+│ Condition      │ ✅ (write lock only)  │ ❌                    │
+│ Lock upgrade   │ ❌                    │ ✅ tryConvert...()    │
+│ Performance    │ good                  │ better (optimistic)   │
+│ Complexity     │ moderate              │ high                  │
+└────────────────┴───────────────────────┴───────────────────────┘
+```
+
+> 🔑 `StampedLock` is **NOT reentrant**. Same thread calling `writeLock()` twice → deadlock. Never use StampedLock where ReentrantLock reentrancy is needed.
+
+---
+
+## 🔬 05 — Atomic Classes
+
+### What They Are
+
+```
+java.util.concurrent.atomic package
+Lock-free thread-safe operations using CAS (Compare-And-Swap)
+
+CAS (hardware instruction):
+  compareAndSwap(address, expectedValue, newValue):
+    if (memory[address] == expectedValue)
+        memory[address] = newValue  ← atomic
+        return true
+    else
+        return false                ← someone changed it — retry
+
+  ATOMIC — single CPU instruction (LOCK CMPXCHG on x86)
+  No OS mutex — no thread blocking
+  Much faster than synchronized for single variable operations
+```
+
+### AtomicInteger / AtomicLong
+
+```java
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class MetricsCollector {
+
+    private final AtomicInteger requestCount  = new AtomicInteger(0);
+    private final AtomicLong    totalLatencyMs = new AtomicLong(0);
+    private final AtomicInteger errorCount    = new AtomicInteger(0);
+
+    public void recordRequest(long latencyMs, boolean isError) {
+        requestCount.incrementAndGet();         // atomic increment — no lock
+        totalLatencyMs.addAndGet(latencyMs);    // atomic add — no lock
+        if (isError) errorCount.incrementAndGet();
+    }
+
+    public double getAverageLatency() {
+        int    count   = requestCount.get();    // atomic read
+        long   total   = totalLatencyMs.get();
+        return count == 0 ? 0.0 : (double) total / count;
+    }
+
+    public void reset() {
+        requestCount.set(0);
+        totalLatencyMs.set(0);
+        errorCount.set(0);
+    }
+}
+```
+
+### AtomicInteger — All Key Methods
+
+```java
+AtomicInteger ai = new AtomicInteger(10);
+
+// Basic operations
+ai.get();                       // 10 — read current value
+ai.set(20);                     // set to 20
+ai.getAndSet(30);               // returns 20, sets to 30
+
+// Increment/Decrement
+ai.incrementAndGet();           // ++i equivalent — returns NEW value
+ai.getAndIncrement();           // i++ equivalent — returns OLD value
+ai.decrementAndGet();           // --i equivalent
+ai.getAndDecrement();           // i-- equivalent
+
+// Add
+ai.addAndGet(5);                // returns NEW value after add
+ai.getAndAdd(5);                // returns OLD value before add
+
+// CAS — compare and swap
+ai.compareAndSet(30, 50);       // if current==30, set to 50, return true
+                                 // else return false — no change
+
+// Java 8+ — functional update
+ai.updateAndGet(x -> x * 2);   // atomically apply function — return new value
+ai.getAndUpdate(x -> x * 2);   // atomically apply — return old value
+ai.accumulateAndGet(5, Integer::sum);  // atomically combine — return new
+ai.getAndAccumulate(5, Integer::sum);  // atomically combine — return old
+```
+
+### AtomicLong — LongAdder for High Contention
+
+```java
+// AtomicLong: good for low-medium contention
+AtomicLong counter = new AtomicLong(0);
+counter.incrementAndGet();      // CAS — may retry under contention
+
+// LongAdder: better for HIGH contention (Java 8+)
+// Multiple cells — threads update different cells — less contention
+LongAdder adder = new LongAdder();
+adder.increment();              // updates per-thread cell — no CAS retry
+adder.add(5);
+long sum = adder.sum();         // sum all cells — eventual consistency
+
+// LongAccumulator — custom accumulation function
+LongAccumulator maxLatency = new LongAccumulator(Math::max, 0);
+maxLatency.accumulate(150);     // sets if 150 > current max
+maxLatency.accumulate(200);     // sets — 200 > 150
+long max = maxLatency.get();    // 200
+```
+
+```
+When to use which:
+  AtomicLong:  low-medium contention, need exact value anytime
+  LongAdder:   high contention counters (metrics, hit counters)
+               sum() is approximate during concurrent updates
+```
+
+---
+
+## 🔬 06 — AtomicBoolean
+
+```java
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class OneTimeInitializer {
+
+    private final AtomicBoolean initialized = new AtomicBoolean(false);
+
+    // Guaranteed: only ONE thread runs initialization — even under contention
+    public void initialize() {
+        if (initialized.compareAndSet(false, true)) {
+            // CAS: if current==false, set to true — atomic
+            // Only ONE thread wins this CAS — others see true and skip
+            doExpensiveInitialization();
+        }
+        // Other threads: CAS fails → skip → initialization done by winner
+    }
+}
+
+// AtomicBoolean key methods:
+AtomicBoolean ab = new AtomicBoolean(false);
+
+ab.get();                           // read current value
+ab.set(true);                       // set value
+ab.getAndSet(true);                 // atomic get-then-set — returns old
+ab.compareAndSet(false, true);      // CAS — if false, set true, return true
+```
+
+### AtomicBoolean — Circuit Breaker Pattern
+
+```java
+public class CircuitBreaker {
+
+    private final AtomicBoolean    open         = new AtomicBoolean(false);
+    private final AtomicInteger    failureCount = new AtomicInteger(0);
+    private final int              threshold    = 5;
+    private volatile long          openedAt     = 0;
+    private final long             resetTimeMs  = 30_000;
+
+    public <T> T execute(Supplier<T> operation) throws CircuitOpenException {
+
+        if (open.get()) {
+            if (System.currentTimeMillis() - openedAt > resetTimeMs) {
+                open.compareAndSet(true, false);    // half-open: try reset
+                failureCount.set(0);
+            } else {
+                throw new CircuitOpenException("Circuit breaker is OPEN");
+            }
+        }
+
+        try {
+            T result = operation.get();
+            failureCount.set(0);        // success — reset count
+            return result;
+        } catch (Exception e) {
+            int failures = failureCount.incrementAndGet();
+            if (failures >= threshold) {
+                if (open.compareAndSet(false, true)) {  // only ONE opens it
+                    openedAt = System.currentTimeMillis();
+                    log.error("Circuit breaker OPENED after {} failures", failures);
+                }
+            }
+            throw e;
+        }
+    }
+}
+```
+
+---
+
+## 🔬 07 — AtomicReference
+
+```java
+import java.util.concurrent.atomic.AtomicReference;
+
+// AtomicReference<V> — atomic operations on object references
+AtomicReference<Config> currentConfig =
+    new AtomicReference<>(new Config("default"));
+
+// Get current
+Config config = currentConfig.get();
+
+// Set new
+currentConfig.set(new Config("updated"));
+
+// Atomic get-and-set
+Config old = currentConfig.getAndSet(new Config("new"));
+
+// CAS — only update if still the expected config
+Config expected = currentConfig.get();
+Config updated  = new Config(expected, "modification");
+boolean success = currentConfig.compareAndSet(expected, updated);
+// success = true if no other thread changed it
+// success = false if another thread updated first — retry if needed
+```
+
+### Hot Config Reload — AtomicReference Pattern
+
+```java
+public class ConfigService {
+
+    // Immutable config — safe to read without locks
+    private final AtomicReference<AppConfig> config;
+
+    public ConfigService(AppConfig initial) {
+        this.config = new AtomicReference<>(initial);
+    }
+
+    // Any thread can read — no lock needed
+    // AtomicReference.get() is volatile read — always sees latest
+    public AppConfig getConfig() {
+        return config.get();        // O(1) — no lock — no contention
+    }
+
+    // Single writer updates atomically
+    public void reload() {
+        AppConfig newConfig = loadFromSource();
+        config.set(newConfig);      // atomic reference swap
+        // All subsequent get() calls see new config
+        // No partial state — either old or new — never mix
+    }
+
+    // CAS — conditional update
+    public boolean updateIfUnchanged(AppConfig expected,
+                                      AppConfig updated) {
+        return config.compareAndSet(expected, updated);
+        // Returns false if another thread already updated — caller retries
+    }
+}
+```
+
+### ABA Problem — AtomicStampedReference
+
+```java
+// ABA problem:
+// Thread A reads value = A
+// Thread B changes A → B → A  (back to A)
+// Thread A: CAS(expected=A, new=X) → SUCCEEDS
+// Thread A thinks nothing changed — but B changed it twice
+
+// AtomicStampedReference — adds version stamp
+AtomicStampedReference<String> ref =
+    new AtomicStampedReference<>("value", 0);   // value + stamp
+
+int[] stampHolder = new int[1];
+String current = ref.get(stampHolder);          // get value + stamp
+int stamp = stampHolder[0];
+
+// CAS with stamp — prevents ABA
+ref.compareAndSet(
+    current, "newValue",    // expected value → new value
+    stamp, stamp + 1        // expected stamp → new stamp
+);
+// Even if value returns to original — stamp is different → CAS fails
+```
+
+---
+
+## 💻 Real-World Code — Lock-Free Request Rate Limiter
+
+```java
+public class RateLimiter {
+
+    private final int             maxRequestsPerSecond;
+    private final AtomicInteger   requestCount;
+    private final AtomicLong      windowStart;
+    private final AtomicBoolean   throttling;
+
+    public RateLimiter(int maxRequestsPerSecond) {
+        this.maxRequestsPerSecond = maxRequestsPerSecond;
+        this.requestCount         = new AtomicInteger(0);
+        this.windowStart          = new AtomicLong(System.currentTimeMillis());
+        this.throttling           = new AtomicBoolean(false);
+    }
+
+    public boolean allowRequest() {
+        long now    = System.currentTimeMillis();
+        long window = windowStart.get();
+
+        // Reset window if 1 second has passed
+        if (now - window >= 1000) {
+            if (windowStart.compareAndSet(window, now)) {
+                requestCount.set(0);    // reset count — atomic window reset
+            }
+        }
+
+        // Increment and check — atomic
+        int count = requestCount.incrementAndGet();
+        if (count > maxRequestsPerSecond) {
+            requestCount.decrementAndGet();     // don't count rejected
+            if (throttling.compareAndSet(false, true)) {
+                log.warn("Rate limit exceeded: {}/s", maxRequestsPerSecond);
+            }
+            return false;
+        }
+
+        throttling.set(false);
+        return true;
+    }
+
+    public int getCurrentCount() { return requestCount.get(); }
+    public boolean isThrottling()  { return throttling.get(); }
+}
+
+// Usage
+RateLimiter limiter = new RateLimiter(1000);    // 1000 req/s
+
+ExecutorService pool = Executors.newFixedThreadPool(50);
+for (int i = 0; i < 10_000; i++) {
+    pool.submit(() -> {
+        if (limiter.allowRequest()) {
+            handleRequest();
+        } else {
+            return Response.tooManyRequests();
+        }
+    });
+}
+```
+
+🔴 **What breaks if done wrong:** Using `synchronized` for every request check → all 1000 req/s serialized → 1ms/request → 1 req at a time → max 1000 req/s theoretically but contention reduces actual throughput → rate limiter becomes bottleneck.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — volatile doesn't make compound operations atomic**
+
+```java
+private volatile int count = 0;
+
+// ❌ Still a race condition even with volatile
+public void increment() {
+    count++;        // volatile read + add + volatile write = 3 ops
+                    // another thread can interleave between read and write
+}
+
+// ✅ Use AtomicInteger for atomic compound operations
+private final AtomicInteger count = new AtomicInteger(0);
+public void increment() {
+    count.incrementAndGet();    // single CAS — atomic
+}
+```
+
+---
+
+**🪤 Trap 2 — StampedLock is NOT reentrant**
+
+```java
+StampedLock lock = new StampedLock();
+
+void outer() {
+    long stamp = lock.writeLock();
+    try {
+        inner();    // calls inner — acquires write lock again
+    } finally {
+        lock.unlockWrite(stamp);
+    }
+}
+
+void inner() {
+    long stamp = lock.writeLock();  // ❌ DEADLOCK — StampedLock not reentrant
+    try {
+        // ...
+    } finally {
+        lock.unlockWrite(stamp);
+    }
+}
+// Use ReentrantLock when reentrancy needed
+```
+
+---
+
+**🪤 Trap 3 — AtomicReference CAS with mutable objects**
+
+```java
+// AtomicReference CAS compares REFERENCES — not .equals()
+AtomicReference<List<String>> ref =
+    new AtomicReference<>(new ArrayList<>());
+
+List<String> expected = ref.get();
+expected.add("item");           // modifies the list — same reference
+
+// CAS "succeeds" — same reference
+ref.compareAndSet(expected, new ArrayList<>());
+// But we modified the supposedly "expected" object
+// AtomicReference works on REFERENCES — use immutable objects
+
+// ✅ Correct pattern — immutable snapshots
+AtomicReference<List<String>> ref2 =
+    new AtomicReference<>(List.of());  // immutable
+
+List<String> current = ref2.get();
+List<String> updated = new ArrayList<>(current);
+updated.add("item");
+ref2.compareAndSet(current, Collections.unmodifiableList(updated));
+```
+
+---
+
+**🪤 Trap 4 — volatile array elements are NOT volatile**
+
+```java
+volatile int[] array = new int[10];
+
+// array reference IS volatile — replacing array is visible
+array = new int[20];    // ✅ visible to all threads
+
+// array ELEMENTS are NOT volatile
+array[0] = 42;          // ❌ NOT guaranteed visible to other threads
+                        // volatile applies to reference, not contents
+
+// ✅ Use AtomicIntegerArray for volatile array elements
+AtomicIntegerArray atomicArray = new AtomicIntegerArray(10);
+atomicArray.set(0, 42);         // atomic + visible
+atomicArray.incrementAndGet(0); // atomic increment of element
+```
+
+---
+
+**🪤 Trap 5 — ReadWriteLock — write starvation under heavy read load**
+
+```java
+ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
+// Default: unfair mode
+
+// 100 reader threads constantly reading
+// Writer thread needs exclusive lock
+// Problem: new readers keep arriving — writer waits indefinitely
+// Write starvation — writer never gets lock
+
+// Fix: fair mode — writer gets priority after waiting
+ReentrantReadWriteLock fairRwLock = new ReentrantReadWriteLock(true);
+// fair: queued writer blocks new readers
+// prevents starvation — writer gets lock after current readers finish
+
+// Or: StampedLock — no reader/writer starvation issue
+// Or: limit read lock hold time — release and re-acquire
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: CAS (Compare-And-Swap) CPU instruction + memory barrier**
+
+```
+volatile — memory barrier:
+  volatile write → StoreStore + StoreLoad barrier
+    → flush store buffer to cache/memory
+    → all prior stores visible before this write
+  volatile read  → LoadLoad + LoadStore barrier
+    → invalidate load buffer
+    → subsequent loads see most recent values
+
+CAS (Compare-And-Swap) — x86 LOCK CMPXCHG:
+  AtomicInteger.compareAndSet(expected, update):
+  → sun.misc.Unsafe.compareAndSwapInt()
+  → JIT compiles to: LOCK CMPXCHG [address], expected, update
+  → LOCK prefix: bus lock — atomic across cores
+  → Single instruction — no OS mutex needed
+  → Much faster than synchronized (no thread blocking)
+
+CAS retry loop (spin):
+  int getAndIncrement() {
+      while (true) {
+          int current = value;
+          int next    = current + 1;
+          if (compareAndSet(current, next)) return current;
+          // CAS failed — another thread changed value — retry
+      }
+  }
+  High contention → many retries → CPU wasted spinning
+
+LongAdder — striped counter:
+  Instead of one contested cell:
+    [cell0][cell1][cell2][cell3] — one per CPU (Contended padding)
+  Thread updates its cell (hash of thread ID)
+  sum() adds all cells
+  Dramatically reduces CAS contention — each thread mostly hits own cell
+
+ReentrantLock internals (AQS — AbstractQueuedSynchronizer):
+  State: volatile int state (0=unlocked, 1=locked, N=reentrant count)
+  Queue: CLH (Craig-Landin-Hagersten) linked list of waiting threads
+  lock():
+    CAS(state, 0, 1) → success: acquired
+    Fail: add to CLH queue, LockSupport.park() — OS parks thread
+  unlock():
+    state-- (or set 0)
+    LockSupport.unpark(nextInQueue) — wake next waiter
+```
+
+---

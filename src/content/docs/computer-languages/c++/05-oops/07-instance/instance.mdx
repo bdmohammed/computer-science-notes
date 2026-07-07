@@ -1,0 +1,1154 @@
+---
+title: C++ Object Initialization & Construction
+slug: computer-languages/cpp/oop/object-initialization
+description: Master C++ instance initialization — member initializer lists, construction order, virtual dispatch in constructors, and avoiding undefined behavior.
+sidebar:
+  label: "Instance Flow"
+  badge:
+    text: C++ Internals
+    variant: tip
+tags: [cpp, constructor, initialization, vtable, interview, memory]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 🏗️ Object Initialization in C++
+
+> **In C++, object construction is a deterministic, phase-based process. Unlike Java, C++ gives you explicit control over *how* members are initialized via the **Member Initializer List**. Understanding this flow is critical for performance and correctness.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of C++ construction as **Two Stages**.
+1. **Initialization Phase**: Memory allocated. Base classes and members are initialized (either by your list or default constructors). **Vtables are set up here.**
+2. **Constructor Body Phase**: Your code runs. The object is fully formed.
+⚠️ **Key Difference**: In C++, during the Base class constructor, the object *is* a Base. Virtual calls do NOT dispatch to Derived.
+</Aside>
+
+---
+
+## 🔬 The Construction Sequence
+
+```
+new Child() called
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  1. MEMORY ALLOCATION                       │
+│  Operator new reserves memory               │
+│  (Garbage/Undefined values initially)       │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  2. BASE CLASS INITIALIZATION               │
+│  Parent Constructor runs fully              │
+│  (Parent VTable active)                     │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  3. MEMBER INITIALIZATION                   │
+│  Members init in DECLARATION order          │
+│  (Via Initializer List or Default Ctor)     │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  4. DERIVED VTABLE SETUP                    │
+│  VTable pointer updated to Child            │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  5. CONSTRUCTOR BODY                        │
+│  Your code executes                         │
+└─────────────────────────────────────────────┘
+```
+
+### The Execution Order 📜
+
+```text
+1. Base Classes (Left-to-Right in inheritance list)
+2. Non-Static Data Members (Top-to-Bottom in class declaration)
+3. Constructor Body
+```
+
+<Aside type="caution">
+**Crucial Rule**: Member initialization order is determined by **declaration order** in the class, NOT the order in the initializer list. Relying on list order for dependencies between members is Undefined Behavior.
+</Aside>
+
+---
+
+## 💻 Real-World Code — The Initializer List
+
+In Java, assignments happen in the body or blocks. In C++, you should prefer the **Initializer List** for efficiency and correctness.
+
+<Code lang="cpp" title="Efficient Initialization" code={`
+class DBConnection {
+    std::string host;
+    int port;
+    const int timeout; // Const MUST be init in list
+
+public:
+    // ✅ Preferred: Direct initialization
+    DBConnection(std::string h, int p, int t) 
+        : host(std::move(h)), // Move semantics
+          port(p),
+          timeout(t) 
+    {
+        // Body is empty. No re-assignment overhead.
+    }
+
+    // ❌ Bad: Assignment in body
+    DBConnectionBad(std::string h, int p, int t) {
+        host = h;   // 1. Default construct host
+                    // 2. Assign h to host (Double work!)
+        port = p;
+        // timeout = t; // ❌ Compile Error: Const assignment
+    }
+};
+`} />
+
+---
+
+## 🔁 Inheritance — The "Virtual Dispatch" Trap
+
+This is the biggest difference from Java.
+
+| Feature | Java | C++ |
+|---------|------|-----|
+| **Object Identity during Base Ctor** | It is a `Child` | It is a `Base` |
+| **Virtual Call in Base Ctor** | Dispatches to `Child` | Dispatches to `Base` |
+| **Accessing Child Fields in Base Ctor** | Possible (but risky/uninit) | **Impossible/UB** |
+
+<Code lang="cpp" title="No Polymorphism in Constructors" code={`
+#include <iostream>
+
+class Parent {
+public:
+    Parent() {
+        std::cout << "Parent Constructor\n";
+        show(); // Calls Parent::show, NOT Child::show
+    }
+    virtual void show() {
+        std::cout << "Parent Show\n";
+    }
+};
+
+class Child : public Parent {
+    int val = 42;
+public:
+    Child() : Parent() {
+        std::cout << "Child Constructor\n";
+    }
+    void show() override {
+        // If this were called from Parent(), 'val' might be uninitialized
+        // But in C++, Parent() calls Parent::show() anyway.
+        std::cout << "Child Show: " << val << "\n";
+    }
+};
+
+// Output:
+// Parent Constructor
+// Parent Show      ← ⚠️ Not "Child Show"!
+// Child Constructor
+`} />
+
+<Aside type="danger">
+**🚨 Production Bug**: In Java, calling an overridden method from a constructor accesses uninitialized child fields (often null/0). In C++, it doesn't even call the child method. Both are dangerous, but C++ fails silently by calling the base version.
+**Rule**: Never call virtual functions from constructors or destructors.
+</Aside>
+
+---
+
+## ⚠️ Member Initialization Order
+
+<Code lang="cpp" title="Declaration Order Matters" code={`
+class Foo {
+    int a;
+    int b;
+public:
+    // ⚠️ DANGER: b depends on a.
+    // If declared 'int b; int a;', this is UB because b initializes first.
+    Foo(int x) : b(x), a(b) { 
+        // a initializes using b.
+        // Safe ONLY if 'a' is declared after 'b' in class.
+    }
+};
+`} />
+
+<CardGrid>
+  <Card title="✅ Safe Pattern" icon="approve-check">
+    ```cpp
+    class Safe {
+        int a;
+        int b; // Declared after a
+    public:
+        Safe(int x) : a(x), b(a) {} // Safe: a init first
+    };
+    ```
+  </Card>
+  
+  <Card title="❌ Unsafe Pattern" icon="error">
+    ```cpp
+    class Unsafe {
+        int b; // Declared BEFORE a
+        int a;
+    public:
+        Unsafe(int x) : a(x), b(a) {} // UB: b uses uninitialized a
+    };
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔀 Delegating Constructors (C++11)
+
+Similar to Java's `this()`, C++ allows constructors to delegate to others.
+
+<Code lang="cpp" title="Constructor Delegation" code={`
+class HttpClient {
+    std::string host;
+    int port;
+    int timeout;
+
+public:
+    // Primary Constructor
+    HttpClient(std::string h, int p, int t) 
+        : host(std::move(h)), port(p), timeout(t) {}
+
+    // Delegating Constructor
+    HttpClient(std::string h, int p) 
+        : HttpClient(std::move(h), p, 3000) {} // Delegates to primary
+
+    HttpClient(std::string h) 
+        : HttpClient(std::move(h), 80) {}      // Delegates to 2-arg
+};
+`} />
+
+**Execution Flow**:
+1. Delegatee (Primary) runs completely (Init List → Body).
+2. Delegator resumes (if it has a body).
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="🪤 Trap 1: Uninitialized Members" icon="error">
+    ```cpp
+    class Data {
+        int x;
+        int y;
+    public:
+        Data() { 
+            // x and y are UNINITIALIZED (garbage values)
+            // Unlike Java, they are NOT 0!
+        }
+    };
+    ```    
+    **Fix**: Always use Initializer Lists: `Data() : x(0), y(0) {}`.
+  </Card>
+  
+  <Card title="🪤 Trap 2: Static vs Instance Init" icon="caution">
+    ```cpp
+    class Foo {
+        static int s_count; // Shared
+        int i_count;        // Per object
+    public:
+        Foo() { s_count++; i_count = s_count; }
+    };
+    // s_count initializes before main().
+    // i_count initializes when new Foo() is called.
+    ```
+  </Card>
+
+  <Card title="🪤 Trap 3: Virtual Inheritance Complexity" icon="shield">
+    ```cpp
+    class Base { public: Base() { cout << "Base"; } };
+    class V1 : virtual public Base { public: V1() { cout << "V1"; } };
+    class V2 : virtual public Base { public: V2() { cout << "V2"; } };
+    class Join : public V1, public V2 { public: Join() { cout << "Join"; } };
+    
+    // new Join() Output: Base V1 V2 Join
+    // Virtual Base is init ONLY ONCE by the most-derived class.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 Internals — VTables & Memory
+
+### The VTable Pointer Swap
+
+1. **Start of Base Ctor**: VTable points to `Base::vtable`.
+2. **End of Base Ctor**: VTable still `Base`.
+3. **Start of Derived Ctor**: VTable updated to `Derived::vtable`.
+
+This is why virtual calls in Base ctor don't reach Derived. The Derived part of the object doesn't "exist" yet from the perspective of the vtable.
+
+### Memory Layout
+
+```text
+[ vptr | Member A | Member B | Padding ]
+```
+
+<Aside type="note">
+**Zero-Initialization**: Global/static objects are zero-initialized. Local stack objects (`Foo f;`) are **NOT**. They contain garbage unless explicitly initialized.
+</Aside>
+
+---
+
+## 📊 Java vs C++ Initialization
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>Java</th>
+      <th>C++</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Default Values</strong></td><td>0, null, false (Always)</td><td>Garbage (for locals/members)</td></tr>
+    <tr><td><strong>Init Syntax</strong></td><td>Assignments in body/blocks</td><td>Initializer List (: member(val))</td></tr>
+    <tr><td><strong>Virtual in Ctor</strong></td><td>Dispatches to Child</td><td>Dispatches to Current Class</td></tr>
+    <tr><td><strong>Member Order</strong></td><td>Top-to-Bottom</td><td>Declaration Order (Strict)</td></tr>
+    <tr><td><strong>Const Members</strong></td><td>Final (init in decl/ctor)</td><td>Must be in Initializer List</td></tr>
+  </tbody>
+</table>
+
+---
+
+## 🏭 SDE/SRE Relevance
+
+<CardGrid>
+  <Card title="Pattern 1: RAII Resource Management" icon="rocket">
+    ```cpp
+    class FileHandle {
+        FILE* fp;
+    public:
+        FileHandle(const char* name) : fp(fopen(name, "r")) {
+            if (!fp) throw std::runtime_error("Open failed");
+        }
+        ~FileHandle() { if (fp) fclose(fp); }
+    };
+    // Resource acquired in Init List. Safe.
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Performance Critical Init" icon="shield">
+    ```cpp
+    // Avoid default construction + assignment for heavy objects
+    std::vector<int> data; 
+    
+    // ❌ Bad
+    MyObj() { data = loadHugeData(); } 
+    
+    // ✅ Good
+    MyObj() : data(loadHugeData()) {} 
+    ```
+  </Card>
+
+  <Card title="Anti-Pattern: Complex Logic in Init List" icon="error">
+    ```cpp
+    // Hard to debug
+    Obj() : val(complexCalculation()) {} 
+    
+    // Better: Use a helper function
+    static int calc() { ... }
+    Obj() : val(calc()) {}
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Execution Order" icon="information">
+    ```text
+    Q: What is the order of member initialization?
+    A: Declaration order in the class definition.
+    
+    Q: When does the constructor body run?
+    A: After all bases and members are fully initialized.
+    ```
+  </Card>
+  
+  <Card title="Virtual Dispatch" icon="shield">
+    ```text
+    Q: Can I call a virtual method from a constructor?
+    A: Yes, but it won't dispatch to the derived class. It calls the version for the class currently being constructed.
+    
+    Q: Why?
+    A: The derived part of the object isn't constructed yet.
+    ```
+  </Card>
+
+  <Card title="Initializer Lists" icon="rocket">
+    ```text
+    Q: Why use Initializer Lists?
+    A: 1. Performance (avoids default construct + assign).
+       2. Correctness (required for const, references, and bases).
+    ```
+  </Card>
+
+  <Card title="Common Traps" icon="caution">
+    ```text
+    Q: Are members zero-initialized?
+    A: Only if static/global. Local objects have garbage values.
+    
+    Q: What is the order of Base vs Member init?
+    A: Bases first, then Members, then Body.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+C++ OBJECT INITIALIZATION CHECKLIST
+
+1. Memory Allocation:
+   - Stack: Garbage values.
+   - Heap: Garbage values (unless new(std::nothrow) or value-init).
+
+2. Base Classes:
+   - Initialized in inheritance order.
+   - Virtual bases first.
+
+3. Members:
+   - Initialized in DECLARATION order.
+   - Use Initializer List.
+
+4. VTable:
+   - Set to current class level.
+
+5. Constructor Body:
+   - Runs last.
+   - Object is fully valid.
+
+6. Safety:
+   - No virtual calls in ctors/dtors.
+   - Don't rely on other members being init'd unless declared earlier.
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always use Initializer Lists.
+2. ✅ Enable compiler warnings for uninitialized members (`-Wuninitialized`).
+3. ✅ Avoid complex logic in constructors; use factory functions if needed.
+4. ✅ Remember: In C++, during construction, the object is *not* polymorphic yet.
+
+Mastering initialization ensures efficient, bug-free C++ code. ☕✨
+</Aside>
+
+---
+
+# 🔄 C++ Instance Control Flow — Complete Deep Dive
+
+---
+
+## 📌 What Is Instance Control Flow?
+
+**Controlling every stage of an object's lifetime** — from creation to destruction, and every transfer of state in between.
+
+```
+Instance Lifetime Timeline:
+                                                
+  [allocate memory]                             
+       │                                        
+       ▼                                        
+  [construct] ← constructor called              
+       │                                        
+       ├──[copy] ← copy ctor / copy assign      
+       ├──[move] ← move ctor / move assign      
+       │                                        
+       ▼                                        
+  [use object]                                  
+       │                                        
+       ▼                                        
+  [destruct] ← destructor called                
+       │                                        
+       ▼                                        
+  [deallocate memory]                           
+```
+
+---
+
+## 🗺️ Control Points Map
+
+```
+Instance Control Flow
+│
+├── Creation Control
+│   ├── Default constructor      → T()
+│   ├── Parameterized ctor       → T(args...)
+│   ├── Delegating ctor (C++11)  → T() : T(other_args)
+│   ├── Inheriting ctor (C++11)  → using Base::Base
+│   ├── explicit                 → disable implicit conversion
+│   └── = delete                 → prevent construction
+│
+├── Copy Control
+│   ├── Copy constructor         → T(const T&)
+│   └── Copy assignment          → T& operator=(const T&)
+│
+├── Move Control (C++11)
+│   ├── Move constructor         → T(T&&)
+│   └── Move assignment          → T& operator=(T&&)
+│
+├── Destruction Control
+│   └── Destructor               → ~T()
+│
+├── Generation Control
+│   ├── = default                → compiler generates
+│   └── = delete                 → disabled
+│
+└── Lifetime Control
+    ├── Automatic                → stack
+    ├── Static                   → program lifetime
+    ├── Dynamic                  → heap (new/delete)
+    └── Thread-local             → per thread
+```
+
+---
+
+## 🔷 1. Construction — Every Form
+
+```cpp
+class Config {
+    std::string host_;
+    int         port_;
+    bool        ssl_;
+
+public:
+    // Default constructor
+    Config()
+        : host_("localhost"), port_(8080), ssl_(false) { }
+
+    // Parameterized constructor
+    Config(std::string host, int port, bool ssl = false)
+        : host_(std::move(host))
+        , port_(port)
+        , ssl_(ssl)
+    {
+        if (port_ <= 0 || port_ > 65535)
+            throw std::invalid_argument("invalid port");
+    }
+
+    // Delegating constructor (C++11) — reuse another ctor
+    Config(const std::string& url)
+        : Config(parse_host(url), parse_port(url))  // delegates
+    { }
+    // 'this' is fully constructed by the time body runs
+};
+
+Config c1;                        // default ctor
+Config c2("example.com", 443, true);  // parameterized
+Config c3("https://example.com:443"); // delegating
+```
+
+### Member Initialization Order
+
+```cpp
+class Foo {
+    int a;
+    int b;
+    int c;
+
+public:
+    Foo() : c(3), a(1), b(a + 1) { }
+    // Members initialized in DECLARATION ORDER: a, b, c
+    // NOT in initializer list order!
+    // a=1, b=a+1=2, c=3 — works here
+
+    Foo() : b(a + 1), a(1), c(3) { }
+    // a initialized first (declaration order)
+    // a is UNINITIALIZED when b is initialized → UB
+    // b = garbage + 1
+};
+```
+
+```
+Rule: Members initialized in ORDER OF DECLARATION in the class.
+      Initializer list order is IRRELEVANT to actual order.
+      Compiler warns about order mismatch: -Wreorder
+```
+
+---
+
+## 🔷 2. `explicit` — Construction Control
+
+```cpp
+class Buffer {
+    int size_;
+public:
+    Buffer(int size) : size_(size) { }         // implicit — dangerous
+    explicit Buffer(int size) : size_(size) { } // explicit — safe
+};
+
+// Without explicit:
+Buffer b1 = 100;     // ✅ implicit conversion: int → Buffer
+Buffer b2(100);      // ✅ direct construction
+void process(Buffer b);
+process(100);        // ✅ implicit: 100 converted to Buffer(100)
+                     // ← dangerous: user may not intend this
+
+// With explicit:
+Buffer b1 = 100;     // ❌ compile error — explicit forbids implicit
+Buffer b2(100);      // ✅ direct init — always works
+Buffer b3{100};      // ✅ direct-list-init — works with explicit
+process(100);        // ❌ compile error — explicit prevents this
+process(Buffer(100));// ✅ explicit construction
+```
+
+---
+
+## 🔷 3. Inheriting Constructors (C++11)
+
+```cpp
+class Base {
+public:
+    Base(int x)           { }
+    Base(int x, int y)    { }
+    Base(std::string s)   { }
+};
+
+class Derived : public Base {
+    int extra_;
+public:
+    using Base::Base;   // inherit ALL Base constructors
+
+    // Now Derived has:
+    // Derived(int)           ← inherited
+    // Derived(int, int)      ← inherited
+    // Derived(std::string)   ← inherited
+
+    // extra_ is DEFAULT INITIALIZED (0 for int)
+    // Must add Derived-specific ctors if extra_ needs initialization
+};
+
+Derived d1(42);          // ✅ inherited Base(int)
+Derived d2(1, 2);        // ✅ inherited Base(int, int)
+Derived d3("hello");     // ✅ inherited Base(string)
+```
+
+---
+
+## 🔷 4. The Rule of Zero / Three / Five
+
+```cpp
+// ────────────────────────────────────────────
+// RULE OF ZERO — best option
+// ────────────────────────────────────────────
+// Use types that manage their own resources.
+// Define NONE of the five special members.
+// Compiler generates correct ones automatically.
+class Config {
+    std::string host_;          // string manages its own memory
+    std::vector<int> ports_;    // vector manages its own memory
+    std::unique_ptr<SSL> ssl_;  // unique_ptr manages its own resource
+    // No destructor, no copy, no move needed —
+    // all members handle themselves correctly
+};
+// ✅ Config is copyable (if SSL is copyable), movable, destructable
+```
+
+```cpp
+// ────────────────────────────────────────────
+// RULE OF THREE — C++03 and before
+// ────────────────────────────────────────────
+// If you define ANY of: destructor, copy ctor, copy assign
+// → define ALL THREE
+class Buffer {
+    char*  data_;
+    size_t size_;
+
+public:
+    Buffer(size_t n) : data_(new char[n]), size_(n) { }
+
+    // 1. Destructor
+    ~Buffer() { delete[] data_; }
+
+    // 2. Copy constructor
+    Buffer(const Buffer& o)
+        : data_(new char[o.size_]), size_(o.size_) {
+        std::memcpy(data_, o.data_, size_);
+    }
+
+    // 3. Copy assignment
+    Buffer& operator=(const Buffer& o) {
+        if (this == &o) return *this;
+        delete[] data_;
+        size_ = o.size_;
+        data_ = new char[size_];
+        std::memcpy(data_, o.data_, size_);
+        return *this;
+    }
+};
+```
+
+```cpp
+// ────────────────────────────────────────────
+// RULE OF FIVE — C++11 and beyond
+// ────────────────────────────────────────────
+// Adds move ctor + move assign to Rule of Three
+class Buffer {
+    char*  data_;
+    size_t size_;
+
+public:
+    Buffer(size_t n) : data_(new char[n]), size_(n) { }
+
+    // 1. Destructor
+    ~Buffer() { delete[] data_; }
+
+    // 2. Copy constructor
+    Buffer(const Buffer& o)
+        : data_(new char[o.size_]), size_(o.size_) {
+        std::memcpy(data_, o.data_, size_);
+    }
+
+    // 3. Copy assignment
+    Buffer& operator=(const Buffer& o) {
+        if (this == &o) return *this;
+        Buffer tmp(o);             // copy-and-swap
+        std::swap(data_, tmp.data_);
+        std::swap(size_, tmp.size_);
+        return *this;
+    }
+
+    // 4. Move constructor — STEAL resources
+    Buffer(Buffer&& o) noexcept
+        : data_(std::exchange(o.data_, nullptr))
+        , size_(std::exchange(o.size_, 0)) { }
+
+    // 5. Move assignment — STEAL resources
+    Buffer& operator=(Buffer&& o) noexcept {
+        if (this == &o) return *this;
+        delete[] data_;
+        data_ = std::exchange(o.data_, nullptr);
+        size_ = std::exchange(o.size_, 0);
+        return *this;
+    }
+};
+```
+
+---
+
+## 🔷 5. Special Member Generation Rules
+
+```
+Which special members does the compiler generate?
+Complex rules — this table tells you exactly:
+```
+
+| User defines | Default ctor | Destructor | Copy ctor | Copy assign | Move ctor | Move assign |
+|---|---|---|---|---|---|---|
+| nothing | ✅ gen | ✅ gen | ✅ gen | ✅ gen | ✅ gen | ✅ gen |
+| any ctor | ❌ NOT gen | ✅ gen | ✅ gen | ✅ gen | ✅ gen | ✅ gen |
+| destructor | ✅ gen | — | ✅ gen⚠️ | ✅ gen⚠️ | ❌ NOT gen | ❌ NOT gen |
+| copy ctor | ✅ gen | ✅ gen | — | ✅ gen⚠️ | ❌ NOT gen | ❌ NOT gen |
+| copy assign | ✅ gen | ✅ gen | ✅ gen⚠️ | — | ❌ NOT gen | ❌ NOT gen |
+| move ctor | ✅ gen | ✅ gen | ❌ deleted | ❌ deleted | — | ❌ NOT gen |
+| move assign | ✅ gen | ✅ gen | ❌ deleted | ❌ deleted | ❌ NOT gen | — |
+
+> ⚠️ Generated but deprecated — defining destructor without copy = likely resource management bug.
+
+```cpp
+class Dangerous {
+public:
+    ~Dangerous() { }          // user destructor
+    // Move ctor: NOT generated
+    // Move assign: NOT generated
+    // Copy ctor: generated (but deprecated)
+    // Copy assign: generated (but deprecated)
+};
+
+Dangerous a;
+Dangerous b = std::move(a);  // calls COPY ctor — not move!
+                              // because move ctor not generated
+                              // std::move just casts to rvalue
+                              // copy ctor selected from overload resolution
+```
+
+---
+
+## 🔷 6. `= default` and `= delete` — Generation Control
+
+```cpp
+class Singleton {
+    Singleton() = default;                              // private default ctor
+
+public:
+    static Singleton& instance() {
+        static Singleton inst;                          // one instance
+        return inst;
+    }
+
+    Singleton(const Singleton&) = delete;               // no copy
+    Singleton& operator=(const Singleton&) = delete;    // no copy assign
+    Singleton(Singleton&&) = delete;                    // no move
+    Singleton& operator=(Singleton&&) = delete;         // no move assign
+};
+
+Singleton& s = Singleton::instance();    // ✅
+Singleton s2 = s;                        // ❌ compile error — copy deleted
+```
+
+```cpp
+// = default: explicitly compiler-generated (may differ from { })
+class Trivial {
+public:
+    Trivial() = default;          // trivially default constructible
+    ~Trivial() = default;         // trivially destructible
+    Trivial(const Trivial&) = default;
+    // is_trivially_copyable<Trivial> = true
+    // memcpy is safe, can be stored in shared memory, etc.
+};
+
+// = delete for non-obvious overloads
+void process(int x);
+void process(double) = delete;   // prevent double → int implicit conversion
+void process(bool)   = delete;   // prevent bool → int implicit conversion
+
+process(42);      // ✅ int
+process(3.14);    // ❌ compile error — double overload deleted
+process(true);    // ❌ compile error — bool overload deleted
+```
+
+---
+
+## 🔷 7. Copy Semantics — Deep Dive
+
+```cpp
+class String {
+    char*  data_;
+    size_t len_;
+
+public:
+    String(const char* s)
+        : len_(std::strlen(s))
+        , data_(new char[len_ + 1]) {
+        std::memcpy(data_, s, len_ + 1);
+    }
+
+    // Deep copy — allocates new memory
+    String(const String& o)
+        : len_(o.len_)
+        , data_(new char[len_ + 1]) {
+        std::memcpy(data_, o.data_, len_ + 1);
+    }
+
+    String& operator=(const String& o) {
+        if (this == &o) return *this;         // self-assignment guard
+        char* tmp = new char[o.len_ + 1];     // allocate first (exception safety)
+        std::memcpy(tmp, o.data_, o.len_ + 1);
+        delete[] data_;                        // free old memory
+        data_ = tmp;
+        len_  = o.len_;
+        return *this;
+    }
+
+    ~String() { delete[] data_; }
+};
+
+String a("hello");
+String b = a;           // copy ctor — b gets own "hello" copy
+String c("world");
+c = a;                  // copy assign — c's "world" freed, gets "hello" copy
+```
+
+---
+
+## 🔷 8. Move Semantics — Deep Dive
+
+```cpp
+class String {
+    char*  data_;
+    size_t len_;
+
+public:
+    // Move constructor — STEAL, don't copy
+    String(String&& o) noexcept
+        : data_(o.data_)         // steal pointer
+        , len_(o.len_) {
+        o.data_ = nullptr;       // leave source in valid empty state
+        o.len_  = 0;
+    }
+
+    // Move assignment — STEAL, don't copy
+    String& operator=(String&& o) noexcept {
+        if (this == &o) return *this;
+        delete[] data_;          // free our current resource
+        data_ = o.data_;         // steal pointer
+        len_  = o.len_;
+        o.data_ = nullptr;       // leave source valid
+        o.len_  = 0;
+        return *this;
+    }
+};
+
+String a("hello world — very long string with heap allocation");
+String b = std::move(a);   // move ctor: b steals a's pointer
+                            // a.data_ = nullptr, a.len_ = 0
+                            // ZERO allocation, ZERO copy
+                            // O(1) regardless of string length
+
+// After move: 'a' is in valid but unspecified state
+// Can still destroy it (destructor: delete[] nullptr = no-op)
+// Should not READ from it (unspecified state)
+```
+
+### Move vs Copy Cost
+
+```
+String with 1MB of data:
+
+Copy constructor:
+  1. allocate 1MB
+  2. memcpy 1MB bytes
+  Cost: O(n) — proportional to size
+
+Move constructor:
+  1. copy 3 pointer-sized values (data_, len_, cap_)
+  Cost: O(1) — constant regardless of size
+
+For 1000 strings in vector reallocation:
+  Copy: 1000 × 1MB = 1GB copied
+  Move: 1000 × 3 assignments = negligible
+```
+
+---
+
+## 🔷 9. RAII — Lifetime as Control Flow
+
+```cpp
+class TransactionGuard {
+    Database& db_;
+    bool committed_ = false;
+
+public:
+    explicit TransactionGuard(Database& db)
+        : db_(db) {
+        db_.begin_transaction();    // acquire on construction
+    }
+
+    void commit() {
+        db_.commit();
+        committed_ = true;
+    }
+
+    ~TransactionGuard() {           // release on destruction
+        if (!committed_) {
+            db_.rollback();         // automatic rollback if not committed
+        }
+    }
+
+    // Non-copyable — transaction can't be duplicated
+    TransactionGuard(const TransactionGuard&) = delete;
+    TransactionGuard& operator=(const TransactionGuard&) = delete;
+};
+
+void transfer(Database& db, int from, int to, double amount) {
+    TransactionGuard txn(db);       // begin transaction
+
+    db.debit(from, amount);
+    db.credit(to, amount);
+
+    txn.commit();                   // explicit commit
+}   // ← txn destructor: already committed → no rollback
+    // if exception thrown: txn destructor → rollback automatically
+```
+
+---
+
+## 🔷 10. Object Lifetime Control
+
+```cpp
+// Automatic (stack) — compiler controls lifetime
+{
+    Config cfg("localhost", 8080);
+}   // ← destructor called here — GUARANTEED
+
+// Static — lives for program duration
+static Logger logger;   // constructed once, destroyed at program exit
+
+// Dynamic (heap) — YOU control lifetime
+auto* obj = new Foo();
+delete obj;   // ← must call explicitly
+
+// Modern: RAII wrapper for dynamic
+auto obj = std::make_unique<Foo>();
+// auto-deleted when unique_ptr goes out of scope
+
+// Placement new — construct in pre-allocated memory
+alignas(Foo) std::byte buf[sizeof(Foo)];
+Foo* p = new(buf) Foo(42);   // construct in buf — no allocation
+p->~Foo();                    // explicit destructor call — no deallocation
+```
+
+### Temporary Object Lifetime
+
+```cpp
+// Temporaries destroyed at end of FULL EXPRESSION
+std::string s = std::string("hello") + " world";
+// temporary string("hello") constructed
+// operator+ called, result assigned to s
+// temporary destroyed — AFTER assignment completed
+
+// Lifetime EXTENSION — binding to const ref
+const std::string& ref = std::string("hello");
+// temporary's lifetime extended to ref's scope
+// valid to use ref until end of scope
+
+// ❌ NO extension — dangling reference
+std::string&& rref = std::string("hello");  // ✅ extended
+const char* p = std::string("hello").c_str();  // ❌ dangling
+                                               // string destroyed at ;
+                                               // p points to freed memory
+```
+
+---
+
+## 🔬 Under the Hood — Object Construction Assembly
+
+```cpp
+class Foo {
+    int x, y;
+public:
+    Foo(int a, int b) : x(a), y(b) { }
+};
+
+Foo f(1, 2);
+```
+
+```asm
+; Stack allocation:
+sub rsp, 8         ; allocate 8 bytes for Foo on stack
+
+; Constructor call (if not inlined):
+mov edi, 1         ; arg: a = 1
+mov esi, 2         ; arg: b = 2
+lea rdi, [rsp]     ; this = address of f
+call Foo::Foo(int,int)
+
+; Inside constructor:
+mov DWORD PTR [rdi], 1     ; x = a
+mov DWORD PTR [rdi+4], 2   ; y = b
+ret
+
+; Destruction (stack unwind):
+; add rsp, 8       ; trivial destructor = just stack pointer adjustment
+; No instruction if trivially destructible — compiler optimizes away
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Missing `noexcept` on move → copies instead of moves:**
+
+```cpp
+// ❌ Production bug — vector reallocation always copies
+class Packet {
+    std::vector<uint8_t> payload_;   // potentially large
+
+public:
+    Packet(Packet&& o) {             // move ctor WITHOUT noexcept
+        payload_ = std::move(o.payload_);
+    }
+};
+
+std::vector<Packet> packets;
+packets.reserve(100);
+
+for (int i = 0; i < 1000; i++) {
+    packets.push_back(make_large_packet());
+    // At capacity: vector reallocates
+    // Packet move ctor is NOT noexcept
+    // std::vector COPIES all existing packets (safe fallback)
+    // Each copy: allocate + memcpy of payload
+    // 1000 packets × avg 64KB = 64MB of unnecessary copies
+    // Service latency spikes every reallocation
+
+// ✅ Fix: one word
+    Packet(Packet&& o) noexcept {    // noexcept → vector moves
+        payload_ = std::move(o.payload_);
+    }
+    // vector now moves → 3 pointer swaps per packet → negligible
+};
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+class Foo {
+    std::unique_ptr<int> p_;
+public:
+    Foo() : p_(std::make_unique<int>(42)) { }
+};
+Foo a;
+Foo b = a;    // compiles?
+Foo c = std::move(a);  // compiles?
+```
+> `Foo b = a` → ❌ compile error. `unique_ptr` has deleted copy ctor → compiler tries to generate `Foo::Foo(const Foo&)` → `unique_ptr::Foo(const...)` is deleted → `Foo`'s copy ctor is deleted. `Foo c = std::move(a)` → ✅ `unique_ptr` has move ctor → `Foo`'s move ctor generated → works.
+
+**Trap 2:**
+```cpp
+class Widget {
+    int data_;
+public:
+    Widget(int d) : data_(d) { }
+    Widget(const Widget&) = default;
+    // move ctor generated?
+};
+```
+> ❌ **Move ctor NOT generated.** User declared copy ctor → move ctor suppressed. To get move ctor: explicitly `Widget(Widget&&) = default;`. Without it: `std::move(widget)` calls the copy ctor.
+
+**Trap 3:**
+```cpp
+class Foo {
+    int y = 10;
+    int x = 5;
+public:
+    Foo() : x(1), y(x + 1) { }
+    // x = ?, y = ?
+};
+```
+> `y` initialized first (declared first), then `x`. So `y = x + 1 = 5 + 1 = 6` (using default `x = 5`). Then `x = 1`. Final: `x = 1, y = 6`. Initializer list order is IRRELEVANT — declaration order wins. `-Wreorder` warning catches this.
+
+**Trap 4:**
+```cpp
+class A {
+public:
+    A() { std::cout << "A"; }
+    ~A() { std::cout << "~A"; }
+};
+class B : public A {
+    A member_;
+public:
+    B() { std::cout << "B"; }
+    ~B() { std::cout << "~B"; }
+};
+B b;   // output?
+```
+> `A` (base ctor) → `A` (member_ ctor) → `B` (B ctor). Destruction: `~B` → `~A` (member_) → `~A` (base). Output: `AAB~B~A~A`.
+
+**Trap 5:**
+```cpp
+std::string make_string() { return std::string("hello"); }
+const char* p = make_string().c_str();
+std::cout << p;   // UB?
+```
+> **UB.** `make_string()` returns a temporary `std::string`. `.c_str()` gets pointer to its internal buffer. Temporary destroyed at `;`. `p` is dangling. `std::cout << p` reads freed memory. Fix: `std::string s = make_string(); const char* p = s.c_str();`.
+
+---

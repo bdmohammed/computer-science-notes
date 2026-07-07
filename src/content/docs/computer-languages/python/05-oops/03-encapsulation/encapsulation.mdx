@@ -1,0 +1,1184 @@
+---
+title: Python Encapsulation
+slug: computer-languages/python/oop/encapsulation
+description: Master encapsulation in Python — using naming conventions, properties, and dataclasses to bundle data with behavior. Understand why Python prefers "consenting adults" over strict access control.
+sidebar:
+  label: "Encapsulation"
+  badge:
+    text: OOP Pillar
+    variant: tip
+tags: [python, encapsulation, properties, dataclasses, oop, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 📦 Encapsulation in Python
+
+> **Encapsulation** bundles data (attributes) and methods (behavior) into a single unit (class).  
+> Unlike Java, Python **does not enforce strict access control** (like `private`). Instead, it relies on **conventions** and **properties** to manage access.
+
+```text
+Java Encapsulation   → Python Equivalent
+│
+├── private field    → _single_underscore (Convention) or __double (Mangling)
+├── public getter    → @property decorator
+├── public setter    → @field.setter decorator
+├── immutable field  → No setter / frozen dataclass
+└── validation       → Logic inside @setter or __init__
+```
+
+<Aside type="success">
+🎯 **Key Insight**: In Python, encapsulation is about **communication**, not enforcement.  
+- `_var`: "Please don't touch this (internal use)."  
+- `__var`: "I really mean it (name mangling)."  
+- `@property`: "Access this like an attribute, but run my code."
+</Aside>
+
+---
+
+## 🔬 How It Works — Before & After
+
+### ❌ Without Encapsulation (Public Attributes)
+Anyone can modify data directly, leading to invalid states.
+
+<Code lang="python" title="Dangerous Public Access" code={`
+class Student:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+
+s = Student("Alice", 20)
+s.age = -100  # 😱 Invalid age! No one stopped it.
+s.name = None # 😱 Null name!
+`} />
+
+### ✅ With Encapsulation (Properties & Conventions)
+Use `_` for internal storage and `@property` for controlled access.
+
+<Code lang="python" title="Safe Encapsulation with Properties" code={`
+class Student:
+    def __init__(self, name, age):
+        self.name = name      # Uses the setter below
+        self.age = age        # Uses the setter below
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if not value:
+            raise ValueError("Name cannot be empty!")
+        self._name = value
+
+    @property
+    def age(self):
+        return self._age
+
+    @age.setter
+    def age(self, value):
+        if value < 0 or value > 150:
+            raise ValueError("Invalid age!")
+        self._age = value
+
+# Usage
+s = Student("Alice", 20)
+# s.age = -100  # ❌ Raises ValueError!
+s.age = 25      # ✅ Validated
+print(s.age)    # ✅ Accesses via getter
+`} />
+
+---
+
+## 🔑 Levels of Access Control
+
+Python uses naming conventions to signal intent.
+
+| Convention | Example | Meaning | Enforcement |
+|------------|---------|---------|-------------|
+| **Public** | `self.name` | Accessible everywhere | None |
+| **Protected** | `self._name` | Internal use (subclass/package) | Convention (Linters warn) |
+| **Private** | `self.__name` | Name Mangling (`_Class__name`) | Harder to access accidentally |
+
+<Code lang="python" title="Access Conventions in Action" code={`
+class BankAccount:
+    def __init__(self, owner, balance):
+        self.owner = owner          # Public
+        self._balance = balance     # Protected (Internal)
+        self.__pin = "1234"         # Private (Mangled)
+
+    def get_pin_hint(self):
+        # Accessing private var inside class is fine
+        return f"Hint: {self.__pin[0]}"
+
+acc = BankAccount("Bob", 100)
+print(acc.owner)       # ✅ Public
+print(acc._balance)    # ⚠️ Protected (Don't do this externally)
+# print(acc.__pin)     # ❌ AttributeError (Name mangled to _BankAccount__pin)
+`} />
+
+<Aside type="note">
+**Why Name Mangling?**  
+`__var` isn't truly private. It's renamed to `_ClassName__var` to prevent accidental overrides in subclasses. It’s not for security!
+</Aside>
+
+---
+
+## 🔄 Types of Access via Encapsulation
+
+### 1. Read-Only (Immutable)
+Define a `@property` but **no setter**.
+
+<Code lang="python" title="Read-Only Property" code={`
+class Circle:
+    def __init__(self, radius):
+        self._radius = radius
+
+    @property
+    def radius(self):
+        return self._radius
+    
+    @property
+    def area(self):
+        return 3.14 * self._radius ** 2
+
+c = Circle(5)
+print(c.area)  # ✅ 78.5
+# c.radius = 10 # ❌ AttributeError: can't set attribute
+`} />
+
+### 2. Write-Only
+Define a `setter` but **no getter** (rare, e.g., passwords).
+
+<Code lang="python" title="Write-Only Property" code={`
+class User:
+    def __init__(self):
+        self._password_hash = None
+
+    @property
+    def password(self):
+        raise AttributeError("Password is write-only")
+
+    @password.setter
+    def password(self, value):
+        # Hash before storing
+        self._password_hash = hash(value)
+
+u = User()
+u.password = "secret"
+# print(u.password) # ❌ AttributeError
+`} />
+
+### 3. Computed Properties
+Calculate values on the fly without storing them.
+
+<Code lang="python" title="Computed Property" code={`
+class Rectangle:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    @property
+    def area(self):
+        return self.width * self.height  # No _area field needed!
+
+r = Rectangle(5, 10)
+print(r.area)  # 50
+`} />
+
+---
+
+## 🏗️ Modern Encapsulation: Dataclasses
+
+For simple data containers, use `dataclasses` to reduce boilerplate.
+
+<Code lang="python" title="Encapsulation with Dataclasses" code={`
+from dataclasses import dataclass, field
+
+@dataclass
+class Product:
+    name: str
+    price: float
+    
+    # Post-init validation
+    def __post_init__(self):
+        if self.price < 0:
+            raise ValueError("Price cannot be negative")
+
+p = Product("Laptop", 1000)
+# p.price = -50 # ✅ Still public by default, but validated at creation
+`} />
+
+For **immutable** objects, use `frozen=True`.
+
+```python
+@dataclass(frozen=True)
+class Point:
+    x: int
+    y: int
+
+p = Point(1, 2)
+# p.x = 10 # ❌ FrozenInstanceError
+```
+
+---
+
+## ⚠️ Common Pitfalls
+
+<CardGrid>
+  <Card title="Pitfall 1: Exposing Mutable Lists" icon="error">
+    ```python
+    class Team:
+        def __init__(self):
+            self._members = []
+
+        @property
+        def members(self):
+            return self._members  # ❌ Caller can modify list!
+
+    team = Team()
+    team.members.append("Hacker") # 😱 Bypasses logic
+    ```
+    **Fix**: Return a copy or tuple.
+    ```python
+    @property
+    def members(self):
+        return tuple(self._members)  # ✅ Immutable view
+    ```
+  </Card>
+  
+  <Card title="Pitfall 2: Overusing Getters/Setters" icon="caution">
+    ```python
+    # ❌ Java-style verbosity in Python
+    class Point:
+        def get_x(self): return self._x
+        def set_x(self, val): self._x = val
+
+    # ✅ Pythonic: Use public attributes or properties only if needed
+    class Point:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you make a variable private in Python?" icon="information">
+    Use double underscores `__var`. This triggers **name mangling** (`_Class__var`), making it harder to access accidentally. However, it’s not strictly enforced like Java's `private`.
+  </Card>
+  
+  <Card title="Q: What is the difference between `_var` and `__var`?" icon="approve-check">
+    - `_var`: **Convention**. "Internal use." Linters may warn.
+    - `__var`: **Name Mangling**. "Avoid subclass collisions." Renamed to `_Class__var`.
+  </Card>
+
+  <Card title="Q: How do you validate data in Python classes?" icon="shield">
+    Use the `@property` decorator. Define a getter and a setter with validation logic inside the setter.
+  </Card>
+
+  <Card title="Q: Can you access a 'private' variable in Python?" icon="backspace">
+    **Yes**. You can access it via `_ClassName__var`. Python prioritizes flexibility over strict enforcement.
+  </Card>
+
+  <Card title="Q: When should you use `@property`?" icon="rocket">
+    When you need to add validation, logging, or computed logic to an attribute access without changing the public API.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Encapsulated Graph Node
+
+<Code lang="python" title="Encapsulated Graph Node" code={`
+class GraphNode:
+    def __init__(self, value):
+        self._value = value
+        self._neighbors = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @property
+    def neighbors(self):
+        # Return a copy to prevent external modification
+        return list(self._neighbors)
+
+    def add_neighbor(self, node):
+        if node not in self._neighbors:
+            self._neighbors.append(node)
+
+# Usage
+node1 = GraphNode(1)
+node2 = GraphNode(2)
+node1.add_neighbor(node2)
+print(node1.neighbors) # [GraphNode(2)]
+`} />
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Goal | Python Technique |
+|------|------------------|
+| **Public** | `self.var` |
+| **Protected** | `self._var` |
+| **Private** | `self.__var` |
+| **Getter** | `@property` |
+| **Setter** | `@var.setter` |
+| **Immutable** | `@dataclass(frozen=True)` |
+| **Read-Only** | `@property` with no setter |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use `_` for internal variables.
+2. ✅ Use `__` for name mangling (avoiding subclass collisions).
+3. ✅ Use `@property` for validation and controlled access.
+4. ✅ Return copies of mutable objects (lists/dicts) from getters.
+5. ✅ Remember: Python doesn't enforce privacy—trust your teammates!
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output/Error" code={`
+class Test:
+    def __init__(self):
+        self.public = 1
+        self._protected = 2
+        self.__private = 3
+
+t = Test()
+
+# Q1: Accessing protected
+print(t._protected)  # ?
+
+# Q2: Accessing private directly
+# print(t.__private)  # ?
+
+# Q3: Accessing private via mangling
+print(t._Test__private)  # ?
+
+# Q4: Property Validation
+class Box:
+    def __init__(self, size):
+        self.size = size
+    
+    @property
+    def size(self):
+        return self._size
+    
+    @size.setter
+    def size(self, value):
+        if value < 0: raise ValueError("Negative!")
+        self._size = value
+
+b = Box(10)
+# b.size = -5  # ?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 2 (Accessible by convention)
+Q2: AttributeError (Name mangled)
+Q3: 3 (Accessible via mangled name)
+Q4: ValueError (Setter validation triggered)
+```
+</details>
+
+> 🚀 **Final Wisdom**: Python encapsulation is about **intent**. Use `_` to signal "internal," `__` to signal "stay out," and `@property` to control access. Trust that other developers will respect these signals. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 📦 Python Encapsulation
+
+---
+
+## 🧠 Mental Model First
+
+```
+ENCAPSULATION = Bundling DATA + METHODS that operate on that data
+                into a single unit (class), AND controlling what
+                is exposed vs hidden from the outside world.
+
+Two distinct ideas bundled into one concept:
+┌─────────────────────────────────────────────────────────────────┐
+│  1. BUNDLING    → data + behavior live together in one class   │
+│  2. ACCESS CTRL → what's visible to outside vs internal only   │
+└─────────────────────────────────────────────────────────────────┘
+
+WITHOUT encapsulation:
+  balance = 1000            # data floating free
+  log = []
+  def deposit(amount): ...  # function separate from data
+  def withdraw(amount): ...
+
+WITH encapsulation:
+  class BankAccount:
+      def __init__(self):
+          self._balance = 1000   # data bundled with behavior
+          self._log = []
+
+      def deposit(self, amount): ...   # behavior operates on data
+      def withdraw(self, amount): ...
+      def balance(self): ...
+```
+
+```
+Encapsulation vs Abstraction (commonly confused):
+
+  Abstraction  = WHAT is exposed (the interface, the contract)
+  Encapsulation= HOW it's packaged + HOW access is controlled
+
+  Abstraction  is the DESIGN GOAL
+  Encapsulation is the IMPLEMENTATION MECHANISM
+```
+
+---
+
+## 🗂️ Python Encapsulation Toolkit
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  BUNDLING TOOLS                                                 │
+│    class body         → groups data + methods                   │
+│    __init__           → initializes encapsulated state          │
+│    self               → binds methods to instance data          │
+│                                                                 │
+│  ACCESS CONTROL TOOLS                                           │
+│    public (no prefix) → full access, part of API               │
+│    _protected         → convention: internal use                │
+│    __private          → name mangling: harder to access         │
+│    @property          → controlled get/set with validation      │
+│    @classmethod       → class-level encapsulated behavior       │
+│    @staticmethod      → utility bundled with class              │
+│    __slots__          → restrict attribute creation             │
+│    __getattr__        → intercept missing attribute access      │
+│    __setattr__        → intercept ALL attribute writes          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Core Bundling — Class as Capsule
+
+```python
+# WITHOUT encapsulation — data and functions scattered:
+balance      = 0
+owner        = ""
+transactions = []
+
+def deposit(amount):
+    global balance, transactions
+    balance += amount
+    transactions.append(("deposit", amount))
+
+def withdraw(amount):
+    global balance
+    if amount > balance:
+        raise ValueError("Insufficient funds")
+    balance -= amount
+
+# PROBLEMS:
+# Any code anywhere can corrupt: balance = -9999
+# No invariant maintenance
+# No grouping — who owns these functions?
+# Testing nightmare — shared global state
+```
+
+```python
+# WITH encapsulation — sealed capsule:
+class BankAccount:
+    def __init__(self, owner: str, initial: float = 0.0):
+        self._owner        = owner        # bundled data
+        self.__balance     = initial      # hidden data
+        self.__transactions = []          # hidden data
+
+    # ── PUBLIC INTERFACE ─────────────────────────────────────────
+    def deposit(self, amount: float) -> None:
+        self.__validate_amount(amount)
+        self.__balance += amount
+        self.__log("deposit", amount)
+
+    def withdraw(self, amount: float) -> None:
+        self.__validate_amount(amount)
+        if amount > self.__balance:
+            raise ValueError(
+                f"Insufficient funds: balance={self.__balance}, "
+                f"requested={amount}"
+            )
+        self.__balance -= amount
+        self.__log("withdrawal", amount)
+
+    def transfer(self, target: "BankAccount", amount: float) -> None:
+        self.withdraw(amount)        # uses own public interface
+        target.deposit(amount)       # uses target's public interface
+
+    @property
+    def balance(self) -> float:
+        return self.__balance        # read-only — no setter
+
+    @property
+    def owner(self) -> str:
+        return self._owner
+
+    def statement(self) -> str:
+        lines = [f"Account: {self._owner}", f"Balance: {self.__balance}"]
+        lines += [f"  {t[0]:10} {t[1]:>10.2f}" for t in self.__transactions]
+        return "\n".join(lines)
+
+    # ── PRIVATE HELPERS ──────────────────────────────────────────
+    def __validate_amount(self, amount: float) -> None:
+        if not isinstance(amount, (int, float)):
+            raise TypeError(f"Amount must be numeric, got {type(amount)}")
+        if amount <= 0:
+            raise ValueError(f"Amount must be positive, got {amount}")
+
+    def __log(self, kind: str, amount: float) -> None:
+        import time
+        self.__transactions.append((kind, amount, time.time()))
+
+    def __repr__(self):
+        return f"BankAccount(owner={self._owner!r}, balance={self.__balance})"
+```
+
+```python
+acc1 = BankAccount("Ali", 1000)
+acc2 = BankAccount("Sara", 500)
+
+acc1.deposit(200)
+acc1.withdraw(50)
+acc1.transfer(acc2, 100)
+
+acc1.balance           # 1050.0  ← read-only property
+acc1.__balance         # 💥 AttributeError
+acc1._BankAccount__balance  # still reachable — Python can't truly hide
+
+print(acc1.statement())
+# Account: Ali
+# Balance: 1050.0
+#   deposit       200.00
+#   withdrawal     50.00
+#   withdrawal    100.00
+```
+
+---
+
+## 2️⃣ `@property` — Encapsulated Attribute Access
+
+```python
+class Temperature:
+    def __init__(self):
+        self.__celsius = 0.0       # hidden backing store
+
+    @property
+    def celsius(self) -> float:
+        return self.__celsius
+
+    @celsius.setter
+    def celsius(self, value: float) -> None:
+        if not isinstance(value, (int, float)):
+            raise TypeError("Temperature must be numeric")
+        if value < -273.15:
+            raise ValueError(f"Below absolute zero: {value}")
+        self.__celsius = float(value)
+
+    @property
+    def fahrenheit(self) -> float:           # derived — read only
+        return self.__celsius * 9/5 + 32
+
+    @fahrenheit.setter
+    def fahrenheit(self, value: float) -> None:
+        self.celsius = (value - 32) * 5/9   # converts and validates via celsius setter
+
+    @property
+    def kelvin(self) -> float:               # derived — read only
+        return self.__celsius + 273.15
+```
+
+```python
+t = Temperature()
+t.celsius = 100      # ✅ setter validates
+t.fahrenheit         # 212.0   ← derived, no setter needed
+t.fahrenheit = 32    # ← calls celsius setter with 0.0
+t.celsius            # 0.0
+t.celsius = -300     # 💥 ValueError: Below absolute zero
+
+# External code sees a SIMPLE interface:
+# t.celsius, t.fahrenheit, t.kelvin
+# They don't know about __celsius backing store
+# They don't know about validation logic
+# They don't know about conversion formulas
+```
+
+---
+
+## 3️⃣ Encapsulating Class-Level State
+
+```python
+class Counter:
+    __count = 0                    # class-level private state
+
+    def __init__(self, name: str):
+        self._name = name
+        Counter.__increment()      # internal class method
+
+    @classmethod
+    def __increment(cls) -> None:  # private classmethod
+        cls.__count += 1
+
+    @classmethod
+    def total(cls) -> int:         # public classmethod — read-only
+        return cls.__count
+
+    @classmethod
+    def reset(cls) -> None:        # controlled mutation
+        cls.__count = 0
+
+    def __repr__(self):
+        return f"Counter({self._name!r})"
+
+
+a = Counter("a")
+b = Counter("b")
+c = Counter("c")
+
+Counter.total()     # 3
+Counter.__count     # 💥 AttributeError — mangled: _Counter__count
+Counter._Counter__count  # 3 — still accessible
+Counter.reset()
+Counter.total()     # 0
+```
+
+---
+
+## 4️⃣ Encapsulation With `__slots__`
+
+```python
+class Vector:
+    __slots__ = ('__x', '__y')     # restrict + mangle simultaneously
+
+    def __init__(self, x: float, y: float):
+        self.__x = x               # _Vector__x slot
+        self.__y = y               # _Vector__y slot
+
+    @property
+    def x(self) -> float:
+        return self.__x
+
+    @property
+    def y(self) -> float:
+        return self.__y
+
+    def magnitude(self) -> float:
+        return (self.__x ** 2 + self.__y ** 2) ** 0.5
+
+    def __add__(self, other: "Vector") -> "Vector":
+        return Vector(self.__x + other.__x, self.__y + other.__y)
+
+    def __repr__(self) -> str:
+        return f"Vector({self.__x}, {self.__y})"
+
+
+v = Vector(3, 4)
+v.x              # 3.0   ← property getter
+v.y              # 4.0
+v.magnitude()    # 5.0
+v.x = 10        # 💥 AttributeError — no setter
+v.z = 1         # 💥 AttributeError — not in __slots__
+v.__dict__       # 💥 AttributeError — no __dict__ with __slots__
+```
+
+---
+
+## 5️⃣ `__setattr__` — Encapsulate Write Access
+
+```python
+class Config:
+    """Immutable after construction."""
+
+    _ALLOWED = frozenset({'host', 'port', 'debug', 'workers'})
+
+    def __init__(self, **kwargs):
+        for key in kwargs:
+            if key not in self._ALLOWED:
+                raise ValueError(f"Unknown config key: {key!r}")
+        # Use object.__setattr__ to bypass our own __setattr__:
+        object.__setattr__(self, '_data', dict(kwargs))
+        object.__setattr__(self, '_frozen', True)
+
+    def __setattr__(self, name: str, value) -> None:
+        if getattr(self, '_frozen', False):
+            raise AttributeError(
+                f"Config is immutable. Cannot set {name!r}"
+            )
+        object.__setattr__(self, name, value)
+
+    def __getattr__(self, name: str):
+        data = object.__getattribute__(self, '_data')
+        if name in data:
+            return data[name]
+        raise AttributeError(f"Config has no key {name!r}")
+
+    def __repr__(self) -> str:
+        return f"Config({object.__getattribute__(self, '_data')})"
+
+
+cfg = Config(host="localhost", port=5432, debug=False)
+cfg.host        # "localhost"
+cfg.port        # 5432
+cfg.host = "x"  # 💥 AttributeError: Config is immutable
+cfg.timeout = 30 # 💥 AttributeError: Config is immutable
+```
+
+---
+
+## 6️⃣ Encapsulation Across a Full System
+
+```python
+from abc import ABC, abstractmethod
+from typing import Optional
+import hashlib
+import time
+
+class User:
+    """Encapsulates user identity and credentials."""
+
+    def __init__(self, username: str, password: str):
+        self._username   = username
+        self.__password_hash = self.__hash(password)
+        self.__created_at    = time.time()
+        self.__last_login    = None
+
+    # ── PUBLIC API ──────────────────────────────────────────────
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @property
+    def created_at(self) -> float:
+        return self.__created_at
+
+    @property
+    def last_login(self) -> Optional[float]:
+        return self.__last_login
+
+    def authenticate(self, password: str) -> bool:
+        result = self.__password_hash == self.__hash(password)
+        if result:
+            self.__record_login()     # internal side effect hidden
+        return result
+
+    def change_password(
+        self,
+        current: str,
+        new_password: str
+    ) -> None:
+        if not self.authenticate(current):
+            raise PermissionError("Current password incorrect")
+        self.__validate_password(new_password)
+        self.__password_hash = self.__hash(new_password)
+
+    # ── PRIVATE HELPERS ──────────────────────────────────────────
+    @staticmethod
+    def __hash(password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    @staticmethod
+    def __validate_password(password: str) -> None:
+        if len(password) < 8:
+            raise ValueError("Password too short (min 8 chars)")
+        if not any(c.isupper() for c in password):
+            raise ValueError("Password needs uppercase letter")
+
+    def __record_login(self) -> None:
+        self.__last_login = time.time()
+
+    def __repr__(self) -> str:
+        return f"User(username={self._username!r})"
+```
+
+```python
+u = User("ali", "Secure123")
+
+u.username                      # "ali"
+u.authenticate("Secure123")     # True
+u.authenticate("wrong")         # False
+u.__password_hash               # 💥 AttributeError
+u._User__password_hash          # accessible but clearly wrong to use
+u.change_password("Secure123", "NewPass99")  # ✅
+```
+
+---
+
+## 🔬 The Getter/Setter Pattern Deep Dive
+
+```python
+class Rectangle:
+    def __init__(self, width: float, height: float):
+        self.width  = width     # uses setters — validation on init too
+        self.height = height
+
+    @property
+    def width(self) -> float:
+        return self.__width
+
+    @width.setter
+    def width(self, value: float) -> None:
+        if value <= 0:
+            raise ValueError(f"Width must be positive, got {value}")
+        self.__width = float(value)
+
+    @property
+    def height(self) -> float:
+        return self.__height
+
+    @height.setter
+    def height(self, value: float) -> None:
+        if value <= 0:
+            raise ValueError(f"Height must be positive, got {value}")
+        self.__height = float(value)
+
+    @property
+    def area(self) -> float:            # derived — read-only
+        return self.__width * self.__height
+
+    @property
+    def diagonal(self) -> float:        # derived — read-only
+        return (self.__width ** 2 + self.__height ** 2) ** 0.5
+
+    def scale(self, factor: float) -> "Rectangle":   # returns new instance
+        return Rectangle(self.__width * factor, self.__height * factor)
+```
+
+```python
+r = Rectangle(4, 6)
+r.width    # 4.0
+r.area     # 24.0
+r.width = 10        # ✅ setter validates
+r.width = -1        # 💥 ValueError
+r.area = 100        # 💥 AttributeError: can't set attribute — no setter
+r2 = r.scale(2)     # new Rectangle — original unchanged
+```
+
+---
+
+## 🔬 Internals — How `self` Binds Data to Methods
+
+```
+When you call acc.deposit(200):
+
+1. Python looks up 'deposit' on type(acc) → BankAccount
+2. BankAccount.deposit is a function (unbound)
+3. function.__get__(acc, BankAccount) → bound method
+4. Bound method = function + self=acc baked in
+5. deposit(200) called → self=acc, amount=200
+
+self is HOW encapsulation binds methods to their data.
+Without self, methods float free — not encapsulated.
+```
+
+```python
+import types
+
+class Foo:
+    def bar(self): return self
+
+f = Foo()
+
+# Raw function in class dict:
+type(Foo.__dict__['bar'])    # <class 'function'>
+
+# Bound method when accessed via instance:
+type(f.bar)                  # <class 'method'>
+f.bar.__self__               # f  ← self baked in
+f.bar.__func__               # Foo.bar  ← original function
+
+# Manually create bound method:
+manual = types.MethodType(Foo.__dict__['bar'], f)
+manual()                     # same as f.bar()
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Encapsulated Stack — hides internal list:
+class Stack:
+    def __init__(self):
+        self.__data = []          # hidden — callers don't know it's a list
+
+    def push(self, item) -> None:
+        self.__data.append(item)
+
+    def pop(self):
+        if self.is_empty():
+            raise IndexError("Stack underflow")
+        return self.__data.pop()
+
+    def peek(self):
+        if self.is_empty():
+            raise IndexError("Stack is empty")
+        return self.__data[-1]
+
+    def is_empty(self) -> bool:
+        return len(self.__data) == 0
+
+    def __len__(self) -> int:
+        return len(self.__data)
+
+    def __repr__(self) -> str:
+        return f"Stack({self.__data})"
+
+# Caller cannot corrupt internals:
+s = Stack()
+s.push(1); s.push(2); s.push(3)
+s.pop()        # 3
+s.peek()       # 2
+s.__data       # 💥 AttributeError
+# Change implementation to deque? Callers never know.
+```
+
+```python
+# Encapsulated LRU Cache:
+from collections import OrderedDict
+
+class LRUCache:
+    def __init__(self, capacity: int):
+        self.__capacity = capacity
+        self.__cache    = OrderedDict()   # internal — could change to dict
+
+    def get(self, key: int) -> int:
+        if key not in self.__cache:
+            return -1
+        self.__cache.move_to_end(key)     # hidden implementation detail
+        return self.__cache[key]
+
+    def put(self, key: int, value: int) -> None:
+        if key in self.__cache:
+            self.__cache.move_to_end(key)
+        self.__cache[key] = value
+        if len(self.__cache) > self.__capacity:
+            self.__cache.popitem(last=False)   # evict LRU
+
+    @property
+    def size(self) -> int:
+        return len(self.__cache)
+
+# Caller sees: get(), put(), size
+# Internal: OrderedDict, move_to_end, popitem — all hidden
+```
+
+---
+
+## 🚀 Real-World Production Pattern
+
+```python
+from typing import Optional
+from datetime import datetime, timedelta
+import threading
+
+class RateLimiter:
+    """
+    Token bucket rate limiter.
+    Encapsulates algorithm, state, and thread safety.
+    Caller just calls: allow() → True/False
+    """
+
+    def __init__(self, max_calls: int, period: timedelta):
+        self.__max_calls   = max_calls
+        self.__period      = period
+        self.__calls       = []                    # internal sliding window
+        self.__lock        = threading.Lock()      # internal sync mechanism
+
+    # ── PUBLIC API ──────────────────────────────────────────────
+    def allow(self) -> bool:
+        with self.__lock:
+            self.__evict_old()
+            if len(self.__calls) < self.__max_calls:
+                self.__calls.append(datetime.now())
+                return True
+            return False
+
+    @property
+    def remaining(self) -> int:
+        with self.__lock:
+            self.__evict_old()
+            return max(0, self.__max_calls - len(self.__calls))
+
+    def reset(self) -> None:
+        with self.__lock:
+            self.__calls.clear()
+
+    # ── PRIVATE IMPLEMENTATION ───────────────────────────────────
+    def __evict_old(self) -> None:
+        cutoff = datetime.now() - self.__period
+        self.__calls = [t for t in self.__calls if t > cutoff]
+
+    def __repr__(self) -> str:
+        return (f"RateLimiter(max={self.__max_calls}, "
+                f"period={self.__period}, "
+                f"remaining={self.remaining})")
+
+
+# Caller knows NOTHING about sliding window, locks, eviction:
+limiter = RateLimiter(max_calls=10, period=timedelta(seconds=60))
+
+for request in incoming_requests:
+    if limiter.allow():
+        process(request)
+    else:
+        return http_429_response()
+```
+
+---
+
+## 💀 Interview Trap 1 — Bypassing `@property` via `__dict__`
+
+```python
+class Circle:
+    def __init__(self, r: float):
+        self.radius = r      # calls setter
+
+    @property
+    def radius(self) -> float:
+        return self.__radius
+
+    @radius.setter
+    def radius(self, v: float) -> None:
+        if v < 0: raise ValueError("Negative radius")
+        self.__radius = v
+
+c = Circle(5)
+c.radius = -1                  # 💥 ValueError — setter blocks
+
+# But backing store still accessible:
+c._Circle__radius = -1         # ✅ bypasses property entirely
+c.radius                       # -1  ← corrupted state, no error
+```
+
+> True encapsulation is impossible in Python. `_ClassName__attr` always works. Python trusts developers — design for clarity, not security.
+
+---
+
+## 💀 Interview Trap 2 — `self.attr = value` in `__init__` Calls Setter
+
+```python
+class Temperature:
+    def __init__(self, celsius: float):
+        self.celsius = celsius    # ← calls @celsius.setter — NOT direct write
+
+    @property
+    def celsius(self) -> float:
+        return self.__celsius
+
+    @celsius.setter
+    def celsius(self, v: float) -> None:
+        if v < -273.15:
+            raise ValueError("Below absolute zero")
+        self.__celsius = v
+
+# This means:
+Temperature(-300)    # 💥 ValueError raised IN __init__
+                     # setter runs during construction — validates on init too
+
+# This is usually DESIRED — validates on construction
+# But devs often expect __init__ to bypass setters — it doesn't
+```
+
+---
+
+## 💀 Interview Trap 3 — Mutable Default in `__init__` Breaks Encapsulation
+
+```python
+class Container:
+    def __init__(self, items=[]):    # 💀 shared mutable default
+        self.__items = items         # all instances share same list!
+
+a = Container()
+b = Container()
+a._Container__items.append(1)
+b._Container__items             # [1]  ← b's "private" state corrupted!
+
+# Fix:
+class Container:
+    def __init__(self, items=None):
+        self.__items = list(items) if items else []   # own copy
+```
+
+---
+
+## 💀 Interview Trap 4 — Class Variable vs Instance Variable
+
+```python
+class Account:
+    balance = 0                  # CLASS variable — shared!
+
+    def deposit(self, amount):
+        self.balance += amount   # creates INSTANCE variable on first call
+                                 # shadows class variable
+
+a = Account()
+b = Account()
+
+a.deposit(100)
+a.balance    # 100  — instance variable
+b.balance    # 0    — class variable (a's instance var didn't affect b)
+
+# BUT:
+Account.balance = 999   # mutate class variable
+c = Account()
+c.balance    # 999  — new instance reads class variable
+
+# Confusing when encapsulation is the intent:
+# Is balance shared state (class var) or per-instance (instance var)?
+# __init__ makes intent explicit:
+class Account:
+    def __init__(self):
+        self.__balance = 0       # clearly per-instance
+```
+
+---
+
+## 💀 Interview Trap 5 — `@property` Without `__init__` Backing Store
+
+```python
+class Broken:
+    @property
+    def value(self) -> int:
+        return self.__value        # _Broken__value
+
+    @value.setter
+    def value(self, v: int) -> None:
+        self.__value = v           # _Broken__value
+
+b = Broken()
+b.value        # 💥 AttributeError: '_Broken__value' not set
+               # no __init__ initializes the backing store!
+
+# Fix:
+class Fixed:
+    def __init__(self, value: int = 0):
+        self.__value = value       # backing store initialized
+
+    @property
+    def value(self) -> int:
+        return self.__value
+
+    @value.setter
+    def value(self, v: int) -> None:
+        self.__value = v
+```
+
+---

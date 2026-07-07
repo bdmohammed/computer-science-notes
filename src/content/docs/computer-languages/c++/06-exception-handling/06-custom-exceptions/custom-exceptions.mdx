@@ -1,0 +1,1394 @@
+---
+title: C++ Custom Exceptions
+slug: computer-languages/cpp/exception-handling/custom-exceptions
+description: How to design, throw, and catch custom exceptions in C++. Learn about inheritance from std::exception, RAII, error codes vs exceptions, and modern best practices.
+sidebar:
+  label: "Custom Exceptions"
+  badge:
+    text: Exception Mechanics
+    variant: tip
+tags: [cpp, exception, custom-exception, std-exception, raii, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🛠️ Custom Exceptions in C++
+
+---
+
+### 🧠 What It Is
+
+A custom exception in C++ is a class (usually derived from `std::exception`) that represents a specific error condition in your domain. 
+
+Unlike Java:
+1. **No Checked/Unchecked distinction**: All exceptions are unchecked. The compiler never forces you to catch or declare them.
+2. **No `throws` clause**: You don't declare what a function throws.
+3. **Standard Base**: You should almost always derive from `std::exception` (or its subclasses like `std::runtime_error`).
+
+---
+
+### 🔬 Why Custom Exceptions Exist
+
+```text
+Standard exceptions describe TECHNICAL failures:
+  std::runtime_error   → Generic runtime issue
+  std::invalid_argument → Bad parameter
+  std::out_of_range    → Index/Key missing
+
+Custom exceptions describe DOMAIN failures:
+  InsufficientFunds    → Business rule violated
+  UserNotFound         → Entity missing
+  NetworkTimeout       → Specific infrastructure failure
+```
+
+Using custom exceptions allows callers to catch specific problems and react appropriately, rather than catching a generic `std::exception`.
+
+---
+
+### 🔬 Minimal Valid Custom Exception
+
+In C++, the standard practice is to inherit from `std::runtime_error` (for unchecked/logic errors) or `std::exception`.
+
+<Code lang="cpp" title="Basic Custom Exception" code={`
+#include <stdexcept>
+#include <string>
+
+// Derive from std::runtime_error
+class AccountNotFoundException : public std::runtime_error {
+public:
+    // Pass message to parent constructor
+    explicit AccountNotFoundException(const std::string& accountId) 
+        : std::runtime_error("Account not found: " + accountId),
+          m_accountId(accountId) {}
+
+    // Accessor for domain data
+    const std::string& getAccountId() const { return m_accountId; }
+
+private:
+    std::string m_accountId;
+};
+`} />
+
+<Aside type="note">
+**Why `std::runtime_error`?** 
+It already implements `what()` to return the message string. By passing the message to the parent constructor, you get standard behavior for free.
+</Aside>
+
+---
+
+### 🔬 Production-Grade Custom Exception
+
+A robust C++ exception should be:
+1. **Derived from `std::exception`** hierarchy.
+2. **Noexcept**: Constructors and `what()` should not throw.
+3. **Informative**: Carry context (IDs, error codes).
+
+<Code lang="cpp" title="Production Custom Exception" code={`
+#include <stdexcept>
+#include <string>
+#include <cstdint>
+
+enum class ErrorCode {
+    UNKNOWN,
+    INSUFFICIENT_FUNDS,
+    ACCOUNT_FROZEN
+};
+
+class PaymentException : public std::runtime_error {
+public:
+    PaymentException(const std::string& msg, ErrorCode code)
+        : std::runtime_error(msg),
+          m_code(code) {}
+
+    // Override what() if you need custom formatting, 
+    // but usually std::runtime_error::what() is enough.
+    
+    ErrorCode getCode() const noexcept { return m_code; }
+
+private:
+    ErrorCode m_code;
+};
+
+// Usage
+void charge(double amount) {
+    if (amount < 0) {
+        throw PaymentException("Negative amount", ErrorCode::UNKNOWN);
+    }
+}
+`} />
+
+---
+
+### 🔬 Exception Hierarchy Design
+
+Just like Java, you can create trees of exceptions.
+
+```text
+std::exception
+└── std::runtime_error
+    └── AppException (Base for all app errors)
+        ├── ResourceException
+        │   ├── UserNotFoundException
+        │   └── OrderNotFoundException
+        └── PaymentException
+            ├── InsufficientFundsException
+            └── GatewayTimeoutException
+```
+
+<Code lang="cpp" title="Hierarchy Example" code={`
+class AppException : public std::runtime_error {
+    using std::runtime_error::runtime_error; // Inherit constructors
+};
+
+class ResourceException : public AppException {
+    using AppException::AppException;
+};
+
+class UserNotFoundException : public ResourceException {
+public:
+    explicit UserNotFoundException(int userId) 
+        : ResourceException("User " + std::to_string(userId) + " not found"),
+          m_userId(userId) {}
+    
+    int getUserId() const { return m_userId; }
+private:
+    int m_userId;
+};
+`} />
+
+---
+
+### 💻 Real-World Code — Payment Service
+
+<Code lang="cpp" title="Service with Custom Exceptions" code={`
+#include <iostream>
+#include <string>
+#include <stdexcept>
+
+// 1. Define Exceptions
+class InsufficientFundsException : public std::runtime_error {
+public:
+    InsufficientFundsException(double balance, double amount)
+        : std::runtime_error("Balance " + std::to_string(balance) + 
+                             " < Amount " + std::to_string(amount)),
+          m_balance(balance), m_amount(amount) {}
+    
+    double getShortfall() const { return m_amount - m_balance; }
+private:
+    double m_balance, m_amount;
+};
+
+class AccountFrozenException : public std::logic_error {
+public:
+    explicit AccountFrozenException(const std::string& id)
+        : std::logic_error("Account " + id + " is frozen") {}
+};
+
+// 2. Service Logic
+class PaymentService {
+public:
+    void transfer(const std::string& from, double amount) {
+        // Simulate checks
+        bool isFrozen = false; 
+        double balance = 50.0;
+
+        if (isFrozen) {
+            throw AccountFrozenException(from);
+        }
+        if (balance < amount) {
+            throw InsufficientFundsException(balance, amount);
+        }
+        
+        // Perform transfer...
+    }
+};
+
+// 3. Caller — Precise Handling
+int main() {
+    PaymentService service;
+    try {
+        service.transfer("ACC123", 100.0);
+    } catch (const AccountFrozenException& e) {
+        std::cerr << "Action Blocked: " << e.what() << '\n';
+        // Return HTTP 403
+    } catch (const InsufficientFundsException& e) {
+        std::cerr << "Payment Failed: " << e.what() << '\n';
+        std::cerr << "Shortfall: " << e.getShortfall() << '\n';
+        // Return HTTP 402 with details
+    } catch (const std::exception& e) {
+        std::cerr << "Unknown Error: " << e.what() << '\n';
+        // Return HTTP 500
+    }
+}
+`} />
+
+🔴 **What breaks if wrong:** Catching only `std::exception` hides the specific reason for failure. The client might retry an `InsufficientFunds` error endlessly, causing duplicate logs or side effects.
+
+---
+
+### 🔬 Serialization & Copying
+
+C++ exceptions are **copied** when thrown (unless optimized away by RVO/NRVO). 
+- Ensure your exception class is **copyable** (default members like `std::string` are fine).
+- Avoid complex resources (files, sockets) inside exceptions.
+- `std::exception` hierarchies handle polymorphism correctly if you catch by **reference**.
+
+<Aside type="danger">
+**Always catch by reference**: `catch (const MyException& e)`. 
+Catching by value (`catch (MyException e)`) causes **object slicing**, losing derived class data and potentially causing performance issues due to copying.
+</Aside>
+
+---
+
+### 🔬 Anti-Patterns — What Not to Do
+
+<CardGrid>
+  <Card title="❌ Throwing Primitives" icon="error">
+    ```cpp
+    throw 404; 
+    throw "Error";
+    ```
+    Hard to catch specifically. Always use classes derived from `std::exception`.
+  </Card>
+  
+  <Card title="❌ Throwing Pointers" icon="shield">
+    ```cpp
+    throw new MyException();
+    ```
+    Who deletes it? If you catch by value, you leak. If you catch by pointer, you must `delete`. Just throw by value: `throw MyException();`.
+  </Card>
+
+  <Card title="❌ Mutable State" icon="caution">
+    ```cpp
+    class BadEx : public std::exception {
+    public:
+        void setData(int d) { data = d; } // ❌ Don't modify after throw
+    private:
+        int data;
+    };
+    ```
+    Exceptions should be immutable snapshots of the error state.
+  </Card>
+
+  <Card title="❌ Forgetting `noexcept` on `what()`" icon="information">
+    If you override `what()`, ensure it is `noexcept`. If `what()` throws during stack unwinding, `std::terminate()` is called.
+  </Card>
+</CardGrid>
+
+---
+
+## ✅ Checked vs Unchecked? (C++ Context)
+
+C++ **does not have checked exceptions**. 
+- **Java**: `throws IOException` forces caller to handle.
+- **C++**: Any function can throw anything. Documentation and conventions are your only safety net.
+
+### 🔬 When to Use Custom Exceptions
+
+| Scenario | C++ Approach |
+|----------|--------------|
+| Recoverable Error (e.g., File Not Found) | Custom Exception (e.g., `FileNotFound`) |
+| Programming Bug (e.g., Null Ptr) | `std::logic_error` or `assert` |
+| System Failure (e.g., OOM) | `std::bad_alloc` (standard) |
+| Performance Critical Loop | Return `std::expected<T, E>` (C++23) or Error Codes |
+
+<Aside type="tip">
+**Modern C++ (C++23)**: For high-performance code where exceptions are disabled or too costly, use `std::expected<T, E>` to return errors as values, similar to Rust's `Result`.
+</Aside>
+
+---
+
+### 💻 Real-World Code — Error Hierarchy
+
+<Code lang="cpp" title="Layered Architecture" code={`
+// Layer 1: Infrastructure
+class DbException : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// Layer 2: Repository
+class UserRepository {
+public:
+    User findById(int id) {
+        try {
+            // ... SQL logic ...
+            throw DbException("Connection lost");
+        } catch (const DbException& e) {
+            // Translate to Domain Exception
+            throw std::runtime_error(std::string("Repo Error: ") + e.what());
+        }
+    }
+};
+
+// Layer 3: Service
+class UserService {
+public:
+    void process(int id) {
+        try {
+            repo.findById(id);
+        } catch (const std::runtime_error& e) {
+            // Log and rethrow or handle
+            log(e.what());
+            throw; // Rethrow current exception
+        }
+    }
+};
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Slicing" icon="error">
+    ```cpp
+    try {
+        throw DerivedException();
+    } catch (BaseException e) { // ❌ SLICED
+        // e is only BaseException part
+    }
+    ```
+    ✅ **Fix**: `catch (const BaseException& e)`
+  </Card>
+  
+  <Card title="Trap 2: Throwing in Destructor" icon="shield">
+    If a destructor throws while another exception is active, the program terminates.
+    ✅ **Fix**: Destructors should be `noexcept` and swallow/log errors internally.
+  </Card>
+
+  <Card title="Trap 3: Exception Specifications" icon="caution">
+    Old C++ had `throw(Type)`. It was removed in C++17.
+    ✅ **Fix**: Use `noexcept` to specify *non-throwing* functions.
+  </Card>
+
+  <Card title="Trap 4: Copy Cost" icon="information">
+    Exceptions are copied. If your exception contains a large `std::string` or vector, throwing is expensive.
+    ✅ **Fix**: Keep exception data small. Use `std::string_view` if lifetime permits (careful!).
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### Stack Unwinding & Vtables
+
+When you `throw DerivedException()`:
+1. Memory is allocated for the exception object (often on a special heap area).
+2. The object is copy-constructed.
+3. The stack unwinds: destructors for local variables are called.
+4. The runtime uses the **vtable** of the exception object to match `catch` blocks.
+   - `catch (Base&)` matches `Derived` because `dynamic_cast` logic is used.
+
+### Zero-Cost Model
+
+Like standard exceptions, custom exceptions have **zero overhead** when not thrown. The cost is paid only during the throw (stack walking + object creation).
+
+---
+
+### 📊 Decision Guide
+
+| Situation | C++ Pattern |
+|-----------|---------|
+| Domain Error | Custom Class deriving from `std::runtime_error` |
+| Logic Bug | `std::logic_error` or `assert` |
+| High-Frequency Error | `std::expected` or Error Code (int/enum) |
+| Resource Cleanup | RAII (Destructor), NOT Exception |
+
+---
+
+### 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+class Base : public std::exception {
+public:
+    const char* what() const noexcept override { return "Base"; }
+};
+
+class Derived : public Base {
+public:
+    const char* what() const noexcept override { return "Derived"; }
+};
+
+int main() {
+    try {
+        throw Derived();
+    } catch (const Base& e) {
+        std::cout << e.what() << '\\n';
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: Derived
+
+Explanation:
+1. Derived object is thrown.
+2. catch (const Base& e) binds to the Derived object via reference.
+3. e.what() is virtual. Since the actual object is Derived, Derived::what() is called.
+4. If caught by value (catch Base e), it would print "Base" (Slicing).
+```
+</details>
+
+---
+
+# 🛠️ C++ Custom Exceptions — Complete Deep Dive
+
+---
+
+# 📁 01 — Customized Exceptions
+
+## 📌 Why Custom Exceptions?
+
+```
+Standard exceptions: generic messages, no domain context
+Custom exceptions:   carry domain-specific data, enable precise handling
+
+std::runtime_error("query failed")     ← caller knows nothing else
+DatabaseException(1045, "users", query) ← caller knows error code, table, query
+                                          can retry, log, alert differently
+```
+
+---
+
+### Minimum Valid Custom Exception
+
+```cpp
+// ✅ Minimum — just inherit, use base ctor
+class AppError : public std::runtime_error {
+public:
+    explicit AppError(const std::string& msg)
+        : std::runtime_error(msg) { }
+};
+
+throw AppError("something failed");
+// catch (const std::runtime_error&) → catches it (IS-A)
+// catch (const AppError&) → catches it (exact)
+// catch (const std::exception&) → catches it (root)
+```
+
+---
+
+### Full Production Custom Exception
+
+```cpp
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <source_location>   // C++20
+
+class AppException : public std::exception {
+protected:
+    std::string          message_;
+    std::string          context_;
+    int                  code_;
+    mutable std::string  full_what_;  // lazy-built, mutable for const what()
+
+public:
+    explicit AppException(
+        std::string         msg,
+        int                 code    = 0,
+        std::string         context = "",
+        std::source_location loc    = std::source_location::current()
+    )
+        : message_(std::move(msg))
+        , context_(std::move(context))
+        , code_(code)
+    {
+        // Build full_what_ eagerly or lazily
+        full_what_ = "[" + std::to_string(code_) + "] "
+                   + message_;
+        if (!context_.empty())
+            full_what_ += " | context: " + context_;
+        full_what_ += " | at " + std::string(loc.file_name())
+                   + ":" + std::to_string(loc.line());
+    }
+
+    // std::exception interface
+    const char* what() const noexcept override {
+        return full_what_.c_str();
+    }
+
+    // Domain-specific accessors
+    int                code()    const noexcept { return code_;    }
+    const std::string& message() const noexcept { return message_; }
+    const std::string& context() const noexcept { return context_; }
+};
+```
+
+---
+
+### Domain Exception Hierarchy
+
+```cpp
+// ──────────────────────────────────────────────────────────────
+// Infrastructure Layer — environmental failures
+// ──────────────────────────────────────────────────────────────
+class InfraException : public AppException {
+public:
+    using AppException::AppException;   // inherit constructors
+};
+
+    class DatabaseException : public InfraException {
+        std::string query_;
+        std::string table_;
+    public:
+        DatabaseException(int code,
+                          std::string msg,
+                          std::string query = "",
+                          std::string table = "")
+            : InfraException(std::move(msg), code)
+            , query_(std::move(query))
+            , table_(std::move(table)) { }
+
+        const std::string& query() const noexcept { return query_; }
+        const std::string& table() const noexcept { return table_; }
+    };
+
+        class ConnectionPoolExhausted : public DatabaseException {
+            int active_connections_;
+            int max_connections_;
+        public:
+            ConnectionPoolExhausted(int active, int max)
+                : DatabaseException(
+                    5001,
+                    "Connection pool exhausted: "
+                    + std::to_string(active) + "/" + std::to_string(max))
+                , active_connections_(active)
+                , max_connections_(max) { }
+
+            int active() const noexcept { return active_connections_; }
+            int max()    const noexcept { return max_connections_;     }
+        };
+
+        class QueryTimeoutException : public DatabaseException {
+            int timeout_ms_;
+        public:
+            QueryTimeoutException(int ms, std::string query)
+                : DatabaseException(5002, "Query timed out after "
+                                    + std::to_string(ms) + "ms",
+                                    std::move(query))
+                , timeout_ms_(ms) { }
+
+            int timeout_ms() const noexcept { return timeout_ms_; }
+        };
+
+    class NetworkException : public InfraException {
+        std::string host_;
+        int         port_;
+    public:
+        NetworkException(int code, std::string msg,
+                         std::string host, int port)
+            : InfraException(std::move(msg), code)
+            , host_(std::move(host)), port_(port) { }
+
+        const std::string& host() const noexcept { return host_; }
+        int                port() const noexcept { return port_; }
+    };
+
+        class ServiceUnavailable : public NetworkException {
+        public:
+            ServiceUnavailable(std::string host, int port)
+                : NetworkException(503,
+                    "Service unavailable: " + host + ":" + std::to_string(port),
+                    std::move(host), port) { }
+        };
+
+// ──────────────────────────────────────────────────────────────
+// Domain Layer — business rule violations
+// ──────────────────────────────────────────────────────────────
+class DomainException : public AppException {
+public:
+    using AppException::AppException;
+};
+
+    class ValidationException : public DomainException {
+        std::string field_;
+        std::string value_;
+    public:
+        ValidationException(std::string field,
+                            std::string value,
+                            std::string rule)
+            : DomainException("Validation failed for field '" + field
+                             + "': " + rule, 4001)
+            , field_(std::move(field))
+            , value_(std::move(value)) { }
+
+        const std::string& field() const noexcept { return field_; }
+        const std::string& value() const noexcept { return value_; }
+    };
+
+    class AuthorizationException : public DomainException {
+        std::string user_id_;
+        std::string resource_;
+        std::string action_;
+    public:
+        AuthorizationException(std::string uid,
+                               std::string res,
+                               std::string act)
+            : DomainException("User '" + uid + "' cannot '"
+                             + act + "' on '" + res + "'", 4003)
+            , user_id_(std::move(uid))
+            , resource_(std::move(res))
+            , action_(std::move(act)) { }
+
+        const std::string& user_id()  const noexcept { return user_id_;  }
+        const std::string& resource() const noexcept { return resource_;  }
+        const std::string& action()   const noexcept { return action_;    }
+    };
+
+    class NotFoundException : public DomainException {
+        std::string entity_type_;
+        std::string entity_id_;
+    public:
+        NotFoundException(std::string type, std::string id)
+            : DomainException(type + " not found: " + id, 4004)
+            , entity_type_(std::move(type))
+            , entity_id_(std::move(id)) { }
+
+        const std::string& entity_type() const noexcept { return entity_type_; }
+        const std::string& entity_id()   const noexcept { return entity_id_;   }
+    };
+```
+
+---
+
+### Full Hierarchy Visual
+
+```
+std::exception
+└── AppException (code, message, context, source_location)
+    │
+    ├── InfraException
+    │   ├── DatabaseException (query, table)
+    │   │   ├── ConnectionPoolExhausted (active, max)
+    │   │   └── QueryTimeoutException (timeout_ms)
+    │   └── NetworkException (host, port)
+    │       └── ServiceUnavailable
+    │
+    └── DomainException
+        ├── ValidationException (field, value)
+        ├── AuthorizationException (user_id, resource, action)
+        └── NotFoundException (entity_type, entity_id)
+```
+
+---
+
+### Exception Chaining — `std::throw_with_nested`
+
+```cpp
+// Preserve root cause while adding context
+void execute_query(const std::string& sql) {
+    try {
+        db_driver_.execute(sql);
+    } catch (...) {
+        // Wrap low-level exception with domain context
+        std::throw_with_nested(
+            QueryTimeoutException(5000, sql)
+        );
+    }
+}
+
+// Unpack the chain
+void print_chain(const std::exception& e, int depth = 0) {
+    std::cerr << std::string(depth * 2, ' ')
+              << e.what() << "\n";
+    try {
+        std::rethrow_if_nested(e);
+    } catch (const std::exception& nested) {
+        print_chain(nested, depth + 1);
+    } catch (...) {
+        std::cerr << std::string((depth+1)*2,' ') << "[non-std]\n";
+    }
+}
+
+try {
+    execute_query("SELECT * FROM orders WHERE ...");
+} catch (const std::exception& e) {
+    print_chain(e);
+}
+// QueryTimeoutException: Query timed out after 5000ms
+//   std::ios_base::failure: read timed out   ← root cause preserved
+```
+
+---
+
+### Convenience Macros — Source Location
+
+```cpp
+// Pre-C++20: __FILE__, __LINE__, __func__ macros
+#define THROW(ExType, ...) \
+    throw ExType(__VA_ARGS__, __FILE__, __LINE__, __func__)
+
+// C++20: std::source_location (cleaner)
+class AppException {
+public:
+    explicit AppException(
+        std::string msg,
+        std::source_location loc = std::source_location::current()
+    ) : message_(std::move(msg))
+      , location_(loc) { }
+
+    std::string where() const {
+        return std::string(location_.file_name())
+               + ":" + std::to_string(location_.line())
+               + " in " + location_.function_name();
+    }
+private:
+    std::string          message_;
+    std::source_location location_;
+};
+
+// Usage — source location captured automatically
+throw AppException("something failed");
+// location_.file_name() → "main.cpp"
+// location_.line()      → 42
+// location_.function_name() → "void process()"
+```
+
+---
+
+# 📁 02 — Checked Custom Exception (C++ Equivalent)
+
+## 📌 Recall — C++ Has No Checked Exceptions
+
+```java
+// Java checked — compiler FORCES handle or declare
+void readFile() throws IOException { }   // must declare
+void caller() {
+    readFile();   // ← compile error: unhandled IOException
+}
+```
+
+C++ achieves the SAME GOAL via different mechanisms — the **type system**, not the exception system.
+
+---
+
+### Pattern 1 — `std::expected` (C++23) — The True Equivalent
+
+```cpp
+#include <expected>
+
+// Error type — the "checked exception"
+struct ParseError {
+    int         line;
+    int         column;
+    std::string message;
+    std::string what() const {
+        return "Parse error at " + std::to_string(line)
+             + ":" + std::to_string(column) + ": " + message;
+    }
+};
+
+struct NetworkError {
+    int         code;
+    std::string host;
+    std::string what() const {
+        return "Network error " + std::to_string(code)
+             + " connecting to " + host;
+    }
+};
+
+// Function that "must be handled" — return type enforces it
+std::expected<Config, ParseError> parse_config(const std::string& path);
+std::expected<Data, NetworkError> fetch_data(const std::string& url);
+
+// Caller MUST handle — type system enforces
+auto cfg = parse_config("app.conf");
+if (!cfg) {
+    // CANNOT ignore — cfg is expected<Config, ParseError>
+    // CANNOT use cfg.value() without checking — throws bad_expected_access
+    log_error(cfg.error().what());
+    return;
+}
+Config& c = *cfg;   // only after checking
+
+// Chain operations — propagate errors
+std::expected<Result, ParseError> process(const std::string& path) {
+    auto cfg = parse_config(path);
+    if (!cfg) return std::unexpected(cfg.error());  // propagate error
+
+    auto data = cfg->get_data();
+    return compute(data);
+}
+
+// C++23 monadic operations
+auto result = parse_config("app.conf")
+    .and_then([](Config& c) -> std::expected<Data, ParseError> {
+        return load_data(c);
+    })
+    .transform([](Data& d) -> Result {
+        return process(d);
+    })
+    .or_else([](ParseError& e) -> std::expected<Result, ParseError> {
+        log(e.what());
+        return std::unexpected(e);
+    });
+```
+
+---
+
+### Pattern 2 — `std::optional` — Null Case
+
+```cpp
+// "Checked exception" for not-found / absent value
+std::optional<User> find_user(int id) {
+    auto it = users_.find(id);
+    if (it == users_.end()) return std::nullopt;
+    return it->second;
+}
+
+// CANNOT ignore — must check before using
+auto user = find_user(42);
+user->name;               // ❌ UB — no check
+user.value().name;        // ❌ throws bad_optional_access if empty
+if (user) user->name;     // ✅ safe access
+user.value_or(User{}).name; // ✅ with default
+```
+
+---
+
+### Pattern 3 — Result Type (Pre-C++23)
+
+```cpp
+// Custom Result<T, E> for pre-C++23 codebases
+template<typename T, typename E>
+class Result {
+    std::variant<T, E> data_;
+
+public:
+    // Factory functions
+    static Result ok(T val)  { return Result{std::in_place_index<0>, std::move(val)}; }
+    static Result err(E err) { return Result{std::in_place_index<1>, std::move(err)}; }
+
+    // Check
+    bool is_ok()  const { return data_.index() == 0; }
+    bool is_err() const { return data_.index() == 1; }
+    explicit operator bool() const { return is_ok(); }
+
+    // Access — checked
+    T& value() {
+        if (!is_ok()) throw std::runtime_error("Result contains error");
+        return std::get<0>(data_);
+    }
+    E& error() {
+        if (!is_err()) throw std::runtime_error("Result contains value");
+        return std::get<1>(data_);
+    }
+
+    // Access — unchecked
+    T& operator*()  { return std::get<0>(data_); }
+    T* operator->() { return &std::get<0>(data_); }
+
+    // Map operations
+    template<typename F>
+    auto and_then(F&& f) -> Result<std::invoke_result_t<F, T>, E> {
+        if (is_ok()) return f(value());
+        return Result<std::invoke_result_t<F, T>, E>::err(error());
+    }
+
+private:
+    template<size_t I, typename... Args>
+    Result(std::in_place_index_t<I> idx, Args&&... args)
+        : data_(idx, std::forward<Args>(args)...) { }
+};
+
+// Usage
+Result<int, ParseError> parse_int(const std::string& s) {
+    try {
+        return Result<int, ParseError>::ok(std::stoi(s));
+    } catch (const std::invalid_argument&) {
+        return Result<int, ParseError>::err({0, 0, "not a number: " + s});
+    }
+}
+
+auto r = parse_int("abc");
+if (!r) {
+    log(r.error().what());
+    return;
+}
+int value = *r;   // safe — checked above
+```
+
+---
+
+### Pattern 4 — `[[nodiscard]]` — Enforce Handling
+
+```cpp
+// Compiler WARNING if return value ignored
+[[nodiscard]] std::expected<void, NetworkError>
+send_request(const Request& req);
+
+[[nodiscard]] bool validate_user(const User& u);
+
+// Force handling — cannot silently discard
+send_request(req);            // ⚠️ warning: ignoring nodiscard return value
+auto result = send_request(req); // ✅ must handle
+
+// Custom message (C++20)
+[[nodiscard("check for network errors")]]
+std::expected<Data, NetworkError> fetch(const std::string& url);
+```
+
+---
+
+### Checked-Style Custom Exception — Full Example
+
+```cpp
+// Domain error types (not exception classes — value types)
+struct ValidationError {
+    std::string field;
+    std::string rule;
+    std::string value;
+
+    std::string what() const {
+        return "Validation failed: field='" + field
+             + "' rule='" + rule
+             + "' value='" + value + "'";
+    }
+};
+
+struct AuthError {
+    std::string user_id;
+    std::string resource;
+    int         http_code = 403;
+
+    std::string what() const {
+        return "Unauthorized: user='" + user_id
+             + "' resource='" + resource + "'";
+    }
+};
+
+// Using std::variant for multiple error types
+using ServiceError = std::variant<ValidationError, AuthError, NetworkError>;
+
+[[nodiscard]]
+std::expected<User, ServiceError>
+create_user(const UserRequest& req) {
+    // Validation — "checked exception" via return type
+    if (req.username.empty())
+        return std::unexpected(ServiceError{
+            ValidationError{"username", "required", ""}
+        });
+
+    if (req.username.length() < 3)
+        return std::unexpected(ServiceError{
+            ValidationError{"username", "min_length:3", req.username}
+        });
+
+    // Auth check
+    if (!current_user_.can_create_users())
+        return std::unexpected(ServiceError{
+            AuthError{current_user_.id, "/users", 403}
+        });
+
+    // Network
+    auto db_result = db_.insert(req);
+    if (!db_result)
+        return std::unexpected(ServiceError{db_result.error()});
+
+    return *db_result;
+}
+
+// Caller MUST handle all error cases
+auto result = create_user(req);
+if (!result) {
+    std::visit([](const auto& err) {
+        std::cerr << err.what() << "\n";
+    }, result.error());
+    return respond(400, "failed");
+}
+return respond(201, result->to_json());
+```
+
+---
+
+# 📁 03 — Unchecked Custom Exception
+
+## 📌 What Unchecked Means in C++
+
+```
+In C++: ALL exceptions thrown via `throw` are "unchecked"
+        No compile-time enforcement to catch or declare
+        Caller can choose to catch or let propagate
+        Equivalent to Java's RuntimeException hierarchy
+```
+
+---
+
+### Unchecked Custom Exceptions — Via `throw`
+
+```cpp
+// Logic errors — bugs, should never happen in correct code
+// Equivalent to Java's RuntimeException — unchecked
+
+class LogicException : public std::logic_error {
+    std::string component_;
+public:
+    LogicException(std::string component, std::string msg)
+        : std::logic_error("[" + component + "] " + msg)
+        , component_(std::move(component)) { }
+
+    const std::string& component() const noexcept { return component_; }
+};
+
+    class PreconditionViolation : public LogicException {
+        std::string condition_;
+    public:
+        PreconditionViolation(std::string component,
+                              std::string condition)
+            : LogicException(std::move(component),
+                "Precondition violated: " + condition)
+            , condition_(std::move(condition)) { }
+
+        const std::string& condition() const noexcept { return condition_; }
+    };
+
+    class PostconditionViolation : public LogicException {
+    public:
+        using LogicException::LogicException;
+    };
+
+    class InvariantViolation : public LogicException {
+    public:
+        using LogicException::LogicException;
+    };
+
+// Usage — thrown when programmer error detected
+class Stack {
+    std::vector<int> data_;
+    size_t max_size_;
+public:
+    void push(int val) {
+        if (data_.size() >= max_size_)
+            throw PreconditionViolation("Stack",
+                "push() on full stack (size=" + std::to_string(max_size_) + ")");
+        data_.push_back(val);
+    }
+
+    int pop() {
+        if (data_.empty())
+            throw PreconditionViolation("Stack", "pop() on empty stack");
+        int val = data_.back();
+        data_.pop_back();
+        return val;
+    }
+};
+```
+
+---
+
+### Runtime Unchecked Exceptions
+
+```cpp
+// Runtime failures — correct code, bad environment
+// Caller may or may not catch — no enforcement
+
+class RuntimeException : public std::runtime_error {
+    int         error_code_;
+    std::string component_;
+public:
+    RuntimeException(int code, std::string comp, std::string msg)
+        : std::runtime_error(std::move(msg))
+        , error_code_(code)
+        , component_(std::move(comp)) { }
+
+    int                code()      const noexcept { return error_code_; }
+    const std::string& component() const noexcept { return component_;  }
+};
+
+    class PaymentException : public RuntimeException {
+        std::string transaction_id_;
+        double      amount_;
+    public:
+        PaymentException(int code,
+                         std::string txn_id,
+                         double amount,
+                         std::string msg)
+            : RuntimeException(code, "PaymentService", std::move(msg))
+            , transaction_id_(std::move(txn_id))
+            , amount_(amount) { }
+
+        const std::string& transaction_id() const noexcept { return transaction_id_; }
+        double             amount()          const noexcept { return amount_;          }
+    };
+
+        class CardDeclinedException : public PaymentException {
+            std::string decline_code_;
+        public:
+            CardDeclinedException(std::string txn_id,
+                                  double amount,
+                                  std::string decline_code)
+                : PaymentException(4001, std::move(txn_id), amount,
+                    "Card declined: " + decline_code)
+                , decline_code_(std::move(decline_code)) { }
+
+            const std::string& decline_code() const noexcept { return decline_code_; }
+        };
+
+        class InsufficientFundsException : public PaymentException {
+            double available_;
+        public:
+            InsufficientFundsException(std::string txn_id,
+                                       double requested,
+                                       double available)
+                : PaymentException(4002, std::move(txn_id), requested,
+                    "Insufficient funds: requested=" + std::to_string(requested)
+                    + " available=" + std::to_string(available))
+                , available_(available) { }
+
+            double available() const noexcept { return available_; }
+        };
+```
+
+---
+
+### Unchecked — Caller Chooses What to Handle
+
+```cpp
+void process_payment(const Order& order) {
+    // These may throw — caller not forced to catch
+    auto txn = payment_gateway_.charge(
+        order.card_token(),
+        order.total()
+    );
+    order.mark_paid(txn.id());
+    notify_user(order.user_id());
+}
+
+// Option 1: catch specific — handle specific cases
+try {
+    process_payment(order);
+} catch (const CardDeclinedException& e) {
+    respond(402, "Card declined: " + e.decline_code());
+} catch (const InsufficientFundsException& e) {
+    respond(402, "Insufficient funds, available: $"
+                 + std::to_string(e.available()));
+} catch (const PaymentException& e) {
+    respond(402, "Payment failed: " + std::string(e.what()));
+}
+
+// Option 2: let propagate — higher level handles
+// No try-catch — exception propagates to HTTP request handler
+
+// Option 3: catch all — generic handling
+try {
+    process_payment(order);
+} catch (const std::exception& e) {
+    respond(500, "Internal error");
+    log_exception(e);
+}
+```
+
+---
+
+### Unchecked with `noexcept` Suppression
+
+```cpp
+// Convert unchecked exception to error code at API boundary
+int process_payment_c_api(const char* token, double amount) noexcept {
+    try {
+        payment_service_.charge(token, amount);
+        return 0;   // success
+    } catch (const CardDeclinedException& e) {
+        set_last_error(e.decline_code());
+        return -1;
+    } catch (const InsufficientFundsException& e) {
+        set_last_error("insufficient_funds");
+        return -2;
+    } catch (const std::exception& e) {
+        set_last_error(e.what());
+        return -99;
+    } catch (...) {
+        set_last_error("unknown_error");
+        return -100;
+    }
+    // noexcept: exceptions converted to error codes at boundary
+}
+```
+
+---
+
+### Checked vs Unchecked — Full Comparison
+
+| Dimension | Checked Style (C++) | Unchecked Style (C++) |
+|---|---|---|
+| Mechanism | `std::expected`, `std::optional`, `Result<T,E>` | `throw` + exception class |
+| Enforcement | Type system — compiler | None — runtime |
+| Caller burden | MUST handle (type won't match otherwise) | CAN ignore (compile success) |
+| Performance | Zero overhead on error path | Overhead only when thrown |
+| Stack info | No stack involved | Stack unwinds |
+| Use case | Expected failures, recoverable | Unexpected failures, propagating |
+| Composition | Monadic chaining | try-catch nesting |
+| When to use | `parse()`, `find()`, `connect()` | `validate()`, `ensure()`, `assert()` |
+
+---
+
+## 🔬 Under the Hood — Custom Exception Object
+
+```cpp
+class MyException : public std::exception {
+    std::string msg_;
+    int         code_;
+};
+
+throw MyException("error", 42);
+```
+
+```
+Exception buffer layout (runtime allocated):
+
+┌─────────────────────────────────────────────────┐
+│  std::exception subobject                        │
+│    vptr → MyException vtable                    │  +0
+├─────────────────────────────────────────────────┤
+│  msg_ (std::string — 24 bytes SSO)              │  +8
+├─────────────────────────────────────────────────┤
+│  code_ (int — 4 bytes)                          │  +32
+├─────────────────────────────────────────────────┤
+│  padding (4 bytes)                              │  +36
+└─────────────────────────────────────────────────┘
+Total: 40 bytes in exception buffer
+
+vtable for MyException:
+┌────────────────────────────────────┐
+│ type_info* for MyException         │
+├────────────────────────────────────┤
+│ ~MyException (destructor)          │
+├────────────────────────────────────┤
+│ what() → returns msg_.c_str()      │
+└────────────────────────────────────┘
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Payment service — full custom exception system:**
+
+```cpp
+// Exception hierarchy for payment domain
+// Thrown: unchecked — propagate through service layers
+// At HTTP boundary: caught, mapped to HTTP responses
+
+class PaymentController {
+    PaymentService& svc_;
+
+    HttpResponse handle_charge(const HttpRequest& req) {
+        try {
+            auto order = parse_order(req.body());  // may throw ValidationException
+            auto result = svc_.charge(order);       // may throw PaymentException
+
+            return HttpResponse{200, result.to_json()};
+
+        } catch (const ValidationException& e) {
+            // 400 Bad Request — client error
+            return HttpResponse{400, json{
+                {"error", "validation_failed"},
+                {"field", e.field()},
+                {"message", e.what()}
+            }.dump()};
+
+        } catch (const CardDeclinedException& e) {
+            // 402 Payment Required
+            return HttpResponse{402, json{
+                {"error", "card_declined"},
+                {"decline_code", e.decline_code()},
+                {"transaction_id", e.transaction_id()}
+            }.dump()};
+
+        } catch (const InsufficientFundsException& e) {
+            return HttpResponse{402, json{
+                {"error", "insufficient_funds"},
+                {"available", e.available()},
+                {"requested", e.amount()}
+            }.dump()};
+
+        } catch (const ConnectionPoolExhausted& e) {
+            // 503 Service Unavailable — infrastructure
+            alert_team("DB pool exhausted: " + std::to_string(e.active())
+                      + "/" + std::to_string(e.max()));
+            return HttpResponse{503, json{{"error", "service_unavailable"}}.dump()};
+
+        } catch (const std::exception& e) {
+            // 500 Internal Server Error — unexpected
+            log_critical("Unhandled exception: ", e.what());
+            return HttpResponse{500, json{{"error", "internal_error"}}.dump()};
+        }
+    }
+};
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+class MyEx : public std::exception {
+    std::string msg_;
+public:
+    MyEx(std::string m) : msg_(std::move(m)) { }
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
+const char* get_what() {
+    try {
+        throw MyEx("test");
+    } catch (const std::exception& e) {
+        return e.what();   // return pointer from catch
+    }
+}
+// Is the returned pointer valid?
+```
+> ❌ **Dangling pointer.** Exception object destroyed when catch block exits. `e.what()` returns pointer to `msg_`'s internal buffer. After catch block: `MyEx` destroyed, `msg_` freed, pointer dangling. Fix: `std::string get_what()` — return by value.
+
+**Trap 2:**
+```cpp
+class Base : public std::exception { };
+class Derived : public Base { };
+
+try {
+    throw Derived{};
+} catch (Base b) {          // by value
+    std::cout << typeid(b).name();   // Base or Derived?
+}
+```
+> `Base` — catching by value **slices** the `Derived` to `Base`. `typeid(b)` returns `Base`'s type info. `catch (const Base& b)` would give `Derived`.
+
+**Trap 3:**
+```
+"Should custom exceptions inherit std::logic_error or std::runtime_error?"
+```
+> Depends on the error nature. `std::logic_error` = programming bug (invalid args, violated preconditions — the caller did something wrong). `std::runtime_error` = environmental failure (network down, file missing — correct code, bad environment). For most domain errors: `std::runtime_error`. For API misuse: `std::logic_error`. Never inherit from both — pick one branch.
+
+**Trap 4:**
+```cpp
+class MyEx : public std::exception {
+    const char* msg_;  // ← pointer, not string
+public:
+    MyEx(const char* m) : msg_(m) { }
+    const char* what() const noexcept override { return msg_; }
+};
+
+throw MyEx("hello");  // safe?
+```
+> Depends on what `msg_` points to. If `"hello"` is a string literal → lives in `.rodata` → safe. If it points to a local buffer → dangling after unwind. Using `const char*` instead of `std::string` is risky — `std::string` owns its data and is always safe.
+
+**Trap 5:**
+```cpp
+// Is this a checked or unchecked exception in C++?
+class NetworkError : public std::runtime_error {
+public: using std::runtime_error::runtime_error;
+};
+```
+> **Unchecked** — all C++ exceptions thrown via `throw` are unchecked. There is no compile-time enforcement regardless of the exception class. "Checked" in C++ means using `std::expected`/`Result` return types — the type system forces handling. `NetworkError` thrown via `throw` can be silently uncaught.
+
+---

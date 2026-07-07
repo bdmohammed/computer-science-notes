@@ -1,0 +1,932 @@
+---
+title: Python Exception Hierarchy
+slug: computer-languages/python/exception-handling/hierarchy
+description: Master Python's exception tree, the BaseException root, and why Python doesn't have "Checked Exceptions." Learn how to handle errors like a Pythonista.
+sidebar:
+  label: "Hierarchy"
+  badge:
+    text: Error Handling
+    variant: tip
+tags: [python, exceptions, hierarchy, baseexception, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🌳 The Root: `BaseException`
+
+In Java, `Throwable` is the root. In Python, it's **`BaseException`**.
+
+> **Key Rule**: You should almost **never** catch `BaseException`. It includes system-exiting events like `KeyboardInterrupt` (Ctrl+C) and `SystemExit`. If you catch it, you might make your program unkillable!
+
+```text
+BaseException  ← ROOT
+ ├── SystemExit       (sys.exit())
+ ├── KeyboardInterrupt (Ctrl+C)
+ ├── GeneratorExit    (generator.close())
+ └── Exception        ← ⚠️ Catch THIS one!
+      ├── ArithmeticError
+      │    └── ZeroDivisionError
+      ├── LookupError
+      │    ├── IndexError
+      │    └── KeyError
+      ├── ValueError
+      ├── TypeError
+      └── OSError
+           └── FileNotFoundError
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `BaseException`: System-level events. Let them pass.  
+- `Exception`: Application-level errors. Handle these.  
+- Everything else: Specific bugs. Fix these.
+</Aside>
+
+---
+
+## 🔬 Exception vs Error in Python
+
+Unlike Java, Python **does not** have a strict `Error` vs `Exception` split for recovery purposes. All inherit from `BaseException`, but conventionally:
+
+| Type | Description | Example | Recoverable? |
+|------|-------------|---------|-------------|
+| **System Exit** | Interpreter shutting down | `SystemExit` | ❌ No |
+| **Control Flow** | Special signals | `StopIteration`, `GeneratorExit` | ❌ Internal use only |
+| **Standard Error** | Programming/Env errors | `ValueError`, `FileNotFoundError` | ✅ Yes |
+
+> **Note**: In Java, `Error` means "JVM broke." In Python, things like `MemoryError` exist, but they are just subclasses of `Exception` (via `BaseException`). We treat them as catchable, though recovery is hard.
+
+---
+
+## 🗺️ The "Big Three" Categories
+
+### 1. Standard Exceptions (`Exception`)
+These are the errors you handle daily.
+
+```python
+try:
+    x = 1 / 0
+except ZeroDivisionError:
+    print("Math error!")
+```
+
+### 2. System Exits (`SystemExit`, `KeyboardInterrupt`)
+These inherit directly from `BaseException`, skipping `Exception`. This ensures that a broad `except Exception:` block **won't** accidentally swallow a user's request to quit the program.
+
+```python
+try:
+    while True:
+        pass
+except KeyboardInterrupt:
+    print("User pressed Ctrl+C!")
+    # Program exits gracefully
+```
+
+### 3. Warnings (`Warning`)
+Not strictly exceptions, but they inherit from `Exception`. They don't stop execution unless configured to do so.
+
+---
+
+## 💻 Real-World Code — The Hierarchy in Action
+
+```python
+def get_user_data(user_id):
+    users = {1: "Alice", 2: "Bob"}
+    
+    try:
+        name = users[user_id]
+    except KeyError:
+        # Specific: Key missing
+        return "Unknown User"
+    except Exception as e:
+        # General: Catch-all for unexpected errors
+        print(f"Unexpected error: {type(e).__name__}: {e}")
+        return None
+
+print(get_user_data(1))   # Alice
+print(get_user_data(99))  # Unknown User
+```
+
+### 🔬 Why Order Matters
+Python checks `except` blocks from top to bottom.
+
+```python
+try:
+    raise KeyError("Missing")
+except Exception:
+    print("Caught generic")
+except KeyError:
+    print("Caught specific") # ❌ Unreachable code!
+```
+
+<Aside type="caution">
+**Java vs Python**:  
+- Java: Compiler enforces catch order for related types.  
+- Python: Interpreter enforces it at runtime. If a parent class catches the error first, the child class block is ignored.
+</Aside>
+
+---
+
+## 🛡️ Custom Exceptions
+
+In Java, you extend `Exception` or `RuntimeException`. In Python, you simply extend `Exception`.
+
+```python
+class AppError(Exception):
+    """Base error for our app"""
+    pass
+
+class ValidationError(AppError):
+    """Input was invalid"""
+    pass
+
+class DatabaseError(AppError):
+    """DB connection failed"""
+    pass
+
+# Usage
+try:
+    raise ValidationError("Email required")
+except AppError as e:
+    print(f"App Error: {e}")
+```
+
+> **Rule**: Always inherit from `Exception`, not `BaseException`.
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Catching BaseException" icon="error">
+    ```python
+    try:
+        run_server()
+    except BaseException: 
+        # ❌ DANGEROUS
+        # Catches Ctrl+C (KeyboardInterrupt)
+        # Your server becomes unkillable!
+        pass
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Bare Except" icon="warning">
+    ```python
+    try:
+        do_something()
+    except: 
+        # ❌ BAD PRACTICE
+        # Same as except BaseException:
+        # Swallows SystemExit and KeyboardInterrupt
+        
+    # ✅ Fix:
+    except Exception:
+        pass
+    ```
+  </Card>
+
+  <Card title="Trap 3: No Checked Exceptions" icon="shield">
+    ```python
+    def read_file():
+        open("missing.txt") 
+        # ❌ No compiler error!
+        # Python doesn't force you to declare throws
+        
+    # You MUST handle it at runtime or let it crash.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 Internals: How It Works
+
+1.  **Raise**: Python creates an instance of the exception class.
+2.  **Match**: It walks up the inheritance tree of the raised exception.
+3.  **Catch**: It compares this tree against the `except` clauses.
+    -   `isinstance(raised_exc, ExceptClass)` must be `True`.
+
+```python
+# Hierarchy: ValueError -> Exception -> BaseException
+
+try:
+    raise ValueError("Bad")
+except Exception: 
+    # Matches! ValueError is an instance of Exception
+    print("Caught")
+```
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is the root of Python exceptions?
+    A: BaseException.
+    
+    Q: Should you catch BaseException?
+    A: No. Catch Exception instead.
+    
+    Q: Does Python have Checked Exceptions?
+    A: No. All exceptions are unchecked (runtime).
+    ```
+  </Card>
+  
+  <Card title="Common Errors" icon="shield">
+    ```text
+    Q: Difference between IndexError and KeyError?
+    A: IndexError for lists (int index). KeyError for dicts (key missing).
+    
+    Q: What is StopIteration?
+    A: Signal that an iterator is done. Handled automatically by for loops.
+    ```
+  </Card>
+
+  <Card title="Custom Errors" icon="rocket">
+    ```text
+    Q: How to create a custom exception?
+    A: class MyError(Exception): pass
+    
+    Q: Why not inherit from BaseException?
+    A: It bypasses standard handling and catches system exits.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+try:
+    raise KeyboardInterrupt
+except Exception:
+    print("Caught Exception")
+except BaseException:
+    print("Caught BaseException")
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Caught BaseException
+```
+*Reason: `KeyboardInterrupt` inherits from `BaseException`, NOT `Exception`. So the first block is skipped.*
+</details>
+
+> 🚀 **Final Wisdom**: Python's hierarchy is simple. Inherit from `Exception` for your errors. Catch `Exception` for general handling. Let `BaseException` alone unless you're building a framework. Keep it simple! 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🌳 Python Exception Hierarchy
+
+---
+
+## 01 — Throwable
+
+### 🧠 Mental Model
+
+```
+Java has:    Throwable (root of all throwable objects)
+Python has:  BaseException (root of ALL exceptions)
+
+EVERY object you can raise in Python:
+  ├── must be an instance of BaseException
+  └── or an instance of a subclass of BaseException
+
+raise "string"      # 💥 TypeError: exceptions must derive from BaseException
+raise 42            # 💥 TypeError: exceptions must derive from BaseException
+raise ValueError()  # ✅ ValueError is a BaseException subclass
+raise ValueError    # ✅ class itself — Python instantiates it: ValueError()
+```
+
+### `BaseException` — The Root
+
+```python
+# BaseException is the ONLY root — unlike Java which has Object above Throwable
+# In Python: BaseException inherits from object directly
+
+BaseException.__bases__    # (<class 'object'>,)
+BaseException.__mro__      # (<class 'BaseException'>, <class 'object'>)
+
+# What BaseException provides:
+e = BaseException("something wrong", 42)
+e.args          # ('something wrong', 42)  ← tuple of constructor args
+e.args[0]       # 'something wrong'
+str(e)          # 'something wrong'  ← first arg if only one
+repr(e)         # "BaseException('something wrong', 42)"
+
+# Traceback management:
+e.__traceback__           # None (before raised), traceback (after raised)
+e.with_traceback(tb)      # returns self with __traceback__ set
+
+# Exception chaining:
+e.__cause__               # explicit cause (raise X from Y)
+e.__context__             # implicit context (exception during handler)
+e.__suppress_context__    # True when "raise X from None"
+```
+
+### 🔬 CPython Internals — `PyBaseExceptionObject`
+
+```
+PyBaseExceptionObject (C struct):
+  PyObject_HEAD             ← ob_refcnt, ob_type
+  PyObject *dict            ← instance __dict__
+  PyObject *args            ← tuple of args
+  PyObject *notes           ← list of notes (3.11+)
+  PyObject *traceback       ← __traceback__
+  PyObject *context         ← __context__
+  PyObject *cause           ← __cause__
+  char suppress_context     ← __suppress_context__
+
+ALL exception objects share this structure.
+Subclasses extend it with additional fields.
+```
+
+---
+
+## 02 — Error vs Exception
+
+### Python's Split
+
+```
+Java:    Error      → JVM/system level, don't catch
+         Exception  → program level, catch and handle
+
+Python:  BaseException subclasses split differently:
+```
+
+```
+BaseException
+│
+├── SYSTEM-LEVEL (like Java's Error — usually don't catch):
+│   ├── SystemExit          ← sys.exit() called
+│   ├── KeyboardInterrupt   ← Ctrl+C pressed
+│   └── GeneratorExit       ← generator.close() called
+│
+└── Exception               ← PROGRAM-LEVEL (like Java's Exception)
+    │
+    ├── RECOVERABLE (expected, handle them):
+    │   ├── ValueError      ← bad value (wrong but valid type)
+    │   ├── TypeError       ← wrong type passed
+    │   ├── KeyError        ← dict key missing
+    │   ├── IndexError      ← list index out of range
+    │   ├── AttributeError  ← attribute doesn't exist
+    │   └── FileNotFoundError← file missing
+    │
+    └── FATAL (unexpected, log and crash):
+        ├── MemoryError     ← out of memory
+        ├── RecursionError  ← stack overflow
+        ├── SystemError     ← CPython internal error
+        └── NotImplementedError ← missing implementation
+```
+
+### Behavior Differences
+
+```python
+# SystemExit — NOT caught by except Exception:
+import sys
+
+try:
+    sys.exit(1)
+except Exception:
+    print("caught!")     # NEVER printed
+except SystemExit as e:
+    print(f"exit: {e.code}")  # ✅ must catch explicitly
+
+
+# KeyboardInterrupt — Ctrl+C:
+try:
+    while True:
+        pass
+except Exception:
+    pass                 # 💀 DOES NOT stop Ctrl+C — KeyboardInterrupt escapes
+except KeyboardInterrupt:
+    print("stopped")     # ✅ explicit catch
+
+
+# GeneratorExit — generator cleanup:
+def my_gen():
+    try:
+        yield 1
+        yield 2
+    except GeneratorExit:
+        print("generator closing")   # cleanup resources
+        # do NOT yield here — RuntimeError
+
+g = my_gen()
+next(g)
+g.close()   # throws GeneratorExit INTO the generator
+```
+
+---
+
+## 03 — Checked vs Unchecked
+
+### 🧠 Java vs Python
+
+```
+JAVA:
+  Checked exceptions:   compiler forces you to handle or declare
+    IOException, SQLException — must be in try/catch or throws clause
+
+  Unchecked exceptions: compiler ignores — RuntimeException subclasses
+    NullPointerException, ArrayIndexOutOfBoundsException
+
+PYTHON:
+  ALL exceptions are UNCHECKED.
+  No compiler enforcement. No "throws" declarations.
+  You are NEVER forced to handle any exception.
+  This is a deliberate language design choice.
+```
+
+```python
+# Python never forces you to handle:
+def read_file(path: str) -> str:
+    return open(path).read()          # FileNotFoundError possible
+                                      # Python: no complaint from compiler
+                                      # Java: would require throws IOException
+
+# You can call it with zero handling:
+data = read_file("missing.txt")       # RuntimeError at runtime if missing
+                                      # No compile-time warning
+```
+
+### Python's Philosophy — EAFP
+
+```
+LBYL (Look Before You Leap) — Java checked style:
+  if os.path.exists(path):
+      data = open(path).read()
+
+EAFP (Easier to Ask Forgiveness than Permission) — Python style:
+  try:
+      data = open(path).read()
+  except FileNotFoundError:
+      handle_missing()
+```
+
+### Python's Answer to "Checked" — Type Hints + Tools
+
+```python
+# Python 3.11+ adds ExceptionGroup — closest to "declared" exceptions:
+# But still not enforced — just documentation
+
+# What Python DOES have — @raises type annotations (PEP 748 draft)
+# For now: document in docstring:
+
+def connect(host: str, port: int) -> Connection:
+    """
+    Connect to server.
+
+    Raises:
+        ConnectionRefusedError: if server is not running
+        TimeoutError:           if connection times out
+        ValueError:             if port is out of range
+    """
+    if not 1 <= port <= 65535:
+        raise ValueError(f"Port out of range: {port}")
+    ...
+```
+
+### Practical "Checked" Enforcement — Custom Wrapper
+
+```python
+from functools import wraps
+from typing import Type
+
+def declares(*exception_types: Type[Exception]):
+    """
+    Documents and enforces declared exceptions at runtime.
+    Closest Python gets to Java's checked exceptions.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except BaseException as e:
+                if not isinstance(e, exception_types):
+                    raise RuntimeError(
+                        f"{func.__name__} raised undeclared "
+                        f"{type(e).__name__}: {e}"
+                    ) from e
+                raise
+        return wrapper
+    return decorator
+
+@declares(ValueError, FileNotFoundError)
+def parse_config(path: str) -> dict:
+    with open(path) as f:           # FileNotFoundError declared ✅
+        return {"key": f.read()}
+
+@declares(ValueError)
+def broken_func():
+    raise KeyError("not declared")  # 💥 RuntimeError: undeclared KeyError
+```
+
+---
+
+## 04 — Full Hierarchy Tree
+
+```
+BaseException
+│
+├── SystemExit
+│
+├── KeyboardInterrupt
+│
+├── GeneratorExit
+│
+└── Exception
+    │
+    ├── StopIteration
+    │     └── (value attribute — generator return value)
+    │
+    ├── StopAsyncIteration
+    │
+    ├── ArithmeticError
+    │     ├── FloatingPointError
+    │     ├── OverflowError
+    │     └── ZeroDivisionError
+    │
+    ├── AssertionError            ← assert statement fails
+    │
+    ├── AttributeError            ← obj.missing_attr
+    │     └── (name attribute — 3.10+)
+    │
+    ├── BufferError
+    │
+    ├── EOFError                  ← input() hits end of file
+    │
+    ├── ImportError
+    │     ├── ModuleNotFoundError
+    │     └── (name, path attributes)
+    │
+    ├── LookupError
+    │     ├── IndexError          ← seq[out_of_range]
+    │     └── KeyError            ← dict["missing"]
+    │
+    ├── MemoryError
+    │
+    ├── NameError
+    │     └── UnboundLocalError   ← local var used before assignment
+    │
+    ├── OSError  (alias: IOError, EnvironmentError, WindowsError)
+    │     ├── BlockingIOError     (errno.EAGAIN)
+    │     ├── BrokenPipeError     (errno.EPIPE, ESHUTDOWN)
+    │     ├── ChildProcessError   (errno.ECHILD)
+    │     ├── ConnectionError
+    │     │     ├── BrokenPipeError
+    │     │     ├── ConnectionAbortedError
+    │     │     ├── ConnectionRefusedError
+    │     │     └── ConnectionResetError
+    │     ├── FileExistsError     (errno.EEXIST)
+    │     ├── FileNotFoundError   (errno.ENOENT)
+    │     ├── InterruptedError    (errno.EINTR)
+    │     ├── IsADirectoryError   (errno.EISDIR)
+    │     ├── NotADirectoryError  (errno.ENOTDIR)
+    │     ├── PermissionError     (errno.EACCES, EPERM)
+    │     ├── ProcessLookupError  (errno.ESRCH)
+    │     └── TimeoutError        (errno.ETIMEDOUT)
+    │
+    ├── ReferenceError            ← dead weakref accessed
+    │
+    ├── RuntimeError
+    │     ├── NotImplementedError ← abstract method not implemented
+    │     └── RecursionError      ← max recursion depth exceeded
+    │
+    ├── SyntaxError
+    │     └── IndentationError
+    │           └── TabError
+    │
+    ├── SystemError               ← CPython internal error
+    │
+    ├── TypeError                 ← wrong type
+    │
+    ├── ValueError
+    │     └── UnicodeError
+    │           ├── UnicodeDecodeError
+    │           ├── UnicodeEncodeError
+    │           └── UnicodeTranslateError
+    │
+    └── Warning
+          ├── BytesWarning
+          ├── DeprecationWarning
+          ├── EncodingWarning       (3.10+)
+          ├── FutureWarning
+          ├── ImportWarning
+          ├── PendingDeprecationWarning
+          ├── ResourceWarning
+          ├── RuntimeWarning
+          ├── SyntaxWarning
+          ├── UnicodeWarning
+          └── UserWarning
+```
+
+---
+
+### 🔬 OSError — errno Mapping
+
+```python
+# OSError subclasses map to specific errno values:
+import errno
+
+try:
+    open("/nonexistent/file.txt")
+except OSError as e:
+    print(e.errno)       # 2
+    print(e.strerror)    # "No such file or directory"
+    print(e.filename)    # "/nonexistent/file.txt"
+    print(type(e))       # <class 'FileNotFoundError'>
+    # FileNotFoundError is a subclass of OSError
+
+# errno constants:
+errno.ENOENT   # 2  → FileNotFoundError
+errno.EACCES   # 13 → PermissionError
+errno.ETIMEDOUT# 110→ TimeoutError
+errno.EEXIST   # 17 → FileExistsError
+```
+
+---
+
+### 🔬 `ExceptionGroup` — Python 3.11+
+
+```python
+# Multiple simultaneous exceptions (async, concurrent):
+eg = ExceptionGroup(
+    "multiple errors",
+    [ValueError("bad val"), TypeError("bad type"), KeyError("missing")]
+)
+
+# Handling:
+try:
+    raise ExceptionGroup("failed", [
+        ValueError("v1"),
+        TypeError("t1"),
+        ValueError("v2"),
+    ])
+except* ValueError as eg:             # except* (star) — new syntax 3.11+
+    print(f"ValueErrors: {eg.exceptions}")
+except* TypeError as eg:
+    print(f"TypeErrors: {eg.exceptions}")
+
+# except* runs for EACH matching type — both handlers can run!
+# Regular except: only ONE handler runs
+```
+
+---
+
+### Hierarchy Lookup — How `except` Matching Works
+
+```python
+# except clause matches if exception is INSTANCE OF that class
+# including subclasses — isinstance() check:
+
+try:
+    raise FileNotFoundError("missing.txt")
+except OSError:           # ✅ matches — FileNotFoundError is subclass of OSError
+    print("OS error")
+
+try:
+    raise FileNotFoundError("missing.txt")
+except Exception:         # ✅ matches — all the way up the hierarchy
+    print("Exception")
+
+try:
+    raise FileNotFoundError("missing.txt")
+except ValueError:        # ❌ no match — not in FileNotFoundError's MRO
+    print("never")
+
+# isinstance check under the hood:
+isinstance(FileNotFoundError(), OSError)     # True
+isinstance(FileNotFoundError(), Exception)   # True
+isinstance(FileNotFoundError(), ValueError)  # False
+```
+
+---
+
+### Custom Exception Hierarchy
+
+```python
+# Best practice — build a domain-specific hierarchy:
+
+class AppError(Exception):
+    """Root of all application exceptions."""
+    def __init__(self, message: str, code: int = 500):
+        super().__init__(message)
+        self.code = code
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.args[0]}"
+
+
+class ValidationError(AppError):
+    """Input validation failed."""
+    def __init__(self, field: str, message: str):
+        super().__init__(f"{field}: {message}", code=400)
+        self.field = field
+
+
+class AuthError(AppError):
+    """Authentication / authorization failed."""
+
+class NotFoundError(AppError):
+    """Resource not found."""
+    def __init__(self, resource: str, id):
+        super().__init__(f"{resource} with id={id} not found", code=404)
+        self.resource = resource
+        self.id       = id
+
+class DatabaseError(AppError):
+    """Database operation failed."""
+    def __init__(self, operation: str, cause: Exception = None):
+        super().__init__(f"DB {operation} failed", code=503)
+        self.operation = operation
+        if cause:
+            self.__cause__ = cause
+
+
+class RateLimitError(AppError):
+    """Too many requests."""
+    def __init__(self, retry_after: int = 60):
+        super().__init__("Rate limit exceeded", code=429)
+        self.retry_after = retry_after
+```
+
+```python
+# Usage:
+try:
+    user = find_user(user_id)
+except NotFoundError as e:
+    return http_response(404, str(e))
+except AuthError as e:
+    return http_response(401, str(e))
+except AppError as e:          # catches ALL app errors
+    return http_response(e.code, str(e))
+except Exception as e:         # unexpected errors
+    logger.critical("Unhandled", exc_info=True)
+    return http_response(500, "Internal Server Error")
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Exception hierarchy for custom data structures:
+
+class DSAError(Exception):
+    """Root for all data structure errors."""
+
+class EmptyError(DSAError):
+    """Operation on empty structure."""
+    def __init__(self, structure: str):
+        super().__init__(f"{structure} is empty")
+
+class OverflowError_(DSAError):      # not shadowing built-in OverflowError
+    """Structure capacity exceeded."""
+    def __init__(self, structure: str, capacity: int):
+        super().__init__(f"{structure} full (capacity={capacity})")
+
+class DuplicateKeyError(DSAError):
+    """Key already exists."""
+    def __init__(self, key):
+        super().__init__(f"Duplicate key: {key!r}")
+        self.key = key
+
+class InvalidOperationError(DSAError):
+    """Operation not valid for current state."""
+
+
+class BoundedStack:
+    def __init__(self, capacity: int):
+        self._data     = []
+        self._capacity = capacity
+
+    def push(self, val) -> None:
+        if len(self._data) >= self._capacity:
+            raise OverflowError_(             # domain-specific
+                "BoundedStack", self._capacity
+            )
+        self._data.append(val)
+
+    def pop(self):
+        if not self._data:
+            raise EmptyError("BoundedStack")  # domain-specific
+        return self._data.pop()
+
+    def peek(self):
+        if not self._data:
+            raise EmptyError("BoundedStack")
+        return self._data[-1]
+```
+
+---
+
+## 💀 Interview Trap 1 — Order of `except` Clauses Matters
+
+```python
+# 💀 WRONG — broad clause before narrow:
+try:
+    open("missing.txt")
+except OSError:              # catches FileNotFoundError too
+    print("os error")
+except FileNotFoundError:    # NEVER REACHED — dead code!
+    print("file missing")    # shadowed by OSError above
+```
+
+```python
+# ✅ CORRECT — narrow before broad:
+try:
+    open("missing.txt")
+except FileNotFoundError:    # specific first
+    print("file missing")
+except PermissionError:      # specific
+    print("no permission")
+except OSError:              # broad last — catches remaining
+    print("other OS error")
+```
+
+---
+
+## 💀 Interview Trap 2 — `NotImplementedError` vs `NotImplemented`
+
+```python
+NotImplementedError    # ← EXCEPTION — raise when method not implemented
+NotImplemented         # ← SINGLETON VALUE — return from dunder methods
+                       #   to signal "I don't handle this operation"
+
+# WRONG — raising NotImplemented (the value, not exception):
+class Shape:
+    def area(self):
+        raise NotImplemented    # 💀 TypeError: exceptions must derive from BaseException
+                                # NotImplemented is not an exception!
+
+# CORRECT:
+class Shape:
+    def area(self):
+        raise NotImplementedError("Subclass must implement area()")
+
+# CORRECT use of NotImplemented (no raise):
+class Vector:
+    def __add__(self, other):
+        if not isinstance(other, Vector):
+            return NotImplemented   # ✅ return, not raise
+        return Vector(self.x + other.x, self.y + other.y)
+```
+
+---
+
+## 💀 Interview Trap 3 — `except Exception` Misses System Exits
+
+```python
+# 💀 Infinite loop that can't be killed:
+while True:
+    try:
+        process()
+    except Exception:      # catches everything EXCEPT SystemExit, KeyboardInterrupt
+        pass               # Ctrl+C → KeyboardInterrupt → escapes try → loop catches?
+                           # NO — KeyboardInterrupt escapes the except Exception clause
+                           # but the while True catches it... wait:
+
+# Actually this IS killable — KeyboardInterrupt escapes except Exception
+# but if someone wraps more:
+
+while True:
+    try:
+        process()
+    except BaseException:   # 💀 catches EVERYTHING including Ctrl+C, sys.exit()
+        pass                # UNKILLABLE process
+```
+
+---
+
+## 💀 Interview Trap 4 — `StopIteration` Inside Generator
+
+```python
+# Python 3.7+ — StopIteration raised inside generator → RuntimeError:
+
+def my_gen():
+    it = iter([1, 2])
+    while True:
+        yield next(it)     # 💀 next() raises StopIteration when exhausted
+                           # Python 3.7+ converts to RuntimeError!
+                           # RuntimeError: generator raised StopIteration
+
+# Fix — catch StopIteration explicitly:
+def my_gen():
+    it = iter([1, 2])
+    while True:
+        try:
+            yield next(it)
+        except StopIteration:
+            return           # ← proper way to end generator
+```
+
+---

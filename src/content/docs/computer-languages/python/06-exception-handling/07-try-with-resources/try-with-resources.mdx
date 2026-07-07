@@ -1,0 +1,1117 @@
+---
+title: Python Context Managers (try-with-resources equivalent)
+slug: computer-languages/python/exception-handling/context-managers
+description: Master Python's `with` statement, the Context Manager protocol (`__enter__`/`__exit__`), and how it replaces Java's try-with-resources for automatic resource management.
+sidebar:
+  label: "Context Managers"
+  badge:
+    text: Resource Management
+    variant: tip
+tags: [python, with-statement, context-manager, autocloseable, exception-handling, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔒 The `with` Statement
+
+> In Java, you use `try-with-resources` to auto-close objects implementing `AutoCloseable`.  
+> In Python, you use the **`with` statement** with objects that implement the **Context Manager** protocol.
+
+It guarantees that cleanup code runs when the block exits, whether normally or via an exception.
+
+### 🔬 Syntax Comparison
+
+```java
+// Java
+try (FileInputStream fis = new FileInputStream("data.txt")) {
+    // use fis
+} // fis.close() called automatically
+```
+
+```python
+# Python
+with open("data.txt") as f:
+    # use f
+# f.close() called automatically
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- `__enter__`: Setup (Open connection, acquire lock).  
+- `__exit__`: Teardown (Close connection, release lock).  
+- The `with` block ensures `__exit__` **always** runs.
+</Aside>
+
+---
+
+## 🔬 The Context Manager Protocol
+
+To make a custom class work with `with`, it needs two magic methods:
+
+1.  `__enter__(self)`: Executes at the start of the block. Returns the resource.
+2.  `__exit__(self, exc_type, exc_val, exc_tb)`: Executes at the end. Handles exceptions.
+
+<Code lang="python" title="Custom Context Manager" code={`
+class ManagedConnection:
+    def __init__(self, host):
+        self.host = host
+        self.conn = None
+
+    def __enter__(self):
+        print(f"Connecting to {self.host}...")
+        self.conn = connect(self.host) # Simulated connection
+        return self.conn               # Assigned to 'as' variable
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print("Closing connection...")
+        if self.conn:
+            self.conn.close()
+        
+        # Return False to propagate exceptions, True to suppress them
+        return False 
+
+# Usage
+with ManagedConnection("db.local") as conn:
+    conn.query("SELECT 1")
+# Output:
+# Connecting to db.local...
+# Closing connection...
+`} />
+
+---
+
+## 🛡️ Exception Handling in `__exit__`
+
+The `__exit__` method receives details about any exception that occurred in the `with` block.
+
+| Argument | Description |
+|----------|-------------|
+| `exc_type` | The exception class (e.g., `ValueError`) |
+| `exc_val` | The exception instance (message) |
+| `exc_tb` | The traceback object |
+
+<CardGrid>
+  <Card title="Propagating Exceptions" icon="shield">
+    ```python
+    def __exit__(self, *args):
+        # Cleanup logic
+        return False # Let the exception bubble up
+    ```
+  </Card>
+  
+  <Card title="Suppressing Exceptions" icon="rocket">
+    ```python
+    def __exit__(self, exc_type, *args):
+        if exc_type is FileNotFoundError:
+            return True # Swallow the error
+        return False
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="caution">
+**Warning**: Returning `True` from `__exit__` suppresses the exception completely. Use this sparingly (e.g., ignoring missing files during cleanup). Usually, you want to return `False`.
+</Aside>
+
+---
+
+## 🚀 The `contextlib` Shortcut
+
+You don't always need a class. Python's `contextlib` module allows you to create context managers using generators and the `@contextmanager` decorator.
+
+<Code lang="python" title="Using @contextmanager" code={`
+from contextlib import contextmanager
+
+@contextmanager
+def managed_resource(name):
+    print(f"Acquiring {name}")
+    try:
+        yield name  # Value assigned to 'as' variable
+    finally:
+        print(f"Releasing {name}")
+
+# Usage
+with managed_resource("Lock") as res:
+    print(f"Using {res}")
+    
+# Output:
+# Acquiring Lock
+# Using Lock
+# Releasing Lock
+`} />
+
+This is the Pythonic equivalent of a simple `AutoCloseable` implementation.
+
+---
+
+## 💻 Real-World Code: Database Transaction
+
+In Java, you might wrap a Connection. In Python, we often wrap transactions to ensure commit/rollback.
+
+```python
+class DatabaseTransaction:
+    def __init__(self, db_connection):
+        self.db = db_connection
+
+    def __enter__(self):
+        self.db.begin()
+        return self.db
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            # An error occurred -> Rollback
+            self.db.rollback()
+        else:
+            # No error -> Commit
+            self.db.commit()
+        return False
+
+# Usage
+with DatabaseTransaction(conn) as db:
+    db.execute("INSERT INTO users VALUES ('Alice')")
+    db.execute("INSERT INTO logs VALUES ('Signup')")
+# If either fails, both are rolled back automatically.
+```
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Forgetting `yield` in `@contextmanager`" icon="error">
+    ```python
+    @contextmanager
+    def bad_manager():
+        setup()
+        # Missing yield!
+        cleanup()
+    # ❌ This won't work as a context manager properly.
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Swallowing Errors Accidentally" icon="warning">
+    ```python
+    def __exit__(self, *args):
+        cleanup()
+        return True # ❌ DANGEROUS: Hides ALL errors in the block
+    ```
+  </Card>
+
+  <Card title="Trap 3: Nested Contexts" icon="shield">
+    ```python
+    # ✅ Python allows multiple contexts in one line
+    with open('in.txt') as fin, open('out.txt', 'w') as fout:
+        fout.write(fin.read())
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is the Python equivalent of try-with-resources?
+    A: The `with` statement using Context Managers.
+    
+    Q: What methods define a Context Manager?
+    A: __enter__ and __exit__.
+    ```
+  </Card>
+  
+  <Card title="Exception Handling" icon="rocket">
+    ```text
+    Q: How do you handle errors in __exit__?
+    A: Check exc_type. Return False to propagate, True to suppress.
+    
+    Q: Does __exit__ run if an exception occurs?
+    A: Yes, always. That's its main purpose.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+class Demo:
+    def __enter__(self):
+        print("Enter")
+        return self
+
+    def __exit__(self, exc_type, *args):
+        print("Exit")
+        return False
+
+try:
+    with Demo():
+        raise ValueError("Oops")
+except ValueError:
+    print("Caught")
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Enter
+Exit
+Caught
+```
+*Reason: `__exit__` runs before the exception propagates to the `except` block.*
+</details>
+
+> 🚀 **Final Wisdom**: Use `with` for anything that needs cleanup (files, locks, connections). It makes your code safer, cleaner, and more Pythonic than manual `try/finally` blocks. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# ⚡ Python Exception Handling Enhancements
+
+---
+
+## 01 — `try` With Resources
+
+### 🧠 Mental Model
+
+```
+Java:   try-with-resources → AutoCloseable
+        try (Resource r = new Resource()) { ... }
+        → r.close() guaranteed on exit
+
+Python: with statement → Context Manager Protocol
+        with Resource() as r:
+            ...
+        → r.__exit__() guaranteed on exit
+
+IDENTICAL PURPOSE — guaranteed cleanup.
+Python's version is MORE POWERFUL — any object, any cleanup logic.
+```
+
+---
+
+### The `with` Statement — Python's try-with-resources
+
+```python
+# Java:
+try (FileReader fr = new FileReader("file.txt");
+     BufferedReader br = new BufferedReader(fr)) {
+    String line = br.readLine();
+}
+
+# Python equivalent:
+with open("file.txt") as f:
+    line = f.readline()
+# f.close() guaranteed — even if readline() raises
+```
+
+---
+
+### Context Manager Protocol
+
+```python
+# Two dunder methods:
+# __enter__(self)              → called on with block entry, returns resource
+# __exit__(self, exc_type, exc_val, exc_tb) → called on exit (always)
+
+class Resource:
+    def __enter__(self):
+        print("  __enter__: acquiring resource")
+        self._handle = acquire()
+        return self._handle          # ← what 'as' binds to
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"  __exit__: exc_type={exc_type}")
+        self._handle.release()       # ALWAYS runs
+
+        if exc_type is ValueError:
+            print("  __exit__: suppressing ValueError")
+            return True              # ← True = suppress exception
+        return False                 # ← False = propagate exception
+```
+
+```python
+# No exception:
+with Resource() as r:
+    use(r)
+#   __enter__: acquiring resource
+#   __exit__: exc_type=None          ← no exception
+
+# Exception suppressed:
+with Resource() as r:
+    raise ValueError("oops")
+#   __enter__: acquiring resource
+#   __exit__: exc_type=<class 'ValueError'>
+#   __exit__: suppressing ValueError
+# ← ValueError swallowed, code continues
+
+# Exception propagated:
+with Resource() as r:
+    raise RuntimeError("serious")
+#   __enter__: acquiring resource
+#   __exit__: exc_type=<class 'RuntimeError'>
+# RuntimeError propagates
+```
+
+---
+
+### `__exit__` Parameters Deep Dive
+
+```python
+class Inspector:
+    def __enter__(self): return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            print("No exception — clean exit")
+            return False
+
+        print(f"Type:  {exc_type.__name__}")   # exception class
+        print(f"Value: {exc_val}")              # exception instance
+        print(f"Args:  {exc_val.args}")
+        print(f"TB:    {exc_tb}")               # traceback object
+
+        import traceback
+        traceback.print_tb(exc_tb)              # print traceback frames
+
+        # Access chained exception:
+        print(f"Cause: {exc_val.__cause__}")
+        print(f"Context: {exc_val.__context__}")
+
+        return False    # don't suppress
+
+with Inspector():
+    try:
+        raise ValueError("inner")
+    except ValueError as e:
+        raise RuntimeError("outer") from e
+```
+
+---
+
+### Multiple Context Managers
+
+```python
+# FORM 1 — nested with (Python 2 style):
+with open("in.txt") as inp:
+    with open("out.txt", "w") as out:
+        out.write(inp.read())
+
+# FORM 2 — single with, multiple managers (Python 3.1+):
+with open("in.txt") as inp, open("out.txt", "w") as out:
+    out.write(inp.read())
+# Both files closed — even if exception mid-way
+
+# FORM 3 — parenthesized (Python 3.10+):
+with (
+    open("source.txt")        as src,
+    open("dest.txt",   "w")   as dst,
+    open("log.txt",    "a")   as log,
+    Lock()                    as lock,
+):
+    data = src.read()
+    dst.write(data)
+    log.write(f"Copied {len(data)} bytes\n")
+# ALL four resources guaranteed closed/released
+```
+
+---
+
+### Building Custom Context Managers
+
+#### Class-Based
+
+```python
+import threading
+import time
+
+class DatabaseTransaction:
+    def __init__(self, conn, isolation: str = "READ COMMITTED"):
+        self._conn      = conn
+        self._isolation = isolation
+        self._start     = None
+
+    def __enter__(self) -> "DatabaseTransaction":
+        self._conn.execute(f"SET TRANSACTION ISOLATION LEVEL {self._isolation}")
+        self._conn.execute("BEGIN")
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        elapsed = time.perf_counter() - self._start
+        if exc_type is None:
+            self._conn.execute("COMMIT")
+            print(f"Committed in {elapsed:.3f}s")
+        else:
+            self._conn.execute("ROLLBACK")
+            print(f"Rolled back after {elapsed:.3f}s: {exc_val}")
+        return False    # always propagate exceptions
+
+
+class Timer:
+    def __init__(self, label: str = ""):
+        self.label   = label
+        self.elapsed = 0.0
+
+    def __enter__(self) -> "Timer":
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(self, *args) -> bool:
+        self.elapsed = time.perf_counter() - self._start
+        print(f"{self.label}: {self.elapsed:.4f}s")
+        return False
+
+
+class ManagedLock:
+    def __init__(self, timeout: float = None):
+        self._lock    = threading.Lock()
+        self._timeout = timeout
+
+    def __enter__(self) -> bool:
+        acquired = self._lock.acquire(timeout=self._timeout or -1)
+        if not acquired:
+            raise TimeoutError(f"Lock not acquired in {self._timeout}s")
+        return acquired
+
+    def __exit__(self, *args) -> bool:
+        self._lock.release()
+        return False
+```
+
+#### Function-Based — `@contextmanager`
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def managed_file(path: str, mode: str = "r"):
+    """Context manager via generator."""
+    print(f"  Opening {path}")
+    f = open(path, mode)
+    try:
+        yield f                    # ← body of with block runs here
+    except Exception as e:
+        print(f"  Error during use: {e}")
+        raise
+    finally:
+        f.close()                  # ALWAYS — even if exception
+        print(f"  Closed {path}")
+
+
+@contextmanager
+def transaction(conn):
+    conn.execute("BEGIN")
+    try:
+        yield conn
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+@contextmanager
+def temporary_directory():
+    import tempfile, shutil
+    tmp = tempfile.mkdtemp()
+    try:
+        yield tmp
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)   # ALWAYS clean up
+
+
+@contextmanager
+def override_env(**kwargs):
+    """Temporarily override environment variables."""
+    import os
+    original = {k: os.environ.get(k) for k in kwargs}
+    os.environ.update(kwargs)
+    try:
+        yield
+    finally:
+        for k, v in original.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+```
+
+---
+
+### `contextlib` — Built-in Helpers
+
+```python
+from contextlib import (
+    contextmanager,       # function → context manager
+    asynccontextmanager,  # async version
+    closing,             # wraps .close() objects
+    suppress,            # suppress specific exceptions
+    redirect_stdout,     # redirect stdout
+    redirect_stderr,     # redirect stderr
+    ExitStack,           # dynamic context manager composition
+    nullcontext,         # no-op context manager (3.7+)
+    AbstractContextManager,
+)
+
+
+# contextlib.suppress — swallow specific exceptions:
+from contextlib import suppress
+
+with suppress(FileNotFoundError):
+    os.remove("tmp.txt")       # silently ignored if missing
+
+# equivalent to:
+try:
+    os.remove("tmp.txt")
+except FileNotFoundError:
+    pass
+
+
+# contextlib.closing — for objects with .close() but no __enter__/__exit__:
+import urllib.request
+from contextlib import closing
+
+with closing(urllib.request.urlopen("https://example.com")) as resp:
+    data = resp.read()
+# resp.close() called automatically
+
+
+# contextlib.redirect_stdout — capture output:
+import io
+from contextlib import redirect_stdout
+
+buffer = io.StringIO()
+with redirect_stdout(buffer):
+    print("captured output")
+    print("more output")
+output = buffer.getvalue()
+print(f"Captured: {output!r}")   # "captured output\nmore output\n"
+
+
+# contextlib.ExitStack — dynamic composition:
+from contextlib import ExitStack
+
+files_to_process = ["a.txt", "b.txt", "c.txt"]
+
+with ExitStack() as stack:
+    handles = [
+        stack.enter_context(open(f))
+        for f in files_to_process
+    ]
+    # ALL files open, ALL will be closed
+    for f in handles:
+        print(f.read())
+# ALL three files closed — even if exception mid-way
+```
+
+---
+
+### `ExitStack` — Dynamic Resource Management
+
+```python
+from contextlib import ExitStack
+
+class ResourcePool:
+    def __init__(self, resources: list):
+        self._resources = resources
+        self._stack     = ExitStack()
+
+    def __enter__(self):
+        for resource in self._resources:
+            self._stack.enter_context(resource)
+        return self
+
+    def __exit__(self, *args):
+        return self._stack.__exit__(*args)   # closes all in LIFO order
+
+
+# Real prod — conditional resource acquisition:
+def process(needs_db: bool, needs_cache: bool):
+    with ExitStack() as stack:
+        db    = stack.enter_context(DBConnection()) if needs_db    else None
+        cache = stack.enter_context(RedisCache())   if needs_cache else None
+
+        stack.callback(lambda: print("cleanup callback"))   # always runs
+        stack.callback(log.flush)                            # always runs
+
+        do_work(db, cache)
+    # db and cache closed (if opened), callbacks run
+```
+
+---
+
+### Async Context Managers
+
+```python
+import aiohttp
+import asyncio
+
+class AsyncDBConnection:
+    async def __aenter__(self):
+        self._conn = await asyncpg.connect("postgresql://localhost/db")
+        return self._conn
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._conn.close()
+        return False
+
+
+async def fetch_user(user_id: int) -> dict:
+    async with AsyncDBConnection() as conn:
+        return await conn.fetchrow("SELECT * FROM users WHERE id=$1", user_id)
+
+
+# contextmanager for async:
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def managed_session():
+    async with aiohttp.ClientSession() as session:
+        try:
+            yield session
+        finally:
+            print("session closed")
+
+async def main():
+    async with managed_session() as session:
+        resp = await session.get("https://example.com")
+        data = await resp.json()
+```
+
+---
+
+## 02 — Multi-Catch Block
+
+### 🧠 Mental Model
+
+```
+Java:   catch (IOException | SQLException e) { ... }
+Python: except (IOError, ValueError) as e:  ... ← TUPLE form
+
+Both: ONE handler for MULTIPLE exception types.
+Python ALSO has except* (3.11+) for ExceptionGroup.
+```
+
+---
+
+### Tuple `except` — Basic Multi-Catch
+
+```python
+# Catch multiple types in one clause:
+try:
+    result = int(input_str) / divisor
+except (ValueError, ZeroDivisionError) as e:
+    print(f"Math error: {type(e).__name__}: {e}")
+    result = 0
+
+# vs TWO separate clauses:
+try:
+    result = int(input_str) / divisor
+except ValueError as e:
+    print(f"Bad value: {e}")
+    result = 0
+except ZeroDivisionError as e:
+    print(f"Division by zero: {e}")
+    result = 0
+```
+
+---
+
+### When to Combine vs Separate
+
+```python
+# COMBINE when handling is IDENTICAL:
+RETRIABLE = (
+    ConnectionError,
+    TimeoutError,
+    ConnectionResetError,
+    ConnectionRefusedError,
+)
+
+try:
+    response = requests.get(url, timeout=10)
+except RETRIABLE as e:
+    log.warning(f"Network error: {e}, retrying...")
+    retry()
+
+
+# SEPARATE when handling DIFFERS:
+try:
+    data = fetch_and_parse(url)
+except ConnectionError as e:
+    log.error(f"Network failed: {e}")
+    use_cached_data()              # different recovery for network error
+except json.JSONDecodeError as e:
+    log.error(f"Bad response at line {e.lineno}: {e.msg}")
+    alert_provider()               # different recovery for parse error
+except ValueError as e:
+    log.warning(f"Invalid data: {e}")
+    skip_record()                  # different recovery for validation error
+```
+
+---
+
+### Multi-Catch With Type Discrimination
+
+```python
+# Caught together — still need to know which:
+try:
+    risky()
+except (ValueError, TypeError, AttributeError) as e:
+    exc_type = type(e).__name__
+
+    if isinstance(e, ValueError):
+        severity = "warning"
+        action   = "use_default"
+    elif isinstance(e, TypeError):
+        severity = "error"
+        action   = "reject_input"
+    else:
+        severity = "critical"
+        action   = "alert"
+
+    log.log(severity, f"{exc_type}: {e}, action={action}")
+    handle(action)
+```
+
+---
+
+### Exception Groups + `except*` — Python 3.11+
+
+```python
+# ExceptionGroup — multiple exceptions simultaneously:
+eg = ExceptionGroup("multiple failures", [
+    ValueError("bad value"),
+    TypeError("wrong type"),
+    KeyError("missing key"),
+    ValueError("another bad value"),
+])
+
+# except* — catches ALL matching exceptions in the group:
+try:
+    raise ExceptionGroup("task errors", [
+        ValueError("v1"),
+        TypeError("t1"),
+        ValueError("v2"),
+        KeyError("k1"),
+    ])
+
+except* ValueError as eg:             # catches BOTH ValueErrors
+    print(f"Got {len(eg.exceptions)} ValueErrors:")
+    for e in eg.exceptions:
+        print(f"  {e}")
+
+except* (TypeError, KeyError) as eg:  # catches TypeError AND KeyError
+    print(f"Got type/key errors: {eg.exceptions}")
+
+# BOTH except* blocks run if types match
+# Output:
+# Got 2 ValueErrors:
+#   bad value
+#   another bad value
+# Got type/key errors: [TypeError('wrong type'), KeyError('missing key')]
+```
+
+---
+
+### `ExceptionGroup` in `asyncio.TaskGroup`
+
+```python
+import asyncio
+
+async def fetch(url: str) -> str:
+    if "bad" in url:
+        raise ValueError(f"Invalid URL: {url}")
+    if "timeout" in url:
+        raise TimeoutError(f"Timeout: {url}")
+    return f"data from {url}"
+
+async def main():
+    try:
+        async with asyncio.TaskGroup() as tg:
+            t1 = tg.create_task(fetch("https://good.com"))
+            t2 = tg.create_task(fetch("https://bad.com"))    # raises ValueError
+            t3 = tg.create_task(fetch("https://timeout.com"))# raises TimeoutError
+            t4 = tg.create_task(fetch("https://also-good.com"))
+
+    except* ValueError as eg:
+        print(f"Bad URLs: {[str(e) for e in eg.exceptions]}")
+
+    except* TimeoutError as eg:
+        print(f"Timeouts: {[str(e) for e in eg.exceptions]}")
+
+asyncio.run(main())
+```
+
+---
+
+### Building `ExceptionGroup` Manually
+
+```python
+class BatchProcessor:
+    def process_all(self, items: list) -> list:
+        results  = []
+        failures = []
+
+        for item in items:
+            try:
+                results.append(self._process(item))
+            except (ValueError, TypeError) as e:
+                failures.append(e)              # collect, don't raise yet
+
+        if failures:
+            raise ExceptionGroup(
+                f"Batch failed: {len(failures)}/{len(items)} items",
+                failures
+            )
+
+        return results
+
+    def _process(self, item):
+        if not isinstance(item, int):
+            raise TypeError(f"Expected int, got {type(item).__name__}")
+        if item < 0:
+            raise ValueError(f"Negative value: {item}")
+        return item * 2
+
+
+processor = BatchProcessor()
+try:
+    results = processor.process_all([1, "bad", -1, 2, None, 3])
+except* ValueError as eg:
+    print(f"Value errors: {eg.exceptions}")
+except* TypeError as eg:
+    print(f"Type errors: {eg.exceptions}")
+```
+
+---
+
+### Multi-Catch Best Practices
+
+```python
+# ✅ GROUP related errors with same handling:
+NETWORK_ERRORS = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
+PARSE_ERRORS = (
+    ValueError,
+    TypeError,
+    json.JSONDecodeError,
+    UnicodeDecodeError,
+)
+
+def fetch_data(url: str) -> dict:
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except NETWORK_ERRORS as e:
+        raise ExternalServiceError("http", str(url), cause=e, retryable=True) from e
+    except PARSE_ERRORS as e:
+        raise ExternalServiceError("http", "parse", cause=e, retryable=False) from e
+
+
+# ✅ Progressively broader — specific then general:
+def robust_operation(data):
+    try:
+        return process(data)
+
+    except json.JSONDecodeError as e:         # most specific
+        log.warning(f"JSON error at {e.lineno}")
+        return None
+
+    except (ValueError, TypeError) as e:      # mid-level group
+        log.warning(f"Data error: {e}")
+        return None
+
+    except OSError as e:                      # IO group
+        if e.errno == errno.ENOENT:
+            raise
+        log.error(f"OS error: {e}")
+        return None
+
+    except Exception as e:                   # safety net
+        log.critical(f"Unexpected: {e}", exc_info=True)
+        raise
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Context manager for graph traversal state:
+from contextlib import contextmanager
+
+@contextmanager
+def traversal_guard(graph: dict, start: int):
+    """Manages visited state for graph traversal."""
+    visited = set()
+    stack   = [start]
+    try:
+        yield visited, stack
+    finally:
+        visited.clear()     # always clean up
+        stack.clear()
+
+
+# Multi-catch in algorithm implementation:
+def safe_topological_sort(graph: dict[int, list[int]]) -> list[int]:
+    from collections import deque
+
+    try:
+        # Kahn's algorithm:
+        in_degree = {n: 0 for n in graph}
+        for node in graph:
+            for neighbor in graph[node]:
+                if neighbor not in in_degree:
+                    raise KeyError(f"Unknown node: {neighbor}")
+                in_degree[neighbor] += 1
+
+        queue  = deque(n for n, d in in_degree.items() if d == 0)
+        result = []
+
+        while queue:
+            node = queue.popleft()
+            result.append(node)
+            for neighbor in graph.get(node, []):
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(result) != len(graph):
+            cycle_nodes = [n for n, d in in_degree.items() if d > 0]
+            raise ValueError(f"Cycle detected at nodes: {cycle_nodes}")
+
+        return result
+
+    except (KeyError, ValueError) as e:       # multi-catch
+        raise GraphError(f"Topological sort failed: {e}") from e
+    except (TypeError, AttributeError) as e:  # multi-catch
+        raise GraphError(f"Invalid graph structure: {e}") from e
+```
+
+---
+
+## 💀 Interview Trap 1 — `suppress` Hides All Errors
+
+```python
+from contextlib import suppress
+
+# 💀 suppress too broad — hides real bugs:
+with suppress(Exception):
+    connect_to_db()        # ConnectionError → suppressed ✅ (intentional)
+    process_data()         # AttributeError  → suppressed 💀 (bug hidden!)
+    send_results()         # TimeoutError    → suppressed 💀 (hidden!)
+
+# Fix — suppress ONLY expected errors, isolate the call:
+with suppress(FileNotFoundError):
+    os.remove("tmp.txt")   # only this call, only this exception
+```
+
+---
+
+## 💀 Interview Trap 2 — `except*` vs `except` in 3.11+
+
+```python
+# Regular except — ONE handler wins:
+try:
+    raise ExceptionGroup("g", [ValueError("v"), TypeError("t")])
+except ValueError:
+    print("value")    # 💥 TypeError: catching ExceptionGroup with except
+                      # Must use except* for ExceptionGroup
+
+
+# except* — MULTIPLE handlers can run:
+try:
+    raise ExceptionGroup("g", [ValueError("v"), TypeError("t")])
+except* ValueError:
+    print("value")    # ✅ runs
+except* TypeError:
+    print("type")     # ✅ ALSO runs — both execute!
+
+
+# Cannot mix except and except* in same try:
+try:
+    risky()
+except ValueError:    # regular
+    pass
+except* TypeError:    # 💥 SyntaxError: cannot have both 'except' and 'except*'
+    pass
+```
+
+---
+
+## 💀 Interview Trap 3 — `__exit__` Returning Truthy Value
+
+```python
+class Silencer:
+    def __enter__(self): return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"Suppressing: {exc_type}")
+        return 1        # 💀 any truthy value suppresses — not just True
+        # return "yes"  # also suppresses!
+        # return 42     # also suppresses!
+        # return []     # DOES NOT suppress (falsy)
+        # return None   # DOES NOT suppress (falsy)
+
+with Silencer():
+    raise RuntimeError("serious error")
+print("code continues")   # runs — RuntimeError silently gone!
+```
+
+---
+
+## 💀 Interview Trap 4 — Context Manager `__enter__` Exception
+
+```python
+class Risky:
+    def __enter__(self):
+        raise ValueError("failed to acquire")   # exception in __enter__
+
+    def __exit__(self, *args):
+        print("__exit__ called")               # 💀 NEVER called!
+        return False
+
+try:
+    with Risky() as r:                         # __enter__ raises
+        use(r)
+except ValueError as e:
+    print(f"Caught: {e}")
+# "__exit__ called" NEVER printed
+# If __enter__ raises → __exit__ NOT called
+# Resource was never acquired → nothing to clean up (usually correct)
+```
+
+---
+
+## 💀 Interview Trap 5 — Generator-Based Context Manager Exception Handling
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def bad_manager():
+    resource = acquire()
+    yield resource
+    resource.release()    # 💀 if yield raises, release NEVER called!
+
+@contextmanager
+def good_manager():
+    resource = acquire()
+    try:
+        yield resource    # ← exception here
+    finally:
+        resource.release()  # ✅ ALWAYS called
+
+# Rule: ALWAYS wrap yield in try/finally in @contextmanager
+```
+
+---

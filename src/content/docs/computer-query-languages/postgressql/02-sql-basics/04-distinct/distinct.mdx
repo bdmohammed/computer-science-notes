@@ -1,0 +1,613 @@
+---
+title: PostgreSQL DISTINCT & DISTINCT ON
+slug: computer-query-languages/postgresql/sql-basics/distinct
+description: Master row deduplication in PostgreSQL — DISTINCT internals, Hash vs Sort strategies, DISTINCT ON patterns, performance pitfalls, and interview essentials.
+sidebar:
+  label: "DISTINCT"
+  badge:
+    text: Querying
+    variant: tip
+tags: [postgresql, distinct, query-optimization, deduplication, internals, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 📄 DISTINCT — Complete Guide
+
+> **`DISTINCT` removes duplicate rows from your result — but it does it by sorting or hashing everything first, making it one of the most expensive operations you can casually drop into a query.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `DISTINCT` as a **post-processing filter**. It doesn't prevent duplicates from being generated — it waits until the query engine produces all rows, then deduplicates them before returning results.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where It Fits
+
+`DISTINCT` is applied **after** `SELECT` projects columns, but **before** `ORDER BY` sorts the final result.
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT   ← DISTINCT applied here (after SELECT, before ORDER BY)
+ORDER BY
+LIMIT
+
+[FROM → WHERE → SELECT columns]
+        ↓
+[Planner chooses strategy]
+   ├─ HashAggregate  → Build hash table of seen rows (Fast, RAM-heavy)
+   └─ Sort + Unique  → Sort rows, drop adjacent duplicates (Slower, disk-safe)
+        ↓
+[Output unique rows]
+The planner picks Hash vs Sort based on work_mem and row estimates. If the hash table exceeds work_mem, PG spills to disk → massive slowdown.
+```
+
+<Code lang="sql" title="Logical flow" code={`
+-- DISTINCT deduplicates after SELECT produces rows
+-- then ORDER BY sorts the deduplicated result
+
+SELECT DISTINCT city        -- Step 1: project columns
+FROM   users                -- Step 2: fetch & filter (implicit)
+ORDER BY city;              -- Step 3: sort deduplicated result
+`} />
+
+<Aside type="caution">
+**Why this matters**: You **cannot** use a `SELECT` alias in `WHERE` or `GROUP BY`, but you **can** use it in `ORDER BY` because `DISTINCT` runs before `ORDER BY`.
+</Aside>
+
+---
+
+## 1️⃣ Basic DISTINCT
+
+<Code lang="sql" title="Single column deduplication" code={`-- Without DISTINCT — shows duplicates
+SELECT city FROM users;
+-- Mumbai, Mumbai, Delhi, Delhi, Delhi, Raipur
+
+-- With DISTINCT — unique values only
+SELECT DISTINCT city FROM users;
+-- Delhi, Mumbai, Raipur`} />
+
+### ⚠️ DISTINCT on Multiple Columns
+
+<Code lang="sql" title="Multi-column behavior" code={`-- DISTINCT applies to the COMBINATION of all selected columns
+-- NOT each column independently
+SELECT DISTINCT city, country FROM users;
+
+-- Result: unique (city, country) pairs
+-- ┌───────────┬─────────┐
+-- │ city      │ country │
+-- ├───────────┼─────────┤
+-- │ Mumbai    │ India   │
+-- │ Mumbai    │ USA     │ ← same city, different country = NOT a dup
+-- │ Delhi     │ India   │
+-- └───────────┴─────────┘`} />
+
+<Aside type="danger">
+**🎯 Interview Trap**: `SELECT DISTINCT city, country` does **NOT** give you distinct cities. It gives you distinct `(city, country)` pairs. If you want distinct cities only — select only `city`.
+</Aside>
+
+---
+
+## 2️⃣ DISTINCT vs GROUP BY
+
+<CardGrid>
+  <Card title="Simple Deduplication" icon="information">
+    ```sql
+    -- These two are identical in result and nearly identical in cost:
+    SELECT DISTINCT city FROM users ORDER BY city;
+    SELECT city FROM users GROUP BY city ORDER BY city;
+    
+    -- GROUP BY is more explicit about what's happening.
+    -- DISTINCT is syntactic sugar for GROUP BY in this context.
+    -- DISTINCT = syntactic sugar for GROUP BY without aggregates
+    ```
+  </Card>
+  
+  <Card title="When to Use Which" icon="rocket">
+    ```text
+    DISTINCT      → "I just want unique values, no aggregation"
+    GROUP BY      → "I want unique values AND aggregates per group"
+    
+    ✅ Aggregation needed → GROUP BY only
+    SELECT city, COUNT(*) FROM users GROUP BY city;
+    
+    ❌ Nonsense
+    SELECT DISTINCT city, COUNT(*) FROM users;  -- doesn't make sense
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="note">
+**Real-Life SDE**: If you find yourself writing `SELECT DISTINCT` and then trying to aggregate — stop. Use `GROUP BY`. `DISTINCT` is for simple deduplication only.
+</Aside>
+
+---
+
+## 3️⃣ DISTINCT Internals — Hash vs Sort
+
+Postgres chooses between two strategies based on `work_mem` and row estimates.
+
+<Tabs>
+  <TabItem label="Hash-Based (Default for small/medium sets)" icon="lightning">
+    ```sql
+    EXPLAIN ANALYZE SELECT DISTINCT city FROM users;
+    
+    -- Output:
+    -- HashAggregate  (cost=... rows=...)
+    --   Group Key: city
+    --   -> Seq Scan on users
+    
+    -- How it works:
+    -- 1. Fetch rows one by one
+    -- 2. Hash each row → insert into in-memory hash table
+    -- 3. If hash exists → skip (duplicate)
+    -- 4. If new → output row
+    -- ⚡ O(n) time | O(distinct values) memory
+    -- Used when: data fits in work_mem
+    ```
+  </TabItem>
+  
+  <TabItem label="Sort-Based (Fallback for large sets)" icon="database">
+    ```sql
+    -- If hash table exceeds work_mem, PG spills to disk:
+    -- Output:
+    -- Unique  (cost=109.00..114.00 rows=...)
+    --   -> Sort  (Sort Key: city)
+    --        -> Seq Scan on users
+    
+    -- How it works:
+    -- 1. Fetch all rows
+    -- 2. Sort them (O(n log n))
+    -- 3. Scan sorted list, remove adjacent duplicates
+    -- 🐢 Slower but disk-safe | O(n) memory/disk
+    -- Used when: no hash possible, large datasets
+    ```
+  </TabItem>
+</Tabs>
+
+```sql
+-- See which strategy Postgres chose
+EXPLAIN ANALYZE
+SELECT DISTINCT city FROM users;
+
+-- Sort-based output:
+-- Unique  (cost=109.00..114.00 rows=...)
+--   -> Sort  (Sort Key: city)
+--        -> Seq Scan on users
+
+-- Hash-based output:
+-- HashAggregate  (cost=... rows=...)
+--   Group Key: city
+--   -> Seq Scan on users
+```
+
+<Aside type="tip">
+**🎯 DSA Connection**: 
+- Hash-based = `HashSet` insertion (O(1) avg per element) = (O(1) per element, O(n) total)
+- Sort-based = Sort + linear pass (O(n log n)) = deduplicate pass
+- Postgres picks hash when data fits in `work_mem`, falls back to sort otherwise — exactly like choosing `HashMap` vs `TreeMap` in Java.
+</Aside>
+
+---
+
+## 4️⃣ DISTINCT ON — Postgres Superpower 🌟
+
+> **`DISTINCT ON` is Postgres-only. Not in MySQL or standard SQL. Interview gold.**
+
+<Code lang="sql" title="Keep ONE row per unique value" code={`-- DISTINCT ON (col) = keep FIRST row per unique value of col
+-- Which row? Determined by ORDER BY
+SELECT DISTINCT ON (user_id)
+  user_id,
+  id        AS order_id,
+  amount,
+  created_at
+FROM   orders
+ORDER BY user_id, created_at DESC;   -- for each user, most recent first`} />
+
+### 🔍 How It Works
+```text
+Before ORDER BY user_id, created_at DESC:
+┌─────────┬──────────┬────────┬─────────────┐
+│ user_id │ order_id │ amount │ created_at  │
+├─────────┼──────────┼────────┼─────────────┤
+│    1    │    10    │  500   │ 2024-01-10  │
+│    1    │    15    │  900   │ 2024-01-20  │ ← most recent for user 1
+│    2    │    20    │  200   │ 2024-01-05  │ ← most recent for user 2
+│    2    │    22    │  750   │ 2024-01-08  │
+└─────────┴──────────┴────────┴─────────────┘
+
+After sort → DISTINCT ON keeps FIRST per user_id:
+┌─────────┬──────────┬────────┬─────────────┐
+│    1    │    15    │  900   │ 2024-01-20  │ ✅ KEPT
+│    1    │    10    │  500   │ 2024-01-10  │ ❌ dropped
+│    2    │    22    │  750   │ 2024-01-08  │ ✅ KEPT
+│    2    │    20    │  200   │ 2024-01-05  │ ❌ dropped
+└─────────┴──────────┴────────┴─────────────┘
+```
+
+### ⚠️ The Golden Rule of DISTINCT ON
+
+<Code lang="sql" title="✅ Correct vs ❌ Wrong" code={`-- ✅ Correct: DISTINCT ON columns MUST appear FIRST in ORDER BY
+SELECT DISTINCT ON (user_id) *
+FROM orders
+ORDER BY user_id, created_at DESC;   -- user_id first ✅
+
+-- ❌ Wrong: will error
+SELECT DISTINCT ON (user_id) *
+FROM orders
+ORDER BY created_at DESC;            -- user_id missing from ORDER BY start
+-- ERROR: SELECT DISTINCT ON expressions must match initial ORDER BY expressions`} />
+
+### 🆚 DISTINCT ON vs Window Function (`ROW_NUMBER()`)
+
+<Code lang="sql" title="Same result, different cost" code={`-- DISTINCT ON (simpler, often faster for "latest per group")
+SELECT DISTINCT ON (user_id)
+  user_id, id, amount, created_at
+FROM   orders
+ORDER BY user_id, created_at DESC;
+
+-- Window Function equivalent (more flexible, more overhead)
+SELECT user_id, id, amount, created_at
+FROM (
+  SELECT *,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id 
+      ORDER BY created_at DESC
+    ) AS rn
+  FROM orders
+) t
+WHERE rn = 1;
+
+-- ✅ For "latest row per group" → DISTINCT ON is cleaner in Postgres
+-- ✅ For "top N rows per group" → Window Function required
+`} />
+
+<Aside type="tip">
+> 🎯 **Interview Q:** *"Get the most recent login for each user."*
+> ```sql
+> SELECT DISTINCT ON (user_id)
+>   user_id, ip_address, created_at
+> FROM   login_history
+> ORDER BY user_id, created_at DESC;
+> ```
+> **Why it works:** Sorts by user_id first (groups them), then by created_at DESC (most recent first within group), keeps only the first row per user_id.
+</Aside>
+---
+
+## 5️⃣ COUNT(DISTINCT col) — Internals & Performance
+
+<Code lang="sql" title="Common analytics pattern" code={`-- Count unique values
+SELECT 
+  COUNT(DISTINCT city)    AS unique_cities,
+  COUNT(DISTINCT user_id) AS unique_users,
+  COUNT(*)                AS total_rows
+FROM orders;
+
+-- Per group
+SELECT status,
+       COUNT(DISTINCT user_id) AS unique_users_per_status
+FROM   orders
+GROUP BY status;`} />
+
+### 🔬 Why COUNT(DISTINCT) is Slow
+
+```text
+COUNT(*) → just count rows as they pass → O(n), highly parallelizable
+COUNT(DISTINCT city):
+1. Build a HashSet of all city values → O(n)
+2. Return size of HashSet
+
+Problems at scale:
+• Can't be easily parallelized
+• Can't use simple index-only scans
+• Needs to track all distinct values in memory/disk
+• Spills to disk if distinct count > work_mem
+
+At massive scale (billions of rows):
+  Use HyperLogLog approximation instead:
+  SELECT COUNT(DISTINCT city) → exact but slow
+  SELECT hll_count(hll_add_agg(hll_hash_text(city))) → approximate but O(1) memory
+  (needs pg_hll extension)
+```
+
+<Aside type="tip">
+**🚀 Real-Life SDE**: Analytics dashboards — if you need "unique users today" on a 500M row events table, exact `COUNT(DISTINCT)` will time out.  
+✅ Use approximate counting: HyperLogLog (`pg_hll` extension) or pre-aggregate into daily summary tables.
+</Aside>
+
+---
+
+## 6️⃣ Performance Pitfalls — When DISTINCT Kills You
+
+```
+DISTINCT is expensive because:
+
+1. Must see ALL rows before outputting any
+   → no streaming, high latency for first result
+
+2. Requires sorting or hashing all data
+   → O(n log n) or O(n) memory
+
+3. Prevents many optimizations
+   → index-only scans harder to use
+   → parallel query sometimes blocked
+```
+
+<CardGrid>
+  <Card title="🚨 The Anti-Pattern: DISTINCT Hiding a Bad JOIN" icon="error">
+    ```sql
+    -- Code smell: DISTINCT used to clean up JOIN duplicates
+    SELECT DISTINCT u.id, u.name
+    FROM   users u
+    JOIN   orders o ON u.id = o.user_id
+    WHERE  o.status = 'delivered';
+    
+    -- Problem: JOIN produces 1 row per order
+    --          User with 5 orders appears 5 times
+    --          DISTINCT deduplicates back to 1 → correct but WASTEFUL
+    ```
+  </Card>
+  
+  <Card title="✅ The Fix: Use EXISTS (Short-Circuit)" icon="approve-check">
+    ```sql
+    -- EXISTS stops at first match → no duplicates created
+    SELECT u.id, u.name
+    FROM   users u
+    WHERE  EXISTS (
+      SELECT 1 FROM orders o
+      WHERE  o.user_id = u.id
+      AND    o.status = 'delivered'
+    );
+    -- EXISTS: for each user, stop as soon as one delivered order found
+    -- No duplicates created → no DISTINCT needed → much faster
+    
+    Performance comparison (users=100K, orders=1M):
+
+    DISTINCT + JOIN:
+        → Join produces 1M rows
+        → DISTINCT deduplicates back to 100K
+        → Wasted: 900K rows created and thrown away
+        -- DISTINCT+JOIN: Creates 1M rows → sorts/hashes → returns 100K
+
+    EXISTS:
+        → For each user, scans orders index until first match
+        → Stops immediately (short-circuit)
+        → Never creates duplicate rows
+        -- EXISTS: Scans index per user → stops at 1st match → returns 100K
+
+    -- ✅ Often 5-50x faster
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="danger">
+**Interview Trap**: Seeing `SELECT DISTINCT` with a `JOIN` is almost always a sign of a poorly written query. The real fix is `EXISTS`, `IN`, or restructuring the `JOIN`.
+</Aside>
+
+---
+
+## 7️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Dropdown Options" icon="information">
+    ```sql
+    -- Populate "Filter by city" dropdown
+    SELECT DISTINCT city
+    FROM   users
+    WHERE  city IS NOT NULL
+    ORDER BY city;
+    
+    -- ✅ Add index on (city) for instant results
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Find Duplicates" icon="search">
+    ```sql
+    -- Find emails appearing >1 time
+    SELECT email, COUNT(*) AS occurrences
+    FROM   users
+    GROUP BY email
+    HAVING COUNT(*) > 1;
+    
+    -- ⚠️ DISTINCT won't tell you WHERE duplicates are
+    -- GROUP BY + HAVING will
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Deduplicate Dirty Table" icon="shield">
+    ```sql
+    -- Keep only lowest ID per email
+    DELETE FROM users
+    WHERE id NOT IN (
+      SELECT MIN(id)
+      FROM   users
+      GROUP BY email
+    );
+    -- Or using DISTINCT ON (cleaner for complex rules)
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Tag / Category Cloud" icon="rocket">
+    ```sql
+    -- All unique tags used in posts
+    SELECT DISTINCT UNNEST(tags) AS tag
+    FROM   posts
+    WHERE  is_published = true
+    ORDER BY tag;
+
+    -- With count (how many posts per tag)
+    SELECT tag, COUNT(*) AS post_count
+    FROM   posts, UNNEST(tags) AS tag
+    WHERE  is_published = true
+    GROUP BY tag
+    ORDER BY post_count DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Active Users (Unique Users Who Did Something)" icon="rocket">
+    ```sql
+    -- Unique users who placed an order this month
+    SELECT COUNT(DISTINCT user_id) AS active_users
+    FROM   orders
+    WHERE  created_at >= DATE_TRUNC('month', NOW());
+
+    -- Unique users per day (time series)
+    SELECT
+    DATE_TRUNC('day', created_at) AS day,
+    COUNT(DISTINCT user_id)        AS dau        -- Daily Active Users
+    FROM   events
+    GROUP BY 1
+    ORDER BY 1;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 8️⃣ DISTINCT vs Other Deduplication Tools
+
+| Tool | Best For | Performance Note |
+|------|----------|------------------|
+| `DISTINCT` | Simple full-row deduplication | Sort/Hash overhead |
+| `DISTINCT ON` | Keep 1 row per group (PG-only) | Requires matching `ORDER BY` prefix |
+| `GROUP BY` | Deduplicate + aggregate | Optimized for aggregations |
+| `EXISTS` | Check membership without duplicates | Short-circuits, very fast |
+| `ROW_NUMBER()=1` | Top-N per group | Flexible, window function overhead |
+| `UNION` | Combine queries + deduplicate | `UNION` = `UNION ALL` + `DISTINCT` |
+| `UNION ALL` | Combine queries (keep dups) | ⚡ Fastest — no dedup step |
+
+<Code lang="sql" title="UNION vs UNION ALL" code={`-- UNION deduplicates across two result sets
+SELECT city FROM users_india
+UNION                          -- removes duplicates across both
+SELECT city FROM users_global;
+
+-- UNION ALL keeps duplicates (faster)
+SELECT city FROM users_india
+UNION ALL
+SELECT city FROM users_global;
+
+-- Rule: use UNION ALL unless you explicitly need deduplication
+-- UNION internally performs a DISTINCT step`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: DISTINCT on 2 columns?" icon="information">
+    Deduplicates the **combination**, not each independently.  
+    `SELECT DISTINCT city, country` → unique `(city, country)` pairs.
+  </Card>
+  
+  <Card title="Q: DISTINCT vs GROUP BY?" icon="approve-check">
+    Same result for simple cases. `GROUP BY` needed for aggregation.  
+    `DISTINCT` is syntactic sugar for `GROUP BY` without aggregates.
+  </Card>
+
+  <Card title="Q: DISTINCT ON rule?" icon="warning">
+    Columns in `DISTINCT ON` **must appear first** in `ORDER BY`.  
+    Fails compilation otherwise.
+  </Card>
+
+  <Card title="Q: COUNT(DISTINCT) vs COUNT(*)?" icon="information">
+    `COUNT(DISTINCT)` needs a HashSet → slower, memory-heavy, hard to parallelize.  
+    At massive scale, use HyperLogLog or pre-aggregation.
+  </Card>
+
+  <Card title="Q: DISTINCT in JOIN = code smell?" icon="error">
+    Yes — usually means duplicates from `JOIN`. Use `EXISTS` or `IN` instead.  
+    `EXISTS` short-circuits and never creates duplicates.
+  </Card>
+
+  <Card title="Q: DISTINCT strategy?" icon="rocket">
+    Hash-based (`work_mem` fits) or Sort-based (spills to disk).  
+    Planner picks based on row estimates & `work_mem`.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### DISTINCT Decision Tree
+```text
+Need unique rows?
+├─ Simple dedup, no aggregates → DISTINCT
+├─ Unique + COUNT/SUM/AVG → GROUP BY
+├─ Latest row per group → DISTINCT ON (PG only)
+├─ Top N per group → ROW_NUMBER() OVER(...)
+├─ Check existence without dups → EXISTS
+└─ Merge queries + dedup → UNION
+```
+
+### Performance Checklist
+- [ ] Avoid `DISTINCT` to fix `JOIN` duplication → use `EXISTS`/`IN`
+- [ ] Index columns used in `DISTINCT` when possible
+- [ ] Increase `work_mem` if HashAggregate spills to disk
+- [ ] Use `COUNT(DISTINCT)` only on moderate datasets; pre-aggregate for analytics
+- [ ] Prefer `UNION ALL` over `UNION` unless deduplication is required
+
+<Aside type="caution">
+**Final Warning**: `DISTINCT` is a **post-processing step**. It doesn't reduce I/O — it processes all rows first, then deduplicates. Always ask: *"Can I prevent duplicates from being generated instead of cleaning them up later?"*
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What does this return?
+SELECT DISTINCT user_id, order_id 
+FROM orders 
+WHERE status = 'pending';
+
+Q2: Why might this query be slow despite an index on (city)?
+SELECT DISTINCT city FROM orders WHERE amount > 1000;
+
+Q3: What's wrong with this?
+SELECT DISTINCT ON (user_id) user_id, order_id, created_at
+FROM orders
+ORDER BY created_at DESC;
+
+Q4: When should you choose DISTINCT ON over ROW_NUMBER()?
+A) Need top 3 rows per group
+B) Need exactly 1 row per group, simpler syntax
+C) Need to aggregate per group
+
+Q5: How does UNION differ from UNION ALL internally?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Unique (user_id, order_id) combinations where status = 'pending'.
+   Note: order_id is likely unique already, so DISTINCT does nothing.
+
+Q2: The WHERE filter (amount > 1000) forces a scan before DISTINCT.
+   Index on city can't be fully utilized if amount isn't indexed or selective.
+   DISTINCT still must process all filtered rows.
+
+Q3: ❌ ERROR: DISTINCT ON expressions must match initial ORDER BY expressions.
+   Fix: ORDER BY user_id, created_at DESC;
+
+Q4: B) DISTINCT ON is simpler & faster for exactly 1 row per group.
+   ROW_NUMBER() is needed for top N or complex partitioning logic.
+
+Q5: UNION = UNION ALL + DISTINCT step internally.
+   UNION ALL skips deduplication → significantly faster.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Replace `JOIN + DISTINCT` with `EXISTS` in your codebase
+2. ✅ Practice `DISTINCT ON` for "latest record per user" queries
+3. ✅ Monitor `work_mem` — if `HashAggregate` spills to disk, increase it
+4. ✅ Use `EXPLAIN (ANALYZE, BUFFERS)` to verify Hash vs Sort strategy
+5. ✅ For massive analytics, explore `pg_hll` (HyperLogLog) for approximate counts
+
+Mastering `DISTINCT` internals turns you from a "query writer" into a **performance engineer**. 🐘⚡
+</Aside>

@@ -1,0 +1,657 @@
+---
+title: Java Multithreading — Singleton Pattern, Implementations, and Best Practices
+slug: computer-languages/java/multithreading/fundamentals/singleton
+description: Learn the Singleton design pattern in Java, its various implementations (eager, lazy, DCL, Bill Pugh, enum), how to break it, and when to use it. Comprehensive guide with code examples and interview traps.
+tags: [java, multithreading, concurrency, design-patterns, singleton]
+---
+
+## 🔒 Singleton Pattern in Java
+
+---
+
+## 🗺️ The Full Map
+
+```
+Singleton Pattern
+│
+├── What It Is
+│   └── Exactly ONE instance of a class — globally accessible
+│
+├── Implementations
+│   ├── Eager Initialization
+│   ├── Lazy Initialization
+│   ├── Synchronized Method
+│   ├── Double-Checked Locking
+│   ├── Bill Pugh (Static Holder)
+│   └── Enum Singleton         ← best in most cases
+│
+├── Breaking Singleton
+│   ├── Reflection
+│   ├── Serialization
+│   ├── Cloning
+│   └── Multiple ClassLoaders
+│
+└── When to Use
+    ├── Configuration
+    ├── Connection Pools
+    ├── Logging
+    └── Caches
+```
+
+---
+
+## 🔬 Why Singleton
+
+```
+Problem:
+  Some resources must exist exactly once:
+  ├── Database connection pool — one pool, many connections
+  ├── Application config — load once, read everywhere
+  ├── Logger — one instance writes to one file
+  └── Cache — one shared cache, not N separate caches
+
+Without Singleton:
+  new Config()   // caller A — loads config from disk
+  new Config()   // caller B — loads again — different object
+  // Two configs in memory — which is authoritative?
+  // Double initialization cost
+  // Inconsistent state if one modifies config
+
+With Singleton:
+  Config.getInstance()  // caller A — creates first time
+  Config.getInstance()  // caller B — returns SAME instance
+  // One config — consistent — loaded once
+```
+
+---
+
+## 🔬 Eager Initialization
+
+```java
+// Instance created at CLASS LOADING time
+// Thread-safe — JVM guarantees static field initialization is safe
+public final class AppConfig {
+
+    // Created immediately when class loads — before getInstance() called
+    private static final AppConfig INSTANCE = new AppConfig();
+
+    private final String  dbUrl;
+    private final int     maxConnections;
+    private final String  environment;
+
+    // Private — no one can call new AppConfig()
+    private AppConfig() {
+        this.dbUrl          = System.getenv("DB_URL");
+        this.maxConnections = Integer.parseInt(
+            System.getenv().getOrDefault("MAX_CONN", "10")
+        );
+        this.environment    = System.getenv().getOrDefault("ENV", "dev");
+    }
+
+    public static AppConfig getInstance() {
+        return INSTANCE;            // no synchronization needed — field final
+    }
+
+    public String getDbUrl()         { return dbUrl; }
+    public int    getMaxConnections(){ return maxConnections; }
+    public String getEnvironment()   { return environment; }
+}
+
+// Usage
+AppConfig config = AppConfig.getInstance();
+System.out.println(config.getDbUrl());
+```
+
+```
+Pros:
+  ✅ Thread-safe — no synchronization needed
+  ✅ Simple — easy to understand
+  ✅ Performance — no synchronization overhead
+
+Cons:
+  ❌ Created even if never used — wasted resource
+  ❌ Cannot handle checked exceptions in constructor
+  ❌ Cannot pass arguments to constructor lazily
+```
+
+---
+
+## 🔬 Lazy Initialization (NOT Thread-Safe)
+
+```java
+// Instance created only when first needed
+public final class HeavyResource {
+
+    private static HeavyResource instance;   // null initially
+
+    private HeavyResource() {
+        // expensive initialization — ML model load, large cache warm-up
+        loadModel();
+    }
+
+    // ❌ NOT thread-safe — two threads may create two instances
+    public static HeavyResource getInstance() {
+        if (instance == null) {                 // Thread A and B both see null
+            instance = new HeavyResource();     // BOTH create instance
+        }
+        return instance;
+    }
+}
+```
+
+```
+Race condition:
+  Thread A: if (instance == null) → true
+  Thread B: if (instance == null) → true  ← both see null
+  Thread A: instance = new HeavyResource()
+  Thread B: instance = new HeavyResource() ← creates SECOND instance
+  Two instances exist — Singleton broken
+```
+
+> 🔑 Lazy initialization without synchronization = broken Singleton under concurrency. Always use thread-safe implementations in production.
+
+---
+
+## 🔬 Synchronized Method (Thread-Safe but Slow)
+
+```java
+public final class ConnectionPool {
+
+    private static ConnectionPool instance;
+
+    private ConnectionPool() {
+        initializePool();
+    }
+
+    // synchronized — only one thread at a time
+    public static synchronized ConnectionPool getInstance() {
+        if (instance == null) {
+            instance = new ConnectionPool();
+        }
+        return instance;
+    }
+}
+```
+
+```
+Pros:
+  ✅ Thread-safe
+  ✅ Lazy — created only when needed
+
+Cons:
+  ❌ EVERY call to getInstance() acquires lock
+  ❌ After instance created — lock still acquired — wasteful
+  ❌ High contention under load — serializes all callers
+  ❌ Performance bottleneck in high-throughput systems
+```
+
+---
+
+## 🔬 Double-Checked Locking (DCL)
+
+```java
+public final class MetricsCollector {
+
+    // volatile — CRITICAL — prevents instruction reordering
+    private static volatile MetricsCollector instance;
+
+    private MetricsCollector() {
+        initializeMetrics();
+    }
+
+    public static MetricsCollector getInstance() {
+        if (instance == null) {                     // ① first check — no lock
+            synchronized (MetricsCollector.class) { // ② lock only if null
+                if (instance == null) {             // ③ second check — under lock
+                    instance = new MetricsCollector();
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+
+```
+Why volatile is MANDATORY:
+
+  instance = new MetricsCollector() compiles to 3 steps:
+    1. Allocate memory
+    2. Initialize object (call constructor)
+    3. Assign reference to instance
+
+  Without volatile: JVM/CPU can reorder to:
+    1. Allocate memory
+    3. Assign reference to instance  ← reordered
+    2. Initialize object             ← not yet done
+
+  Thread B: if (instance == null) → false (reference assigned in step 3)
+  Thread B: return instance  ← returns PARTIALLY CONSTRUCTED object
+  Thread B: instance.doWork() → NPE or wrong state
+
+  volatile: prevents reordering — steps 1,2,3 happen in order
+            establishes happens-before — Thread B sees fully constructed object
+```
+
+```
+DCL flow:
+  First call:
+    ① null check → true (no lock) → enter sync
+    ③ null check → true (under lock) → create instance
+    returns new instance
+
+  Subsequent calls:
+    ① null check → false (no lock) → return existing
+    NO synchronization — no performance penalty
+    99.99% of calls take the fast path
+```
+
+---
+
+## 🔬 Bill Pugh (Static Holder) — Best Lazy
+
+```java
+// Leverages class loading guarantee — elegant and efficient
+public final class CacheManager {
+
+    private CacheManager() {
+        loadCache();
+    }
+
+    // Static inner class — loaded ONLY when getInstance() is called
+    private static final class Holder {
+        private static final CacheManager INSTANCE = new CacheManager();
+        // JVM class loading: guaranteed thread-safe, single execution
+    }
+
+    public static CacheManager getInstance() {
+        return Holder.INSTANCE;     // triggers Holder class load — once only
+    }
+
+    public Object get(String key) { ... }
+    public void   put(String key, Object val) { ... }
+}
+```
+
+```
+Why it works:
+  CacheManager class loads → Holder NOT loaded (inner class, not referenced)
+  First call to getInstance() → Holder class loads
+  JVM: class loading is thread-safe — <clinit> runs exactly once
+  Holder.INSTANCE created exactly once — guaranteed by JVM
+  No synchronization needed — JVM provides the guarantee
+
+Pros:
+  ✅ Lazy — Holder loaded only when getInstance() called
+  ✅ Thread-safe — JVM class loading guarantee
+  ✅ No synchronization overhead
+  ✅ No volatile needed
+  ✅ Most elegant lazy implementation
+```
+
+---
+
+## 🔬 Enum Singleton — Joshua Bloch's Recommendation
+
+```java
+// Effective Java Item 3: "Enum is the best Singleton implementation"
+public enum DatabaseConnectionPool {
+
+    INSTANCE;   // single enum constant = single instance
+
+    private final List<Connection> pool;
+    private final int              maxSize;
+
+    // Enum constructor — called once by JVM
+    DatabaseConnectionPool() {
+        this.maxSize = 10;
+        this.pool    = new ArrayList<>();
+        initializePool();
+    }
+
+    private void initializePool() {
+        for (int i = 0; i < maxSize; i++) {
+            pool.add(createConnection());
+        }
+    }
+
+    public synchronized Connection acquire() throws InterruptedException {
+        while (pool.isEmpty()) {
+            wait();
+        }
+        return pool.remove(pool.size() - 1);
+    }
+
+    public synchronized void release(Connection conn) {
+        pool.add(conn);
+        notify();
+    }
+
+    public int availableConnections() {
+        return pool.size();
+    }
+}
+
+// Usage
+Connection conn = DatabaseConnectionPool.INSTANCE.acquire();
+try {
+    // use connection
+} finally {
+    DatabaseConnectionPool.INSTANCE.release(conn);
+}
+```
+
+```
+Enum Singleton advantages:
+  ✅ Thread-safe — JVM enum guarantee
+  ✅ Serialization-safe — JVM handles it
+  ✅ Reflection-safe — cannot call enum constructor via reflection
+  ✅ No boilerplate — minimal code
+  ✅ Guaranteed single instance — JVM spec
+
+Cons:
+  ❌ Not lazy — created at class load (like eager)
+  ❌ Cannot extend a class (enums cannot extend)
+  ❌ Awkward for some use cases — "INSTANCE.method()" syntax
+```
+
+---
+
+## 🔬 Breaking Singleton
+
+### Reflection Attack
+
+```java
+public final class Config {
+    private static final Config INSTANCE = new Config();
+    private Config() { }
+    public static Config getInstance() { return INSTANCE; }
+}
+
+// Breaking via reflection
+Constructor<Config> constructor =
+    Config.class.getDeclaredConstructor();
+constructor.setAccessible(true);        // bypasses private
+Config second = constructor.newInstance(); // second instance!
+
+System.out.println(INSTANCE == second); // false — broken
+
+// Fix: throw exception in constructor if already instantiated
+private Config() {
+    if (INSTANCE != null) {
+        throw new RuntimeException("Use getInstance() — reflection attack prevented");
+    }
+}
+```
+
+### Serialization Attack
+
+```java
+// If Singleton implements Serializable — deserialization creates new instance
+Config c1 = Config.getInstance();
+
+// Serialize
+ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream("config.ser"));
+oos.writeObject(c1);
+
+// Deserialize — creates NEW instance — Singleton broken
+ObjectInputStream ois = new ObjectInputStream(new FileInputStream("config.ser"));
+Config c2 = (Config) ois.readObject();
+
+System.out.println(c1 == c2);  // false — two instances
+
+// Fix: readResolve() — called by deserialization
+protected Object readResolve() {
+    return INSTANCE;    // return existing instance — discard deserialized
+}
+```
+
+### Cloning Attack
+
+```java
+// If Singleton implements Cloneable — clone() creates new instance
+Config c1 = Config.getInstance();
+Config c2 = (Config) c1.clone();   // second instance — Singleton broken
+
+// Fix: override clone() — throw exception
+@Override
+protected Object clone() throws CloneNotSupportedException {
+    throw new CloneNotSupportedException("Singleton cannot be cloned");
+}
+```
+
+---
+
+## 💻 Real-World Code — Application Metrics Singleton
+
+```java
+// Production-grade Singleton — Bill Pugh + all protections
+public final class MetricsRegistry {
+
+    private final ConcurrentHashMap<String, AtomicLong> counters;
+    private final ConcurrentHashMap<String, AtomicLong> gauges;
+    private final ScheduledExecutorService               reporter;
+
+    private MetricsRegistry() {
+        this.counters = new ConcurrentHashMap<>();
+        this.gauges   = new ConcurrentHashMap<>();
+        this.reporter = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "metrics-reporter");
+            t.setDaemon(true);
+            return t;
+        });
+        // Report metrics every 60 seconds
+        reporter.scheduleAtFixedRate(
+            this::report, 60, 60, TimeUnit.SECONDS
+        );
+    }
+
+    // Bill Pugh holder — lazy + thread-safe
+    private static final class Holder {
+        private static final MetricsRegistry INSTANCE = new MetricsRegistry();
+    }
+
+    public static MetricsRegistry getInstance() {
+        return Holder.INSTANCE;
+    }
+
+    // Thread-safe operations — ConcurrentHashMap + AtomicLong
+    public void increment(String metric) {
+        counters.computeIfAbsent(metric, k -> new AtomicLong(0))
+                .incrementAndGet();
+    }
+
+    public void increment(String metric, long delta) {
+        counters.computeIfAbsent(metric, k -> new AtomicLong(0))
+                .addAndGet(delta);
+    }
+
+    public void gauge(String metric, long value) {
+        gauges.computeIfAbsent(metric, k -> new AtomicLong(0))
+              .set(value);
+    }
+
+    public long getCount(String metric) {
+        AtomicLong counter = counters.get(metric);
+        return counter == null ? 0 : counter.get();
+    }
+
+    private void report() {
+        counters.forEach((name, value) ->
+            log.info("COUNTER {} = {}", name, value.get())
+        );
+        gauges.forEach((name, value) ->
+            log.info("GAUGE {} = {}", name, value.get())
+        );
+    }
+
+    // Protect against serialization
+    protected Object readResolve() { return Holder.INSTANCE; }
+
+    // Protect against cloning
+    @Override
+    protected Object clone() throws CloneNotSupportedException {
+        throw new CloneNotSupportedException("MetricsRegistry is a Singleton");
+    }
+}
+
+// Usage — anywhere in application
+MetricsRegistry.getInstance().increment("orders.placed");
+MetricsRegistry.getInstance().increment("payment.failures");
+MetricsRegistry.getInstance().gauge("queue.depth", queue.size());
+```
+
+🔴 **What breaks if done wrong:** Multiple `MetricsRegistry` instances → each instance has its own counters → `orders.placed` counter split across instances → monitoring dashboard shows partial counts → alerts miss thresholds → incidents go undetected.
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — DCL without volatile — broken on Java 4 and earlier, fixed in Java 5+**
+
+```java
+// ❌ Before Java 5 — broken even with DCL
+private static MyClass instance;    // no volatile
+
+// Java 5+ Memory Model (JSR-133) fixed DCL with volatile
+// volatile guarantees: write to instance visible to all threads
+// volatile guarantees: no reordering around volatile write
+
+// Without volatile — Java 5+: still theoretically broken
+// CPU hardware reordering can still expose partial object
+// volatile prevents CPU reordering via memory barrier
+```
+
+---
+
+**🪤 Trap 2 — Singleton in distributed system is not singleton**
+
+```java
+// Singleton — one instance per JVM
+// Distributed system: 10 JVM instances (pods/nodes)
+// = 10 "singletons" — one per JVM
+
+// Config.getInstance() on Pod 1 ≠ Config.getInstance() on Pod 2
+// They are DIFFERENT instances — different memory spaces
+
+// Prod trap: rate limiter as Singleton
+// 10 pods × RateLimiter(100 req/s) = 1000 req/s actual
+// Expected: 100 req/s system-wide — not 1000
+// Fix: distributed rate limiter (Redis-based)
+```
+
+---
+
+**🪤 Trap 3 — Singleton breaks unit testing**
+
+```java
+// Singleton state persists across tests — test pollution
+class OrderServiceTest {
+
+    @Test
+    void test1() {
+        Config.getInstance().setMode("test");   // modifies singleton
+        // test 1 passes
+    }
+
+    @Test
+    void test2() {
+        // Config still in "test" mode from test1
+        // Test order matters — flaky tests
+        String mode = Config.getInstance().getMode(); // "test" — unexpected
+    }
+}
+
+// Fix: dependency injection — pass config as parameter
+class OrderService {
+    private final Config config;   // injected — not singleton-fetched
+
+    OrderService(Config config) {
+        this.config = config;   // test can pass mock config
+    }
+}
+```
+
+---
+
+**🪤 Trap 4 — Enum Singleton cannot be lazy**
+
+```java
+// Enum Singleton initialized at class load — not lazy
+public enum HeavyResource {
+    INSTANCE;   // constructor called at class load — always
+
+    HeavyResource() {
+        loadLargeModel();   // 5 second initialization — always pays this cost
+    }
+}
+
+// Even if HeavyResource.INSTANCE never accessed in some code paths
+// Still initializes — eager only
+// Fix: use Bill Pugh holder for lazy + thread-safe
+```
+
+---
+
+**🪤 Trap 5 — Multiple ClassLoaders create multiple Singletons**
+
+```java
+// Different ClassLoaders → different Class objects → different static fields
+ClassLoader cl1 = new URLClassLoader(urls);
+ClassLoader cl2 = new URLClassLoader(urls);
+
+Class<?> c1 = cl1.loadClass("com.app.Config");
+Class<?> c2 = cl2.loadClass("com.app.Config");
+
+Object instance1 = c1.getMethod("getInstance").invoke(null);
+Object instance2 = c2.getMethod("getInstance").invoke(null);
+
+System.out.println(instance1 == instance2);  // false — different ClassLoaders
+// Two "singletons" — one per ClassLoader
+// Happens in: OSGi, application servers, plugin systems
+```
+
+---
+
+## 🔩 DSA / Internals Connection
+
+**Underlying primitive: `<clinit>` mutex + happens-before in JMM**
+
+```
+Eager Singleton — class loading:
+  JVM loads AppConfig class
+  → acquires initialization lock (per-class mutex)
+  → runs <clinit>: INSTANCE = new AppConfig()
+  → releases lock
+  → class in INITIALIZED state
+
+  Subsequent access to AppConfig.INSTANCE:
+  → class already INITIALIZED
+  → no lock needed
+  → direct field read — O(1)
+
+Bill Pugh — two-phase loading:
+  CacheManager loads → Holder NOT loaded
+  First getInstance():
+    → Holder.class accessed → JVM loads Holder
+    → <clinit> runs: INSTANCE = new CacheManager()
+    → single initialization — JVM mutex guarantees
+
+DCL volatile memory barrier:
+  volatile write (instance = new MetricsCollector()):
+    → StoreStore barrier: all previous stores visible
+    → StoreLoad barrier: write visible to all threads
+
+  volatile read (if (instance == null)):
+    → LoadLoad barrier: sees most recent write
+    → Ensures: if instance != null, fully constructed
+
+Enum Singleton JVM guarantee:
+  JVM spec: enum constants initialized in <clinit>
+  <clinit> runs exactly once — mutex protected
+  Enum constructor cannot be called via reflection
+    → ReflectionFactory.newConstructorAccessor throws exception
+    → Cannot newInstance() an enum — JVM rejects
+```
+
+---

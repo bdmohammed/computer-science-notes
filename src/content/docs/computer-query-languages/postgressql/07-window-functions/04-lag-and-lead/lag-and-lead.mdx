@@ -1,0 +1,982 @@
+---
+title: PostgreSQL LAG & LEAD
+slug: computer-query-languages/postgresql/window-functions/lag-lead
+description: Master offset window functions in PostgreSQL — period-over-period analysis, churn detection, gap finding, and performance optimization without self-joins.
+sidebar:
+  label: "LAG & LEAD"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, lag, lead, analytics, time-series, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 LAG & LEAD — Complete Guide
+
+> **`LAG` looks backward to fetch a value from a previous row. `LEAD` looks forward to fetch a value from a future row. Both eliminate the need for expensive self-joins, making day-over-day or sequential comparisons a single clean expression.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `LAG` and `LEAD` as array accessors in SQL.  
+- `LAG(col, 1)` ≈ `arr[i-1]`  
+- `LEAD(col, 1)` ≈ `arr[i+1]`  
+They allow you to compare the current row with its neighbors in a sorted sequence without looping.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← LAG / LEAD computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+```sql
+-- LAG: value from N rows BEFORE current row
+-- LEAD: value from N rows AFTER current row
+
+SELECT
+  sale_date,
+  revenue,
+  LAG(revenue)  OVER (ORDER BY sale_date) AS prev_day_revenue,  -- yesterday
+  LEAD(revenue) OVER (ORDER BY sale_date) AS next_day_revenue   -- tomorrow
+FROM daily_sales;
+```
+
+---
+
+## 1️⃣ What LAG and LEAD Actually Do
+
+```
+daily_sales table:
+┌────────────┬─────────┐
+│ sale_date  │ revenue │
+├────────────┼─────────┤
+│ 2024-01-01 │  10000  │
+│ 2024-01-02 │  15000  │
+│ 2024-01-03 │  12000  │
+│ 2024-01-04 │  18000  │
+│ 2024-01-05 │  20000  │
+└────────────┴─────────┘
+
+LAG(revenue) OVER (ORDER BY sale_date):
+  Each row "looks back" 1 row:
+
+┌────────────┬─────────┬──────────────┬──────────────┐
+│ sale_date  │ revenue │ LAG(revenue) │ LEAD(revenue)│
+├────────────┼─────────┼──────────────┼──────────────┤
+│ 2024-01-01 │  10000  │     NULL     │    15000     │ ← no prev row
+│ 2024-01-02 │  15000  │    10000     │    12000     │
+│ 2024-01-03 │  12000  │    15000     │    18000     │
+│ 2024-01-04 │  18000  │    12000     │    20000     │
+│ 2024-01-05 │  20000  │    18000     │     NULL     │ ← no next row
+└────────────┴─────────┴──────────────┴──────────────┘
+
+First row LAG  → NULL (no previous row exists)
+Last row LEAD  → NULL (no next row exists)
+```
+
+```
+Visual:
+
+Row position:     1      2      3      4      5
+Revenue:        10000  15000  12000  18000  20000
+                  │      │      │      │
+LAG(rev):       NULL  10000  15000  12000  18000
+                         │      │      │      │
+LEAD(rev):     15000  12000  18000  20000   NULL
+
+LAG = "pull value FROM previous row INTO current row"
+LEAD = "pull value FROM next row INTO current row"
+```
+
+> 🎯 **DSA connection:** LAG/LEAD = accessing `arr[i-1]` and `arr[i+1]` in a sorted array without looping. Eliminates the O(n²) self-join approach. Same concept as the two-pointer technique — you're comparing adjacent elements in a sorted sequence.
+
+---
+
+## 2️⃣ Full Syntax — All Parameters
+
+```sql
+LAG  (value, offset, default) OVER (partition_and_order)
+LEAD (value, offset, default) OVER (partition_and_order)
+
+-- Parameters:
+--   value   : column or expression to fetch
+--   offset  : how many rows back/forward (default = 1)
+--   default : value when no row exists (default = NULL)
+```
+
+```sql
+-- Parameter examples
+SELECT
+  sale_date,
+  revenue,
+
+  -- Default: 1 row back, NULL if no row
+  LAG(revenue) OVER (ORDER BY sale_date)           AS prev_1,
+
+  -- 2 rows back
+  LAG(revenue, 2) OVER (ORDER BY sale_date)        AS prev_2,
+
+  -- 3 rows back, default 0 instead of NULL
+  LAG(revenue, 3, 0) OVER (ORDER BY sale_date)     AS prev_3_or_0,
+
+  -- 1 row forward
+  LEAD(revenue) OVER (ORDER BY sale_date)          AS next_1,
+
+  -- 2 rows forward, default -1 if no row
+  LEAD(revenue, 2, -1) OVER (ORDER BY sale_date)  AS next_2_or_neg
+
+FROM daily_sales
+ORDER BY sale_date;
+```
+
+```
+Offset examples on [10, 20, 30, 40, 50]:
+
+Position:     1    2    3    4    5
+Value:       10   20   30   40   50
+
+LAG(v,1):  NULL   10   20   30   40
+LAG(v,2):  NULL NULL   10   20   30
+LAG(v,3):  NULL NULL NULL   10   20
+
+LEAD(v,1):   20   30   40   50 NULL
+LEAD(v,2):   30   40   50 NULL NULL
+LEAD(v,3):   40   50 NULL NULL NULL
+```
+
+---
+
+## 3️⃣ The Core Pattern — Period-Over-Period Comparison
+
+**This is what LAG/LEAD are built for.**
+
+```sql
+-- Day-over-day revenue change
+SELECT
+  sale_date,
+  revenue,
+  LAG(revenue) OVER (ORDER BY sale_date)             AS prev_revenue,
+
+  -- Absolute change
+  revenue - LAG(revenue) OVER (ORDER BY sale_date)   AS change,
+
+  -- Percentage change
+  ROUND(
+    (revenue - LAG(revenue) OVER (ORDER BY sale_date))
+    * 100.0
+    / NULLIF(LAG(revenue) OVER (ORDER BY sale_date), 0),
+  1)                                                  AS pct_change,
+
+  -- Direction indicator
+  CASE
+    WHEN revenue > LAG(revenue) OVER (ORDER BY sale_date) THEN '📈'
+    WHEN revenue < LAG(revenue) OVER (ORDER BY sale_date) THEN '📉'
+    WHEN revenue = LAG(revenue) OVER (ORDER BY sale_date) THEN '➡️'
+    ELSE '🆕'   -- NULL (first row)
+  END                                                 AS trend
+
+FROM daily_sales
+ORDER BY sale_date;
+```
+
+```
+Result:
+┌────────────┬─────────┬──────────────┬────────┬────────────┬───────┐
+│ sale_date  │ revenue │ prev_revenue │ change │ pct_change │ trend │
+├────────────┼─────────┼──────────────┼────────┼────────────┼───────┤
+│ 2024-01-01 │  10000  │     NULL     │  NULL  │    NULL    │  🆕   │
+│ 2024-01-02 │  15000  │    10000     │  5000  │    50.0    │  📈   │
+│ 2024-01-03 │  12000  │    15000     │ -3000  │   -20.0    │  📉   │
+│ 2024-01-04 │  18000  │    12000     │  6000  │    50.0    │  📈   │
+│ 2024-01-05 │  20000  │    18000     │  2000  │    11.1    │  📈   │
+└────────────┴─────────┴──────────────┴────────┴────────────┴───────┘
+```
+
+> 🎯 **Real-life SDE:** Every analytics dashboard has period-over-period comparisons. Before LAG, teams wrote expensive self-joins. LAG computes this in a single scan — the most common reason it's used in production.
+
+---
+
+## 4️⃣ LAG/LEAD with PARTITION BY — Per-Group Comparison
+
+```sql
+-- Month-over-month revenue per product category
+-- Each category compared independently
+
+SELECT
+  category,
+  month,
+  revenue,
+  LAG(revenue) OVER (
+    PARTITION BY category      -- restart per category ✅
+    ORDER BY month
+  )                                           AS prev_month_revenue,
+  ROUND(
+    (revenue - LAG(revenue) OVER (
+      PARTITION BY category
+      ORDER BY month
+    )) * 100.0
+    / NULLIF(LAG(revenue) OVER (
+      PARTITION BY category
+      ORDER BY month
+    ), 0), 1
+  )                                           AS mom_growth_pct
+FROM monthly_category_revenue
+ORDER BY category, month;
+```
+
+```
+With PARTITION BY category:
+
+Electronics:               Clothing:
+Jan → NULL (first)         Jan → NULL (first)
+Feb → Jan's revenue        Feb → Jan's revenue
+Mar → Feb's revenue        Mar → Feb's revenue
+
+Each category has its OWN lag chain.
+Feb Electronics compares to Jan Electronics — not Jan Clothing ✅
+```
+
+```sql
+-- Per-user session comparison
+SELECT
+  user_id,
+  session_id,
+  started_at,
+  duration_seconds,
+
+  -- Previous session's duration (per user)
+  LAG(duration_seconds) OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+  )                                          AS prev_session_duration,
+
+  -- Time gap between this and previous session
+  started_at - LAG(started_at) OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+  )                                          AS time_since_last_session,
+
+  -- Next session start (for churn prediction)
+  LEAD(started_at) OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+  )                                          AS next_session_start
+
+FROM sessions
+WHERE created_at >= NOW() - INTERVAL '30 days'
+ORDER BY user_id, started_at;
+```
+
+> 🎯 **Interview trap:** Without PARTITION BY, LAG/LEAD crosses group boundaries — January's last Electronics row would lag into December's last Clothing row. Always add PARTITION BY when comparing within groups.
+
+---
+
+## 5️⃣ The Default Parameter — Handling Boundary NULLs
+
+```sql
+-- Problem: first/last rows always get NULL from LAG/LEAD
+
+-- Default NULL behavior
+SELECT
+  sale_date, revenue,
+  LAG(revenue) OVER (ORDER BY sale_date) AS prev_rev  -- NULL for first row
+FROM daily_sales;
+
+-- Fix 1: COALESCE after the fact
+SELECT
+  sale_date, revenue,
+  COALESCE(
+    LAG(revenue) OVER (ORDER BY sale_date),
+    revenue     -- fallback to current row's value
+  ) AS prev_rev_safe
+FROM daily_sales;
+
+-- Fix 2: Use default parameter (cleaner)
+SELECT
+  sale_date, revenue,
+  LAG(revenue, 1, 0)         OVER (ORDER BY sale_date) AS prev_rev,    -- 0 if no prev
+  LAG(revenue, 1, revenue)   OVER (ORDER BY sale_date) AS prev_or_self -- self if no prev
+FROM daily_sales;
+
+-- Fix 3: Filter out the NULL row
+SELECT * FROM (
+  SELECT
+    sale_date, revenue,
+    LAG(revenue) OVER (ORDER BY sale_date) AS prev_rev
+  FROM daily_sales
+) t
+WHERE prev_rev IS NOT NULL;   -- excludes first row ✅
+```
+
+```
+Default value behavior:
+
+LAG(revenue, 1, 0):
+  First row: 0 instead of NULL ✅
+  Middle rows: actual previous value ✅
+  Last row: actual value (LAG not LEAD, no effect here)
+
+LAG(revenue, 1, revenue):
+  First row: revenue (compare to self → change = 0) ✅
+  Useful when "no change" is the correct semantic for first row
+
+Which to use?
+  0 default:       when NULL would break arithmetic (pct_change)
+  revenue default: when "no change from start" is meaningful
+  Keep NULL:       when you want to explicitly identify first row
+```
+
+---
+
+## 6️⃣ LAG vs Self-Join — The Old Way vs The Right Way
+
+```sql
+-- Before LAG: self-join (expensive, verbose)
+SELECT
+  curr.sale_date,
+  curr.revenue,
+  prev.revenue AS prev_revenue,
+  curr.revenue - prev.revenue AS change
+FROM   daily_sales curr
+LEFT JOIN daily_sales prev
+  ON prev.sale_date = curr.sale_date - INTERVAL '1 day';
+-- ⚠️ Problems:
+--   Only works for calendar-day gaps
+--   Breaks if days are missing (no prev row in table)
+--   O(n²) without index → much slower
+--   Verbose — hard to maintain
+
+-- After LAG: clean and fast ✅
+SELECT
+  sale_date,
+  revenue,
+  LAG(revenue) OVER (ORDER BY sale_date) AS prev_revenue,
+  revenue - LAG(revenue) OVER (ORDER BY sale_date) AS change
+FROM daily_sales;
+-- Works regardless of date gaps (compares to previous row in result)
+-- O(n log n) sort + O(n) scan
+-- Clear intent
+```
+
+```
+Self-join approach:               LAG approach:
+  Two scans of table                One scan
+  Join on date arithmetic           No join needed
+  Breaks on missing dates           Works on any gap
+  Hard to extend to N-back          LAG(col, N) trivial
+  Hard to read                      Self-documenting
+```
+
+> 🎯 **Real-life SDE:** If you see a self-join comparing a table to itself on `date = date - interval '1 day'`, that's a candidate for LAG replacement. Suggest it in code reviews — simpler and faster.
+
+---
+
+## 7️⃣ LEAD for Future-Looking Patterns
+
+```sql
+-- Predict churn: identify users whose next session is > 30 days away
+
+SELECT
+  user_id,
+  session_date,
+  LEAD(session_date) OVER (
+    PARTITION BY user_id
+    ORDER BY session_date
+  )                                              AS next_session,
+  LEAD(session_date) OVER (
+    PARTITION BY user_id
+    ORDER BY session_date
+  ) - session_date                               AS days_until_next,
+  CASE
+    WHEN LEAD(session_date) OVER (
+      PARTITION BY user_id
+      ORDER BY session_date
+    ) IS NULL
+      THEN '🔴 No future session (churned?)'
+    WHEN LEAD(session_date) OVER (
+      PARTITION BY user_id
+      ORDER BY session_date
+    ) - session_date > 30
+      THEN '🟡 Long gap (at risk)'
+    ELSE '🟢 Regular user'
+  END                                            AS churn_signal
+FROM user_sessions
+ORDER BY user_id, session_date;
+
+-- Better: use CTE to avoid repeating LEAD expression
+WITH session_gaps AS (
+  SELECT
+    user_id,
+    session_date,
+    LEAD(session_date) OVER (
+      PARTITION BY user_id
+      ORDER BY session_date
+    ) AS next_session
+  FROM user_sessions
+)
+SELECT
+  user_id,
+  session_date,
+  next_session,
+  next_session - session_date AS gap_days,
+  CASE
+    WHEN next_session IS NULL            THEN '🔴 churned?'
+    WHEN next_session - session_date > 30 THEN '🟡 at risk'
+    ELSE                                      '🟢 active'
+  END AS status
+FROM   session_gaps
+ORDER BY user_id, session_date;
+```
+
+---
+
+## 8️⃣ Multiple Offsets — Comparing Multiple Periods
+
+```sql
+-- Weekly sales: compare to 1, 2, and 4 weeks ago
+SELECT
+  week_start,
+  revenue,
+
+  -- 1 week ago
+  LAG(revenue, 1) OVER (ORDER BY week_start)  AS wow_prev,
+  ROUND(
+    (revenue - LAG(revenue, 1) OVER (ORDER BY week_start))
+    * 100.0
+    / NULLIF(LAG(revenue, 1) OVER (ORDER BY week_start), 0), 1
+  )                                            AS wow_pct,
+
+  -- 2 weeks ago
+  LAG(revenue, 2) OVER (ORDER BY week_start)  AS two_weeks_ago,
+
+  -- 4 weeks ago (same week last month)
+  LAG(revenue, 4) OVER (ORDER BY week_start)  AS mom_prev,
+  ROUND(
+    (revenue - LAG(revenue, 4) OVER (ORDER BY week_start))
+    * 100.0
+    / NULLIF(LAG(revenue, 4) OVER (ORDER BY week_start), 0), 1
+  )                                            AS mom_pct,
+
+  -- 52 weeks ago (same week last year — YoY)
+  LAG(revenue, 52) OVER (ORDER BY week_start) AS yoy_prev,
+  ROUND(
+    (revenue - LAG(revenue, 52) OVER (ORDER BY week_start))
+    * 100.0
+    / NULLIF(LAG(revenue, 52) OVER (ORDER BY week_start), 0), 1
+  )                                            AS yoy_pct
+
+FROM weekly_revenue
+ORDER BY week_start;
+```
+
+```sql
+-- Cleaner with WINDOW clause (avoid sort repetition)
+SELECT
+  week_start, revenue,
+  LAG(revenue, 1)  OVER w AS last_week,
+  LAG(revenue, 4)  OVER w AS last_month,
+  LAG(revenue, 52) OVER w AS last_year,
+  LEAD(revenue, 1) OVER w AS next_week_forecast
+FROM weekly_revenue
+WINDOW w AS (ORDER BY week_start)   -- defined once, reused 4× ✅
+ORDER BY week_start;
+-- ONE sort, FOUR LAG/LEAD functions ✅
+```
+
+---
+
+## 9️⃣ Internals — How Postgres Executes LAG/LEAD
+
+```
+LAG and LEAD are "offset window functions" —
+simpler than aggregate window functions internally.
+
+Algorithm:
+
+Sort rows by (PARTITION BY keys, ORDER BY keys)
+
+For LAG(col, N, default):
+  For each row at position i:
+    if (i - N) exists in same partition → return row[i-N].col
+    else                                → return default
+
+For LEAD(col, N, default):
+  For each row at position i:
+    if (i + N) exists in same partition → return row[i+N].col
+    else                                → return default
+
+Implementation trick:
+  Postgres maintains a sliding buffer of N rows
+  For LAG(col, N): buffer the last N values, emit oldest
+  For LEAD(col, N): look-ahead buffer of N values
+  Memory: O(N) — only N rows buffered, not entire table ✅
+```
+
+```sql
+EXPLAIN (ANALYZE)
+SELECT sale_date, revenue,
+  LAG(revenue) OVER (ORDER BY sale_date) AS prev,
+  LEAD(revenue) OVER (ORDER BY sale_date) AS next
+FROM daily_sales;
+
+-- Output:
+-- WindowAgg                            ← LAG + LEAD computed here
+--   -> Sort                            ← sort by sale_date
+--        Sort Key: sale_date
+--        Sort Method: quicksort Memory: 25kB
+--        -> Seq Scan on daily_sales
+
+-- With index on sale_date:
+-- WindowAgg
+--   -> Index Scan on idx_daily_sales_date  ← no Sort node! ✅
+```
+
+```
+Memory:
+  LAG(col, N): O(N) buffer — only N rows stored
+  Very efficient even for large offsets ✅
+  Sort is the expensive step — index eliminates it
+
+Optimization:
+  CREATE INDEX ON table(partition_col, order_col)
+  → eliminates Sort node → O(n) scan instead of O(n log n)
+```
+
+---
+
+## 🔟 Real-Life SDE Patterns
+
+### Pattern 1 — Complete Analytics Dashboard Row
+
+```sql
+-- Full period-over-period metrics for business dashboard
+WITH daily AS (
+  SELECT
+    DATE_TRUNC('day', created_at)::DATE AS day,
+    COUNT(*)                             AS orders,
+    COUNT(DISTINCT user_id)              AS unique_users,
+    SUM(amount)                          AS revenue,
+    AVG(amount)                          AS avg_order_value
+  FROM   orders
+  WHERE  status = 'delivered'
+    AND  created_at >= NOW() - INTERVAL '90 days'
+  GROUP BY 1
+)
+SELECT
+  day,
+  orders,
+  unique_users,
+  revenue,
+  ROUND(avg_order_value, 0)             AS aov,
+
+  -- DoD comparisons
+  LAG(revenue)  OVER w                  AS yesterday_revenue,
+  LAG(orders)   OVER w                  AS yesterday_orders,
+  ROUND((revenue - LAG(revenue) OVER w)
+    * 100.0 / NULLIF(LAG(revenue) OVER w, 0), 1)  AS dod_revenue_pct,
+
+  -- WoW comparisons (7 rows back)
+  LAG(revenue, 7) OVER w                AS last_week_revenue,
+  ROUND((revenue - LAG(revenue, 7) OVER w)
+    * 100.0 / NULLIF(LAG(revenue, 7) OVER w, 0), 1) AS wow_revenue_pct,
+
+  -- Running 7-day moving average
+  ROUND(AVG(revenue) OVER (
+    ORDER BY day
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  ), 0)                                  AS revenue_7d_avg,
+
+  -- Is today a new high?
+  CASE WHEN revenue = MAX(revenue) OVER (
+    ORDER BY day ROWS UNBOUNDED PRECEDING
+  ) THEN '🏆 ATH' ELSE '' END            AS all_time_high_flag
+
+FROM daily
+WINDOW w AS (ORDER BY day)
+ORDER BY day DESC;
+```
+
+### Pattern 2 — Price Change Detection
+
+```sql
+-- Detect price changes for audit log / notifications
+WITH price_history AS (
+  SELECT
+    product_id,
+    price,
+    effective_date,
+    LAG(price) OVER (
+      PARTITION BY product_id
+      ORDER BY effective_date
+    )                                    AS prev_price,
+    LAG(effective_date) OVER (
+      PARTITION BY product_id
+      ORDER BY effective_date
+    )                                    AS prev_date
+  FROM product_price_history
+)
+SELECT
+  p.name                                 AS product_name,
+  ph.effective_date,
+  ph.prev_price,
+  ph.price                               AS new_price,
+  ph.price - ph.prev_price              AS absolute_change,
+  ROUND((ph.price - ph.prev_price)
+    * 100.0 / NULLIF(ph.prev_price, 0), 1) AS pct_change,
+  ph.effective_date - ph.prev_date      AS days_since_last_change,
+  CASE
+    WHEN ph.price > ph.prev_price THEN '⬆️ increased'
+    WHEN ph.price < ph.prev_price THEN '⬇️ decreased'
+    ELSE                               '➡️ unchanged'
+  END                                    AS direction
+FROM   price_history ph
+JOIN   products      p ON ph.product_id = p.id
+WHERE  ph.prev_price IS NOT NULL              -- skip first price entry
+  AND  ph.price != ph.prev_price              -- only show actual changes
+ORDER BY ph.effective_date DESC, ABS(ph.price - ph.prev_price) DESC;
+```
+
+### Pattern 3 — Stock / Inventory Movement
+
+```sql
+-- Inventory tracking: detect restocks and depletions
+WITH inventory_lag AS (
+  SELECT
+    product_id,
+    snapshot_date,
+    quantity,
+    LAG(quantity) OVER (
+      PARTITION BY product_id
+      ORDER BY snapshot_date
+    )                                AS prev_quantity
+  FROM inventory_snapshots
+)
+SELECT
+  p.name,
+  il.snapshot_date,
+  il.prev_quantity,
+  il.quantity                        AS current_quantity,
+  il.quantity - il.prev_quantity     AS qty_change,
+  CASE
+    WHEN il.prev_quantity IS NULL              THEN '🆕 initial'
+    WHEN il.quantity = 0                       THEN '🔴 out of stock'
+    WHEN il.quantity < il.prev_quantity        THEN '📦 sold'
+    WHEN il.quantity > il.prev_quantity        THEN '📥 restocked'
+    ELSE                                            '➡️ no change'
+  END                                AS event_type
+FROM   inventory_lag il
+JOIN   products       p ON il.product_id = p.id
+WHERE  il.prev_quantity IS DISTINCT FROM il.quantity  -- only show changes
+ORDER BY il.snapshot_date DESC, p.name;
+```
+
+### Pattern 4 — Identify Gaps in Sequential Data
+
+```sql
+-- Find missing order IDs in a sequence
+-- Use LEAD to look at the next ID and check for gap
+
+WITH gaps AS (
+  SELECT
+    id,
+    LEAD(id) OVER (ORDER BY id) AS next_id,
+    LEAD(id) OVER (ORDER BY id) - id - 1 AS missing_count
+  FROM orders
+)
+SELECT
+  id           AS gap_after,
+  next_id      AS gap_before,
+  missing_count,
+  id + 1       AS first_missing,
+  next_id - 1  AS last_missing
+FROM   gaps
+WHERE  missing_count > 0    -- gap exists ✅
+ORDER BY id;
+
+-- Result shows: IDs 1001–1005 are missing between order 1000 and 1006
+```
+
+### Pattern 5 — Session Boundary Detection
+
+```sql
+-- Identify session starts/ends based on time gaps
+
+WITH user_events AS (
+  SELECT
+    user_id,
+    event_time,
+    LAG(event_time) OVER (
+      PARTITION BY user_id
+      ORDER BY event_time
+    )                                          AS prev_event_time,
+    event_time - LAG(event_time) OVER (
+      PARTITION BY user_id
+      ORDER BY event_time
+    )                                          AS time_since_prev
+  FROM events
+),
+sessions AS (
+  SELECT
+    user_id,
+    event_time,
+    time_since_prev,
+    CASE
+      WHEN prev_event_time IS NULL
+        OR time_since_prev > INTERVAL '30 minutes'
+      THEN 1 ELSE 0
+    END                                        AS is_session_start,
+    SUM(CASE
+      WHEN prev_event_time IS NULL
+        OR time_since_prev > INTERVAL '30 minutes'
+      THEN 1 ELSE 0
+    END) OVER (
+      PARTITION BY user_id
+      ORDER BY event_time
+      ROWS UNBOUNDED PRECEDING
+    )                                          AS session_number
+  FROM user_events
+)
+SELECT
+  user_id,
+  session_number,
+  MIN(event_time)                              AS session_start,
+  MAX(event_time)                              AS session_end,
+  MAX(event_time) - MIN(event_time)            AS session_duration,
+  COUNT(*)                                     AS events_in_session
+FROM   sessions
+GROUP BY user_id, session_number
+ORDER BY user_id, session_number;
+```
+
+### Pattern 6 — Trend Direction Over Multiple Periods
+
+```sql
+-- Classify revenue trend: sustained growth, decline, or volatile
+
+WITH monthly AS (
+  SELECT
+    month,
+    revenue,
+    LAG(revenue, 1) OVER (ORDER BY month) AS m1,  -- 1 month ago
+    LAG(revenue, 2) OVER (ORDER BY month) AS m2,  -- 2 months ago
+    LAG(revenue, 3) OVER (ORDER BY month) AS m3   -- 3 months ago
+  FROM monthly_revenue
+),
+trend AS (
+  SELECT
+    month,
+    revenue,
+    CASE
+      WHEN revenue > m1 AND m1 > m2 AND m2 > m3 THEN '🚀 Strong growth'
+      WHEN revenue > m1 AND m1 > m2              THEN '📈 Growing'
+      WHEN revenue < m1 AND m1 < m2 AND m2 < m3 THEN '⚠️ Strong decline'
+      WHEN revenue < m1 AND m1 < m2              THEN '📉 Declining'
+      WHEN m1 IS NULL OR m2 IS NULL              THEN '🆕 New'
+      ELSE                                            '〰️ Volatile'
+    END                                          AS trend_label
+  FROM monthly
+)
+SELECT month, revenue, trend_label
+FROM   trend
+ORDER BY month;
+```
+
+---
+
+## 🔬 Verify Yourself
+
+```sql
+-- Setup
+CREATE TEMP TABLE t_sales (
+  id         INT,
+  sale_date  DATE,
+  category   TEXT,
+  revenue    INT
+);
+INSERT INTO t_sales VALUES
+  (1, '2024-01-01', 'Eng',   10000),
+  (2, '2024-01-02', 'Eng',   15000),
+  (3, '2024-01-03', 'Eng',   12000),
+  (4, '2024-01-04', 'Eng',   18000),
+  (5, '2024-01-01', 'Sales',  5000),
+  (6, '2024-01-02', 'Sales',  8000),
+  (7, '2024-01-03', 'Sales',  7000),
+  (8, '2024-01-04', 'Sales',  9000);
+
+-- 1. Basic LAG and LEAD (no partition)
+SELECT sale_date, revenue,
+  LAG(revenue)  OVER (ORDER BY sale_date, id) AS prev_rev,
+  LEAD(revenue) OVER (ORDER BY sale_date, id) AS next_rev
+FROM t_sales
+ORDER BY sale_date, id;
+-- First row prev=NULL, last row next=NULL ✅
+
+-- 2. LAG with PARTITION BY (per category)
+SELECT category, sale_date, revenue,
+  LAG(revenue) OVER (
+    PARTITION BY category
+    ORDER BY sale_date
+  ) AS prev_day
+FROM t_sales ORDER BY category, sale_date;
+-- Jan-01 for each category = NULL (first in partition) ✅
+-- Jan-02 Eng = 10000 (prev Eng) ✅
+-- Jan-02 Sales = 5000 (prev Sales, not Eng!) ✅
+
+-- 3. Period-over-period change
+SELECT category, sale_date, revenue,
+  LAG(revenue) OVER (PARTITION BY category ORDER BY sale_date) AS prev,
+  revenue - LAG(revenue) OVER (
+    PARTITION BY category ORDER BY sale_date
+  ) AS change,
+  ROUND(
+    (revenue - LAG(revenue) OVER (
+      PARTITION BY category ORDER BY sale_date
+    )) * 100.0 /
+    NULLIF(LAG(revenue) OVER (
+      PARTITION BY category ORDER BY sale_date
+    ), 0), 1
+  ) AS pct_change
+FROM t_sales ORDER BY category, sale_date;
+
+-- 4. Default parameter instead of NULL
+SELECT sale_date, revenue,
+  LAG(revenue, 1, 0)        OVER (ORDER BY sale_date, id) AS prev_or_0,
+  LAG(revenue, 1, revenue)  OVER (ORDER BY sale_date, id) AS prev_or_self,
+  LEAD(revenue, 1, revenue) OVER (ORDER BY sale_date, id) AS next_or_self
+FROM t_sales ORDER BY sale_date, id;
+-- First row: prev_or_0=0, prev_or_self=revenue (self) ✅
+-- Last row:  next_or_self=revenue (self) ✅
+
+-- 5. Multiple offsets
+SELECT sale_date, revenue,
+  LAG(revenue, 1) OVER (ORDER BY sale_date, id) AS lag_1,
+  LAG(revenue, 2) OVER (ORDER BY sale_date, id) AS lag_2,
+  LEAD(revenue, 1) OVER (ORDER BY sale_date, id) AS lead_1,
+  LEAD(revenue, 2) OVER (ORDER BY sale_date, id) AS lead_2
+FROM t_sales WHERE category = 'Eng' ORDER BY sale_date;
+
+-- 6. WINDOW clause: share sort
+SELECT sale_date, category, revenue,
+  LAG(revenue)  OVER w AS prev,
+  LEAD(revenue) OVER w AS next
+FROM t_sales
+WINDOW w AS (PARTITION BY category ORDER BY sale_date)
+ORDER BY category, sale_date;
+-- One sort, two functions ✅
+
+-- 7. EXPLAIN: see Sort node (or index scan)
+EXPLAIN SELECT sale_date, revenue,
+  LAG(revenue) OVER (ORDER BY sale_date)
+FROM t_sales;
+-- WindowAgg → Sort(sale_date) → Seq Scan ✅
+
+-- 8. Identify first and last rows per partition
+SELECT category, sale_date, revenue,
+  LAG(sale_date) OVER (PARTITION BY category ORDER BY sale_date) AS prev_date,
+  LEAD(sale_date) OVER (PARTITION BY category ORDER BY sale_date) AS next_date,
+  CASE WHEN LAG(sale_date) OVER (
+    PARTITION BY category ORDER BY sale_date) IS NULL
+  THEN '🆕 first' ELSE '' END AS first_flag,
+  CASE WHEN LEAD(sale_date) OVER (
+    PARTITION BY category ORDER BY sale_date) IS NULL
+  THEN '🏁 last' ELSE '' END AS last_flag
+FROM t_sales ORDER BY category, sale_date;
+-- Jan-01 → first_flag='🆕 first' ✅
+-- Jan-04 → last_flag='🏁 last' ✅
+
+-- 9. Compare LAG vs self-join
+-- Self-join approach (old way):
+SELECT a.sale_date, a.revenue, b.revenue AS prev_revenue
+FROM   t_sales a
+LEFT JOIN t_sales b
+  ON  b.category  = a.category
+  AND b.sale_date = a.sale_date - INTERVAL '1 day';
+
+-- LAG approach (new way):
+SELECT sale_date, revenue,
+  LAG(revenue) OVER (PARTITION BY category ORDER BY sale_date) AS prev_revenue
+FROM t_sales;
+-- Same result, much cleaner ✅
+```
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| What does LAG do? | Fetches value from N rows BEFORE current row within the window |
+| What does LEAD do? | Fetches value from N rows AFTER current row within the window |
+| Default offset? | 1 (one row back/forward) |
+| Boundary row value? | NULL by default — use third parameter for custom default |
+| LAG syntax with all params? | `LAG(col, offset, default) OVER (PARTITION BY ... ORDER BY ...)` |
+| Without PARTITION BY? | Crosses all rows globally — no group boundary |
+| LAG vs self-join? | LAG: O(n log n) sort + O(n) scan. Self-join: O(n²) without index. LAG always wins |
+| Period-over-period formula? | `(current - LAG(current)) / NULLIF(LAG(current), 0) * 100` |
+| LAG/LEAD in WHERE? | Not allowed directly — wrap in subquery/CTE |
+| EXPLAIN node? | WindowAgg + Sort. Index on ORDER BY col eliminates Sort → O(n) |
+| Same OVER for LAG and LEAD? | One Sort node shared — zero extra cost |
+| WINDOW clause benefit? | Name the window once, reuse across multiple LAG/LEAD — avoids repeated sort |
+| LAG(col, 7) meaning? | Value from 7 rows back — useful for week-over-week with daily data |
+| Detect first/last row? | First: `LAG(col) IS NULL`. Last: `LEAD(col) IS NULL` |
+
+---
+
+## 🧠 Full Mental Model
+
+```
+LAG & LEAD — Complete Picture
+
+LAG(value, offset, default) OVER (PARTITION BY p ORDER BY o):
+  For row at position i:
+    Look at row at position (i - offset) in same partition
+    Found → return that row's value
+    Not found (boundary) → return default (NULL if not specified)
+
+LEAD(value, offset, default) OVER (PARTITION BY p ORDER BY o):
+  For row at position i:
+    Look at row at position (i + offset) in same partition
+    Found → return that row's value
+    Not found (boundary) → return default (NULL if not specified)
+
+[10, 20, 30, 40, 50] with LAG/LEAD:
+
+Position:  1     2     3     4     5
+Value:    10    20    30    40    50
+
+LAG(v,1): NULL   10    20    30    40
+LAG(v,2): NULL NULL   10    20    30
+LEAD(v,1): 20    30    40    50  NULL
+LEAD(v,2): 30    40    50  NULL  NULL
+
+Execution:
+  Sort by (PARTITION BY + ORDER BY)   O(n log n)
+  Scan with sliding buffer            O(n)
+  Buffer size: O(offset)              tiny memory usage
+
+Optimization:
+  Index on (partition_col, order_col)
+  → Eliminates Sort node → O(n) total ✅
+
+Primary use cases:
+  Period-over-period:  current - LAG(current) = change
+  % change:           (current - LAG) / NULLIF(LAG, 0) * 100
+  Trend detection:    CASE WHEN current > LAG THEN '📈' ...
+  Gap detection:      LEAD(id) - id - 1 = missing rows
+  Session boundary:   time - LAG(time) > threshold = new session
+  Churn signal:       LEAD(date) IS NULL = no future activity
+
+NULL handling:
+  Default NULL at boundaries → use COALESCE or third parameter
+  LAG(col, 1, 0)       → 0 for first row
+  LAG(col, 1, col)     → self for first row
+  Filter IS NOT NULL   → exclude boundary rows entirely
+```

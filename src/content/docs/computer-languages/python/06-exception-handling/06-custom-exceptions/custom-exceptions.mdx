@@ -1,0 +1,1084 @@
+---
+title: Python Custom Exceptions
+slug: computer-languages/python/exception-handling/custom-exceptions
+description: Learn how to create domain-specific exceptions in Python. Understand inheritance, exception chaining, and why Python doesn't have "Checked" exceptions.
+sidebar:
+  label: "Custom Exceptions"
+  badge:
+    text: Error Handling
+    variant: tip
+tags: [python, exceptions, custom, oop, interview, best-practices]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🛠️ Creating Custom Exceptions
+
+> In Java, you choose between `Exception` (checked) and `RuntimeException` (unchecked).  
+> In Python, **all exceptions are unchecked**. You simply inherit from `Exception` to create a new error type.
+
+### 🔬 The Basic Structure
+
+```python
+class MyAppError(Exception):
+    """Base exception for my application."""
+    pass
+
+class ValidationError(MyAppError):
+    """Raised when input data is invalid."""
+    pass
+```
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- Inherit from `Exception` for standard errors.  
+- Inherit from `BaseException` ONLY for system-exiting events (rare).  
+- Use specific names like `UserNotFoundError` instead of generic `Error`.
+</Aside>
+
+---
+
+## 💻 Production-Grade Custom Exception
+
+In Java, you add fields and constructors. In Python, we do the same, but it's often simpler.
+
+<Code lang="python" title="✅ Rich Custom Exception" code={`
+class PaymentError(Exception):
+    def __init__(self, message, transaction_id=None, code=None):
+        self.message = message
+        self.transaction_id = transaction_id
+        self.code = code
+        
+        # Call the base class constructor with the message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f"[{self.code}] {self.message} (Txn: {self.transaction_id})"
+
+# Usage
+try:
+    raise PaymentError("Declined", txn_id="123", code="ERR_01")
+except PaymentError as e:
+    print(e.code)          # ERR_01
+    print(e.transaction_id)# 123
+`} />
+
+---
+
+## 🌳 Exception Hierarchy Design
+
+Just like Java, you should create a tree of exceptions to allow granular catching.
+
+```text
+AppError (Base)
+ ├── AuthError
+ │    ├── InvalidTokenError
+ │    └── PermissionDeniedError
+ ├── DatabaseError
+ │    ├── ConnectionTimeoutError
+ │    └── QuerySyntaxError
+ └── ValidationError
+      ├── MissingFieldError
+      └── TypeMismatchError
+```
+
+<Code lang="python" title="Hierarchy in Action" code={`
+class AppError(Exception):
+    pass
+
+class AuthError(AppError):
+    pass
+
+class InvalidTokenError(AuthError):
+    pass
+
+# Catching specifically
+try:
+    validate_token(token)
+except InvalidTokenError:
+    refresh_session()
+except AuthError:
+    logout_user()
+except AppError:
+    log_critical_failure()
+`} />
+
+---
+
+## 🔗 Exception Chaining (`raise ... from`)
+
+In Java, you wrap exceptions (`new Ex("msg", cause)`). In Python, use `raise ... from ...` to preserve the original traceback. This is critical for debugging.
+
+<CardGrid>
+  <Card title="Implicit Chaining" icon="information">
+    ```python
+    try:
+        int("not_a_number")
+    except ValueError:
+        raise ConfigError("Bad config") 
+        # Python automatically links them
+    ```
+  </Card>
+  
+  <Card title="Explicit Chaining" icon="shield">
+    ```python
+    try:
+        db.connect()
+    except ConnectionError as e:
+        # Explicitly state the cause
+        raise ServiceDownError("DB Unreachable") from e
+    ```
+  </Card>
+
+  <Card title="Suppression (`from None`)" icon="rocket">
+    ```python
+    try:
+        risky_op()
+    except SpecificError:
+        # Hide the original noisy error
+        raise UserFriendlyError("Failed") from None
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## ⚖️ Checked vs. Unchecked?
+
+**Python has NO checked exceptions.** You never declare `throws ValidationError`.
+
+| Feature | Java | Python |
+|---------|------|--------|
+| **Declaration** | `void method() throws MyEx` | None |
+| **Enforcement** | Compiler forces catch/declare | Developer responsibility |
+| **Philosophy** | "Handle it or declare it" | "EAFP" (Try it, handle if fails) |
+
+<Aside type="caution">
+**Interview Trap**: If asked about checked exceptions in Python, say: *"Python relies on documentation and testing rather than compiler enforcement. All exceptions are runtime."*
+</Aside>
+
+---
+
+## 💣 Interview Traps & Best Practices
+
+<CardGrid>
+  <Card title="Trap 1: Inheriting from `BaseException`" icon="error">
+    ```python
+    class MyError(BaseException): ... 
+    # ❌ BAD: Catches SystemExit/KeyboardInterrupt
+    # ✅ GOOD: class MyError(Exception): ...
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Empty Exception Classes" icon="warning">
+    ```python
+    class Error(Exception):
+        pass 
+    # ✅ Valid for simple cases.
+    # But add __init__ if you need context data (IDs, codes).
+    ```
+  </Card>
+
+  <Card title="Trap 3: Swallowing Context" icon="shield">
+    ```python
+    try:
+        do_something()
+    except Exception as e:
+        raise NewError("Failed") 
+        # ❌ Loses original traceback
+        
+    # ✅ Fix:
+    raise NewError("Failed") from e
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: How do you create a custom exception?
+    A: Class MyError(Exception): pass
+    
+    Q: Does Python have checked exceptions?
+    A: No. All are unchecked.
+    ```
+  </Card>
+  
+  <Card title="Chaining" icon="rocket">
+    ```text
+    Q: How do you preserve the original error?
+    A: raise NewError() from old_error
+    
+    Q: What is `from None`?
+    A: It suppresses the display of the previous exception context.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output" code={`
+class BaseErr(Exception): pass
+class ChildErr(BaseErr): pass
+
+try:
+    raise ChildErr("Oops")
+except BaseErr as e:
+    print(type(e).__name__)
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+ChildErr
+```
+*Reason: `ChildErr` is an instance of `BaseErr`, so the `except` block catches it. `type(e)` remains `ChildErr`.*
+</details>
+
+> 🚀 **Final Wisdom**: Keep your exception hierarchy flat unless you need complex handling. Always chain exceptions with `from` to keep debuggability high. And remember: documentation is your "checked exception" in Python! 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🛠️ Python Custom Exceptions
+
+---
+
+## 🧠 Mental Model First
+
+```
+WHY custom exceptions?
+  Built-in exceptions are too generic:
+    ValueError("something went wrong")    ← what went wrong? where? why?
+    RuntimeError("payment failed")        ← what payment? what failed?
+
+  Custom exceptions give you:
+    ├── Semantic meaning   — PaymentDeclinedError vs ValueError
+    ├── Structured data    — error.amount, error.card_last4
+    ├── Catchability       — catch PaymentError not every ValueError
+    ├── Domain vocabulary  — errors speak your domain language
+    └── Hierarchy          — catch broadly or specifically
+
+PYTHON vs JAVA:
+  Java: checked exceptions  → compiler forces try/catch or throws
+        unchecked exceptions→ RuntimeException subclasses, no enforcement
+
+  Python: ALL exceptions unchecked → no compiler enforcement
+          "checked" achieved through convention + tooling
+```
+
+---
+
+## 01 — Customized Exceptions
+
+### Minimal Custom Exception
+
+```python
+# Minimal — just a name:
+class InsufficientFundsError(Exception):
+    pass
+
+# Raised and caught by name:
+raise InsufficientFundsError("Balance too low")
+
+try:
+    raise InsufficientFundsError("Balance too low")
+except InsufficientFundsError as e:
+    print(e)    # Balance too low
+```
+
+---
+
+### Levels of Customization
+
+```python
+# LEVEL 1 — Name only (type identity):
+class ConfigNotFoundError(Exception):
+    pass
+
+
+# LEVEL 2 — Custom message + args:
+class ValidationError(Exception):
+    def __init__(self, field: str, message: str):
+        super().__init__(f"{field}: {message}")
+        self.field   = field
+        self.message = message
+
+
+# LEVEL 3 — Rich context + behavior:
+class PaymentError(Exception):
+    def __init__(
+        self,
+        message:   str,
+        code:      int,
+        amount:    float    = None,
+        currency:  str      = "USD",
+        retry:     bool     = False,
+    ):
+        super().__init__(message)
+        self.code     = code
+        self.amount   = amount
+        self.currency = currency
+        self.retry    = retry
+
+    def __str__(self) -> str:
+        parts = [f"[{self.code}] {self.args[0]}"]
+        if self.amount:
+            parts.append(f"amount={self.amount} {self.currency}")
+        if self.retry:
+            parts.append("(retryable)")
+        return " | ".join(parts)
+
+    def __repr__(self) -> str:
+        return (f"PaymentError(code={self.code!r}, "
+                f"message={self.args[0]!r}, "
+                f"retry={self.retry})")
+
+    def to_dict(self) -> dict:
+        return {
+            "error":    self.args[0],
+            "code":     self.code,
+            "amount":   self.amount,
+            "currency": self.currency,
+            "retry":    self.retry,
+        }
+```
+
+---
+
+### Full Custom Exception System
+
+```python
+import traceback
+import time
+from typing import Any
+
+
+class AppError(Exception):
+    """
+    Root of all application exceptions.
+    Every domain error inherits from here.
+    """
+    DEFAULT_CODE = 500
+
+    def __init__(
+        self,
+        message:  str,
+        code:     int   = None,
+        context:  dict  = None,
+    ):
+        super().__init__(message)
+        self.code      = code or self.DEFAULT_CODE
+        self.context   = context or {}
+        self.timestamp = time.time()
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.args[0]}"
+
+    def __repr__(self) -> str:
+        return (f"{type(self).__name__}"
+                f"(code={self.code}, message={self.args[0]!r})")
+
+    def add_context(self, **kwargs) -> "AppError":
+        """Fluent interface for adding context."""
+        self.context.update(kwargs)
+        return self          # enables chaining
+
+    def to_dict(self) -> dict:
+        return {
+            "type":      type(self).__name__,
+            "message":   self.args[0],
+            "code":      self.code,
+            "context":   self.context,
+            "timestamp": self.timestamp,
+        }
+
+
+# ── VALIDATION LAYER ─────────────────────────────────────────────
+class ValidationError(AppError):
+    DEFAULT_CODE = 400
+
+    def __init__(self, field: str, message: str, value: Any = None):
+        super().__init__(
+            f"Validation failed for '{field}': {message}",
+            code=400,
+            context={"field": field, "value": value}
+        )
+        self.field = field
+        self.value = value
+
+
+class MultiValidationError(AppError):
+    """Aggregate multiple validation errors."""
+    DEFAULT_CODE = 400
+
+    def __init__(self, errors: list["ValidationError"]):
+        messages = "; ".join(str(e) for e in errors)
+        super().__init__(f"Multiple validation errors: {messages}", code=400)
+        self.errors = errors
+
+    def __iter__(self):
+        return iter(self.errors)
+
+    def for_field(self, field: str) -> list["ValidationError"]:
+        return [e for e in self.errors if e.field == field]
+
+
+# ── AUTH LAYER ───────────────────────────────────────────────────
+class AuthError(AppError):
+    DEFAULT_CODE = 401
+
+class NotAuthenticatedError(AuthError):
+    def __init__(self):
+        super().__init__("Authentication required", code=401)
+
+class PermissionDeniedError(AuthError):
+    DEFAULT_CODE = 403
+
+    def __init__(self, action: str, resource: str):
+        super().__init__(
+            f"Permission denied: cannot {action} {resource}",
+            code=403,
+            context={"action": action, "resource": resource}
+        )
+        self.action   = action
+        self.resource = resource
+
+
+# ── DATA LAYER ───────────────────────────────────────────────────
+class NotFoundError(AppError):
+    DEFAULT_CODE = 404
+
+    def __init__(self, resource: str, identifier: Any):
+        super().__init__(
+            f"{resource} not found: {identifier!r}",
+            code=404,
+            context={"resource": resource, "id": identifier}
+        )
+        self.resource    = resource
+        self.identifier  = identifier
+
+
+class DatabaseError(AppError):
+    DEFAULT_CODE = 503
+
+    def __init__(self, operation: str, cause: Exception = None):
+        super().__init__(
+            f"Database error during {operation}",
+            code=503,
+            context={"operation": operation}
+        )
+        self.operation = operation
+        if cause:
+            self.__cause__ = cause
+
+
+class DuplicateError(AppError):
+    DEFAULT_CODE = 409
+
+    def __init__(self, resource: str, field: str, value: Any):
+        super().__init__(
+            f"{resource} already exists with {field}={value!r}",
+            code=409,
+            context={"resource": resource, "field": field, "value": value}
+        )
+
+
+# ── PAYMENT LAYER ────────────────────────────────────────────────
+class PaymentError(AppError):
+    DEFAULT_CODE = 402
+
+class CardDeclinedError(PaymentError):
+    def __init__(self, reason: str, last4: str = None):
+        super().__init__(
+            f"Card declined: {reason}",
+            code=402,
+            context={"reason": reason, "last4": last4}
+        )
+        self.last4  = last4
+        self.retry  = False        # don't retry declined cards
+
+class InsufficientFundsError(PaymentError):
+    def __init__(self, balance: float, required: float, currency: str = "USD"):
+        super().__init__(
+            f"Insufficient funds: {balance} {currency} < {required} {currency}",
+            code=402,
+            context={"balance": balance, "required": required, "currency": currency}
+        )
+        self.balance  = balance
+        self.required = required
+        self.retry    = False
+
+class PaymentGatewayError(PaymentError):
+    def __init__(self, gateway: str, cause: Exception = None):
+        super().__init__(
+            f"Payment gateway error: {gateway}",
+            code=503,
+            context={"gateway": gateway}
+        )
+        self.retry = True          # gateway errors might be transient
+        if cause:
+            self.__cause__ = cause
+
+
+# ── RATE LIMITING ────────────────────────────────────────────────
+class RateLimitError(AppError):
+    DEFAULT_CODE = 429
+
+    def __init__(self, limit: int, window: int, retry_after: int = 60):
+        super().__init__(
+            f"Rate limit exceeded: {limit} requests per {window}s",
+            code=429,
+            context={"limit": limit, "window": window}
+        )
+        self.retry_after = retry_after
+```
+
+---
+
+### Usage — The Full Picture
+
+```python
+def purchase(user_id: int, item_id: int, card_token: str) -> dict:
+    errors = []
+
+    if not isinstance(user_id, int) or user_id <= 0:
+        errors.append(ValidationError("user_id", "must be positive int", user_id))
+    if not isinstance(item_id, int) or item_id <= 0:
+        errors.append(ValidationError("item_id", "must be positive int", item_id))
+    if not card_token:
+        errors.append(ValidationError("card_token", "cannot be empty"))
+
+    if errors:
+        raise MultiValidationError(errors)
+
+    # Domain-specific raises:
+    user = users.find(user_id)
+    if not user:
+        raise NotFoundError("User", user_id)
+
+    if not user.has_permission("purchase"):
+        raise PermissionDeniedError("purchase", f"item:{item_id}")
+
+    item = items.find(item_id)
+    if not item:
+        raise NotFoundError("Item", item_id)
+
+    if user.balance < item.price:
+        raise InsufficientFundsError(user.balance, item.price)
+
+    try:
+        result = payment_gateway.charge(card_token, item.price)
+    except GatewayTimeout as e:
+        raise PaymentGatewayError("stripe", cause=e)
+    except GatewayDecline as e:
+        raise CardDeclinedError(str(e), last4=card_token[-4:])
+
+    return {"status": "success", "order_id": result.id}
+
+
+# Clean handler:
+try:
+    order = purchase(1, 42, "tok_visa")
+except MultiValidationError as e:
+    for err in e:
+        print(f"  {err.field}: {err.message}")
+except NotFoundError as e:
+    return http_404(str(e))
+except PermissionDeniedError as e:
+    return http_403(str(e))
+except InsufficientFundsError as e:
+    return http_402(f"Need {e.required}, have {e.balance}")
+except CardDeclinedError as e:
+    return http_402(str(e))
+except PaymentGatewayError as e:
+    retry_later() if e.retry else alert_oncall()
+    return http_503(str(e))
+except AppError as e:             # catch-all for app errors
+    log.error(e.to_dict())
+    return http_error(e.code, str(e))
+```
+
+---
+
+## 02 — Checked Custom Exception (Python Approach)
+
+```
+JAVA checked:   compiler FORCES caller to handle or declare
+PYTHON checked: CONVENTION + tooling — no runtime enforcement
+                Developer explicitly signals: "you should handle this"
+```
+
+### Convention-Based "Checked" Exceptions
+
+```python
+class CheckedError(Exception):
+    """
+    Base for exceptions callers ARE EXPECTED to handle.
+    Document in every function that raises these.
+    Use type checkers (mypy) to enforce at analysis time.
+    """
+    pass
+
+
+class ResourceNotFoundError(CheckedError):
+    """
+    Raised when a requested resource doesn't exist.
+    EXPECTED: callers must handle or propagate explicitly.
+
+    Raises:
+        ResourceNotFoundError: always — if resource missing
+    """
+    def __init__(self, resource_type: str, identifier):
+        super().__init__(
+            f"{resource_type} not found: {identifier!r}"
+        )
+        self.resource_type = resource_type
+        self.identifier    = identifier
+
+
+class ConfigurationError(CheckedError):
+    """
+    Raised when required configuration is missing or invalid.
+    EXPECTED: callers must handle at startup.
+    """
+    def __init__(self, key: str, reason: str):
+        super().__init__(f"Config '{key}' {reason}")
+        self.key    = key
+        self.reason = reason
+
+
+class ExternalServiceError(CheckedError):
+    """
+    Raised when an external service call fails.
+    EXPECTED: callers decide retry/fallback/alert.
+    """
+    def __init__(self, service: str, operation: str,
+                 cause: Exception = None, retryable: bool = True):
+        super().__init__(f"{service}.{operation} failed")
+        self.service   = service
+        self.operation = operation
+        self.retryable = retryable
+        if cause:
+            self.__cause__ = cause
+```
+
+### Enforcing "Checked" With Decorator
+
+```python
+from functools import wraps
+from typing import Type
+
+def must_handle(*exception_types: Type[Exception]):
+    """
+    Runtime enforcement of "checked" exceptions.
+    Raises AssertionError if function raises undeclared exception type.
+    Use in development/testing — remove in production if performance matters.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except BaseException as e:
+                if not isinstance(e, exception_types + (SystemExit, KeyboardInterrupt)):
+                    raise AssertionError(
+                        f"{func.__name__} raised undeclared "
+                        f"{type(e).__name__}: {e}"
+                    ) from e
+                raise
+        wrapper.__declared_exceptions__ = exception_types
+        return wrapper
+    return decorator
+
+
+@must_handle(ResourceNotFoundError, ConfigurationError)
+def load_user_config(user_id: int) -> dict:
+    """
+    Raises:
+        ResourceNotFoundError: if user doesn't exist
+        ConfigurationError:    if config is malformed
+    """
+    user = db.find(user_id)
+    if not user:
+        raise ResourceNotFoundError("User", user_id)    # declared ✅
+
+    config = user.config
+    if not isinstance(config, dict):
+        raise ConfigurationError("user.config", "must be dict")  # declared ✅
+
+    return config
+
+
+# If function raises KeyError — AssertionError about undeclared exception:
+@must_handle(ResourceNotFoundError)
+def broken_func(user_id):
+    raise KeyError("oops")    # 💥 AssertionError: broken_func raised undeclared KeyError
+```
+
+### Static Analysis "Checked" — mypy Approach
+
+```python
+# mypy can enforce exception handling with plugins
+# but standard approach is documentation + discipline:
+
+from typing import Never
+
+def guaranteed_to_raise() -> Never:
+    """Always raises — return type Never signals this to type checkers."""
+    raise NotImplementedError("Must implement in subclass")
+
+
+# PEP 748 (proposed) — typed exceptions:
+# def connect() -> Connection, raises[NetworkError, TimeoutError]: ...
+# Not yet standard — coming in future Python versions
+```
+
+---
+
+## 03 — Unchecked Custom Exception
+
+```
+PYTHON: ALL custom exceptions are unchecked — no enforcement.
+        These represent BUGS, PROGRAMMER ERRORS, UNEXPECTED states.
+        Callers are NOT expected to recover — fail fast, fix the code.
+```
+
+### Unchecked Exception Patterns
+
+```python
+class UncheckedException(RuntimeError):
+    """
+    Base for programmer errors — should NOT be caught in normal flow.
+    Represents bugs, contract violations, impossible states.
+    Inherit from RuntimeError (not Exception base) to signal severity.
+    """
+    pass
+
+
+class ContractViolationError(UncheckedException):
+    """
+    Precondition or postcondition violated.
+    Represents a PROGRAMMING BUG — should never happen in correct code.
+    """
+    def __init__(self, contract: str, actual, expected=None):
+        msg = f"Contract violated: {contract}"
+        if expected is not None:
+            msg += f" (expected={expected!r}, got={actual!r})"
+        super().__init__(msg)
+        self.contract = contract
+        self.actual   = actual
+        self.expected = expected
+
+
+class ImpossibleStateError(UncheckedException):
+    """
+    Code reached a state that should be logically impossible.
+    "This should never happen" — if it does, it's a bug.
+    """
+    def __init__(self, description: str, state: dict = None):
+        super().__init__(f"Impossible state: {description}")
+        self.state = state or {}
+
+
+class NotYetImplementedError(UncheckedException):
+    """
+    Placeholder for code not yet written.
+    Different from NotImplementedError (abstract methods).
+    """
+    def __init__(self, feature: str = ""):
+        msg = f"Not yet implemented: {feature}" if feature else "Not yet implemented"
+        super().__init__(msg)
+
+
+class InvariantViolationError(UncheckedException):
+    """
+    Class invariant has been violated.
+    Indicates corrupted object state — likely a bug in the class.
+    """
+    def __init__(self, invariant: str, obj=None):
+        super().__init__(f"Invariant violated: {invariant}")
+        self.invariant = invariant
+        self.obj_state = vars(obj) if obj and hasattr(obj, '__dict__') else None
+```
+
+### Real-World Usage
+
+```python
+class BoundedQueue:
+    def __init__(self, capacity: int):
+        if capacity <= 0:
+            raise ContractViolationError(
+                "capacity > 0", actual=capacity
+            )
+        self._capacity = capacity
+        self._data: list = []
+
+    def enqueue(self, item) -> None:
+        # Precondition check (unchecked — programmer should check first):
+        if len(self._data) >= self._capacity:
+            raise ContractViolationError(
+                "queue not full before enqueue",
+                actual=len(self._data),
+                expected=f"< {self._capacity}"
+            )
+        self._data.append(item)
+        self._check_invariants()
+
+    def dequeue(self):
+        if not self._data:
+            raise ContractViolationError(
+                "queue not empty before dequeue",
+                actual="empty"
+            )
+        item = self._data.pop(0)
+        self._check_invariants()
+        return item
+
+    def _check_invariants(self) -> None:
+        """Verify class invariants — detect corruption."""
+        if len(self._data) > self._capacity:
+            raise InvariantViolationError(
+                f"size({len(self._data)}) <= capacity({self._capacity})",
+                obj=self
+            )
+        if len(self._data) < 0:
+            raise ImpossibleStateError(
+                "queue size cannot be negative",
+                state={"size": len(self._data)}
+            )
+```
+
+---
+
+### Checked vs Unchecked — Full Decision Guide
+
+```
+WHEN to use CHECKED-style (callers expected to handle):
+  ├── Resource not found         → ResourceNotFoundError
+  ├── External service failure   → ExternalServiceError
+  ├── Configuration invalid      → ConfigurationError
+  ├── Input validation failure   → ValidationError
+  ├── Network/IO errors          → NetworkError, IOError subclasses
+  └── Business rule violation    → BusinessRuleError (payment declined etc)
+
+WHEN to use UNCHECKED-style (programmer error, don't catch):
+  ├── Null/None passed to non-nullable parameter  → TypeError (built-in)
+  ├── Precondition violated                       → ContractViolationError
+  ├── Impossible state reached                    → ImpossibleStateError
+  ├── Abstract method not implemented             → NotImplementedError (built-in)
+  ├── Wrong type passed internally                → TypeError (built-in)
+  └── Index out of bounds on internal array       → IndexError (built-in)
+
+RULE OF THUMB:
+  Can the caller PREDICT and HANDLE this?
+    YES → checked-style (document it, expect handling)
+    NO  → unchecked-style (it's a bug, fix the code)
+```
+
+### Full Hierarchy Example
+
+```python
+# Complete domain exception tree:
+
+class AppError(Exception):
+    """Root — all application exceptions."""
+
+
+# ── CHECKED-STYLE (expected, handle these) ──────────────────────
+class RecoverableError(AppError):
+    """Caller can and should recover."""
+
+class ValidationError(RecoverableError): pass
+class ResourceNotFoundError(RecoverableError): pass
+class AuthenticationError(RecoverableError): pass
+class AuthorizationError(RecoverableError): pass
+class ExternalServiceError(RecoverableError): pass
+class RateLimitError(RecoverableError): pass
+class PaymentError(RecoverableError): pass
+    # └── CardDeclinedError, InsufficientFundsError, etc.
+
+
+# ── UNCHECKED-STYLE (bugs, don't catch) ─────────────────────────
+class ProgrammerError(AppError):
+    """Should never happen — indicates a bug."""
+
+class ContractViolationError(ProgrammerError): pass
+class ImpossibleStateError(ProgrammerError): pass
+class ConfigurationBugError(ProgrammerError): pass
+    # Different from ConfigurationError (missing config = expected)
+    # ConfigurationBugError = config code is wrong = programmer error
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Custom exceptions in graph algorithms:
+class GraphError(Exception):
+    """Root for graph errors."""
+
+class NodeNotFoundError(GraphError):
+    def __init__(self, node: int):
+        super().__init__(f"Node {node} not in graph")
+        self.node = node
+
+class EdgeNotFoundError(GraphError):
+    def __init__(self, src: int, dst: int):
+        super().__init__(f"No edge: {src} → {dst}")
+        self.src, self.dst = src, dst
+
+class CycleDetectedError(GraphError):
+    def __init__(self, cycle: list[int]):
+        super().__init__(f"Cycle detected: {' → '.join(map(str, cycle))}")
+        self.cycle = cycle
+
+class NegativeWeightError(GraphError):
+    def __init__(self, src: int, dst: int, weight: float):
+        super().__init__(f"Negative weight on edge {src}→{dst}: {weight}")
+        self.weight = weight
+
+
+class WeightedGraph:
+    def __init__(self):
+        self._adj: dict[int, dict[int, float]] = {}
+
+    def add_edge(self, src: int, dst: int, weight: float) -> None:
+        if weight < 0:
+            raise NegativeWeightError(src, dst, weight)    # checked-style
+        self._adj.setdefault(src, {})[dst] = weight
+        self._adj.setdefault(dst, {})
+
+    def dijkstra(self, start: int, end: int) -> tuple[float, list[int]]:
+        if start not in self._adj:
+            raise NodeNotFoundError(start)
+        if end not in self._adj:
+            raise NodeNotFoundError(end)
+
+        import heapq
+        dist  = {start: 0.0}
+        prev  = {}
+        heap  = [(0.0, start)]
+
+        while heap:
+            d, u = heapq.heappop(heap)
+            if d > dist.get(u, float('inf')):
+                continue
+            for v, w in self._adj.get(u, {}).items():
+                nd = d + w
+                if nd < dist.get(v, float('inf')):
+                    dist[v] = nd
+                    prev[v] = u
+                    heapq.heappush(heap, (nd, v))
+
+        if end not in dist:
+            raise NodeNotFoundError(end)
+
+        path, node = [], end
+        while node in prev:
+            path.append(node)
+            node = prev[node]
+        path.append(start)
+        return dist[end], path[::-1]
+```
+
+---
+
+## 💀 Interview Trap 1 — Exception Losing `__init__` Args
+
+```python
+class MyError(Exception):
+    def __init__(self, code: int, message: str):
+        # 💀 WRONG — forgot to call super():
+        self.code    = code
+        self.message = message
+
+e = MyError(404, "not found")
+str(e)          # ''          ← empty! args not set
+repr(e)         # 'MyError()' ← no args shown
+e.args          # ()          ← empty tuple
+
+
+class MyError(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(message)   # ✅ pass message to args
+        self.code    = code
+        self.message = message
+
+e = MyError(404, "not found")
+str(e)          # 'not found'
+e.args          # ('not found',)
+e.code          # 404
+```
+
+---
+
+## 💀 Interview Trap 2 — Catching Base Class Too Early
+
+```python
+class AppError(Exception): pass
+class PaymentError(AppError): pass
+class CardDeclinedError(PaymentError): pass
+
+try:
+    raise CardDeclinedError("CVV mismatch")
+except AppError:              # 💀 catches CardDeclinedError — too broad!
+    print("app error")        # specific handling for card declined NEVER runs
+except PaymentError:          # NEVER REACHED — dead code
+    print("payment error")
+except CardDeclinedError:     # NEVER REACHED — dead code
+    print("card declined")
+
+# Fix — narrow before broad:
+try:
+    raise CardDeclinedError("CVV mismatch")
+except CardDeclinedError:     # specific first
+    print("card declined")
+except PaymentError:          # less specific
+    print("payment error")
+except AppError:              # broadest last
+    print("app error")
+```
+
+---
+
+## 💀 Interview Trap 3 — `Exception.__init__` vs Custom Fields
+
+```python
+class RichError(Exception):
+    def __init__(self, message: str, metadata: dict):
+        super().__init__(message)
+        self.metadata = metadata
+
+import pickle
+
+e = RichError("test", {"key": "val"})
+# Pickling (used in multiprocessing):
+try:
+    pickled = pickle.dumps(e)
+    restored = pickle.loads(pickled)
+    print(restored.metadata)    # 💥 AttributeError — metadata not restored!
+except Exception as ex:
+    print(ex)
+
+# Fix — include all state in args OR define __reduce__:
+class PicklableError(Exception):
+    def __init__(self, message: str, metadata: dict):
+        super().__init__(message, metadata)    # put metadata in args!
+        self.metadata = metadata
+
+    # OR define __reduce__:
+    def __reduce__(self):
+        return (type(self), (self.args[0], self.metadata))
+```
+
+---

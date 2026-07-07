@@ -1,0 +1,884 @@
+---
+title: PostgreSQL GROUPING SETS, ROLLUP, CUBE
+slug: computer-query-languages/postgresql/aggregations-and-grouping/grouping-sets-rollup-cube
+description: Master advanced aggregation in PostgreSQL — GROUPING SETS for custom subtotals, ROLLUP for hierarchical reports, and CUBE for multi-dimensional analytics.
+sidebar:
+  label: "Advanced Grouping"
+  badge:
+    text: Analytics
+    variant: tip
+tags: [postgresql, group-by, rollup, cube, grouping-sets, analytics, reporting]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 GROUPING SETS, ROLLUP, CUBE — Complete Guide
+
+> **`GROUPING SETS`, `ROLLUP`, and `CUBE` are shortcuts for running multiple `GROUP BY` queries in a single pass. `GROUPING SETS` gives full control, `ROLLUP` builds hierarchical subtotals, and `CUBE` builds every possible combination. All three replace verbose `UNION ALL` chains with one efficient table scan.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of these as **multi-dimensional histograms**.  
+- `GROUPING SETS` = I want specific slices of the data cube.  
+- `ROLLUP` = I want a drill-down summary (Year → Quarter → Total).  
+- `CUBE` = I want to see every angle (Region × Category × Channel).
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+```
+FROM
+WHERE
+GROUP BY  ← GROUPING SETS / ROLLUP / CUBE live here ✅
+HAVING
+SELECT
+ORDER BY
+LIMIT
+```
+
+<Code lang="sql" title="Syntax variations" code={`
+-- All three are extensions of GROUP BY
+GROUP BY GROUPING SETS ((col1), (col2), ())
+GROUP BY ROLLUP (col1, col2, col3)
+GROUP BY CUBE   (col1, col2)
+
+-- They answer: "I need aggregates for MULTIPLE grouping levels
+--              in ONE query without UNION ALL"
+`} />
+
+---
+
+## 1️⃣ The Problem They Solve
+
+<CardGrid>
+  <Card title="❌ The Old Way (UNION ALL)" icon="error">
+    ```sql    
+    Imagine a sales report needing:
+    1. Revenue by (region, category)
+    2. Revenue by region only
+    3. Revenue by category only
+    4. Grand total
+
+    Old way — four queries + UNION ALL:
+
+    -- Requires scanning the table 4 times!
+    SELECT region, category, SUM(amount) FROM sales GROUP BY region, category
+    UNION ALL
+    SELECT region, NULL,     SUM(amount) FROM sales GROUP BY region
+    UNION ALL
+    SELECT NULL,   category, SUM(amount) FROM sales GROUP BY category
+    UNION ALL
+    SELECT NULL,   NULL,     SUM(amount) FROM sales;
+    
+    -- Problems:
+    -- ❌ 4× I/O cost (4 scans)
+    -- ❌ Verbose & hard to maintain
+    -- ❌ UNION ALL overhead
+    ```
+  </Card>
+  
+  <Card title="✅ The New Way (GROUPING SETS)" icon="approve-check">
+    ```sql
+    -- One query, ONE scan
+    SELECT region, category, SUM(amount)
+    FROM   sales
+    GROUP BY GROUPING SETS (
+      (region, category),   -- level 1: detail
+      (region),             -- level 2: subtotal
+      (category),           -- level 3: subtotal
+      ()                    -- level 4: grand total
+    );
+    
+    -- Benefits:
+    -- ✅ ONE table scan
+    -- ✅ Cleaner code
+    -- ✅ Faster execution (Parallel Hash/MixedAggregate)
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="note">
+**🎯 DSA Connection**:  
+Multiple `GROUP BY` + `UNION ALL` = multiple passes over data $O(n \times k)$.  
+`GROUPING SETS` = single pass, accumulating into multiple hash tables simultaneously $O(n)$.
+</Aside>
+
+---
+
+## 2️⃣ GROUPING SETS — Full Manual Control
+
+> **`GROUPING SETS` lets you specify EXACTLY which grouping combinations you want — no more, no less.**
+
+```
+GROUP BY GROUPING SETS ((A, B), (A), (B), ())
+= four separate GROUP BYs combined:
+  GROUP BY A, B   → one row per (A,B) combination
+  GROUP BY A      → one row per A value
+  GROUP BY B      → one row per B value
+  GROUP BY ()     → one grand total row
+
+Each "set" = one GROUP BY level
+Empty set () = no grouping = grand total
+```
+
+### Basic Syntax
+
+<Code lang="sql" title="GROUPING SETS example" code={`-- Setup data
+CREATE TEMP TABLE sales (
+  region   TEXT,
+  category TEXT,
+  amount   INT
+);
+INSERT INTO sales VALUES
+  ('North', 'Electronics', 1000), ('North', 'Clothing', 500),
+  ('North', 'Electronics', 800),  ('South', 'Electronics', 600),
+  ('South', 'Clothing', 400),     ('South', 'Clothing', 300);
+
+-- Query: Manual combinations
+SELECT
+  region,
+  category,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY GROUPING SETS (
+  (region, category),    -- grouped by both
+  (region),              -- grouped by region only
+  (category),            -- grouped by category only
+  ()                     -- grand total
+)
+ORDER BY region NULLS LAST, category NULLS LAST;`} />
+
+### Result Analysis
+
+| region | category | revenue | Explanation |
+| :--- | :--- | :--- | :--- |
+| North | Clothing | 500 | `(region, category)` detail |
+| North | Electronics | 1800 | `(region, category)` detail |
+| North | **NULL** | **2300** | `(region)` subtotal |
+| South | Clothing | 700 | `(region, category)` detail |
+| South | Electronics | 600 | `(region, category)` detail |
+| South | **NULL** | **1300** | `(region)` subtotal |
+| **NULL** | Clothing | 1200 | `(category)` subtotal |
+| **NULL** | Electronics | 2400 | `(category)` subtotal |
+| **NULL** | **NULL** | **3600** | `()` Grand Total |
+
+```
+NULLs in result = "this column wasn't grouped at this level"
+NOT "this row had a NULL value in that column"
+-- Problem: NULL in result could mean:
+-- 1. Column not grouped at this level (subtotal NULL)
+-- 2. Actual NULL value in the original data
+```
+
+<Aside type="caution">
+**⚠️ NULL Ambiguity**: `NULL` in a `GROUP BY` result usually means "this column wasn't grouped at this level" (a subtotal). However, if your original data contains actual `NULL`s, you can't tell the difference visually. Use the `GROUPING()` function to solve this.
+</Aside>
+
+### The GROUPING() Function
+
+<Code lang="sql" title="Distinguishing Subtotals from Data NULLs" code={`SELECT
+  region,
+  category,
+  SUM(amount)        AS revenue,
+  GROUPING(region)   AS is_region_sub,   -- Returns 1 if this is a subtotal NULL
+  GROUPING(category) AS is_category_sub  -- Returns 0 if this is a real value
+FROM   sales
+GROUP BY GROUPING SETS ((region, category), (region), ())
+ORDER BY region NULLS LAST;
+
+-- Result:
+-- North | Clothing    | 500  | 0 | 0  (Detail row)
+-- North | NULL        | 2300 | 0 | 1  (Region subtotal)
+-- NULL  | NULL        | 3600 | 1 | 1  (Grand Total)
+
+GROUPING() returns:
+  0 → column IS part of this grouping level (real value)
+  1 → column NOT part of this grouping level (subtotal NULL)
+
+Result with GROUPING():
+┌────────┬─────────────┬─────────┬──────────────────┬──────────────────────┐
+│ region │ category    │ revenue │ is_region_sub    │ is_category_sub      │
+├────────┼─────────────┼─────────┼──────────────────┼──────────────────────┤
+│ North  │ Clothing    │   500   │       0          │         0            │
+│ North  │ NULL        │  2300   │       0          │         1 ← subtotal │
+│ NULL   │ NULL        │  3600   │       1 ← sub    │         1 ← subtotal │
+└────────┴─────────────┴─────────┴──────────────────┴──────────────────────┘
+`} />
+
+<Code lang="sql" title="Displaying Custom Labels" code={`SELECT
+  CASE GROUPING(region)
+    WHEN 1 THEN '🌍 All Regions'
+    ELSE region
+  END                   AS region_label,
+  CASE GROUPING(category)
+    WHEN 1 THEN '📦 All Categories'
+    ELSE category
+  END                   AS category_label,
+  SUM(amount)           AS revenue
+FROM   sales
+GROUP BY GROUPING SETS ((region, category), (region), (category), ())
+ORDER BY GROUPING(region), region, GROUPING(category), category;`} />
+
+<Aside type="tip">
+> 🎯 **Real-life SDE:** GROUPING() is essential when your source data might contain actual NULLs — without it you can't distinguish "subtotal" from "unknown category". Always use GROUPING() when displaying GROUPING SETS results in reports.
+</Aside>
+---
+
+## 3️⃣ ROLLUP — Hierarchical Subtotals
+
+> **`ROLLUP` generates a HIERARCHY of grouping levels. It "rolls up" from most granular → least granular → grand total.**
+
+### Syntax & Logic
+
+```text
+ROLLUP(A, B, C) generates:
+  (A, B, C)  ← most detailed (n columns)
+  (A, B)     ← drop rightmost
+  (A)        ← drop next rightmost
+  ()         ← grand total
+
+Formula: n columns → n + 1 grouping sets.
+Always includes grand total ()
+```
+
+<Code lang="sql" title="ROLLUP example" code={`SELECT
+  region,
+  category,
+  SUM(amount) AS revenue,
+  GROUPING(region)   AS r_grp,
+  GROUPING(category) AS c_grp
+FROM   sales
+GROUP BY ROLLUP(region, category)
+ORDER BY region NULLS LAST, category NULLS LAST;`} />
+
+```text
+ROLLUP(region, category) = GROUPING SETS (
+  (region, category),  ← detailed level
+  (region),            ← regional subtotal
+  ()                   ← grand total
+)
+
+Note: ROLLUP does NOT include (category) alone.
+Hierarchy is directional: Region contains Categories.
+
+Result:
+┌────────┬─────────────┬─────────┬───────┬───────┐
+│ region │ category    │ revenue │ r_grp │ c_grp │
+├────────┼─────────────┼─────────┼───────┼───────┤
+│ North  │ Clothing    │   500   │   0   │   0   │← detail
+│ North  │ Electronics │  1800   │   0   │   0   │← detail
+│ North  │ NULL        │  2300   │   0   │   1   │← regional subtotal
+│ South  │ Clothing    │   700   │   0   │   0   │← detail
+│ South  │ Electronics │   600   │   0   │   0   │← detail
+│ South  │ NULL        │  1300   │   0   │   1   │← regional subtotal
+│ NULL   │ NULL        │  3600   │   1   │   1   │← grand total
+└────────┴─────────────┴─────────┴───────┴───────┘
+
+```
+
+### Real-World Report: 3-Level ROLLUP
+
+```sql
+-- Sales report: year → quarter → month hierarchy
+SELECT
+  EXTRACT(YEAR  FROM created_at)::INT      AS year,
+  EXTRACT(QUARTER FROM created_at)::INT    AS quarter,
+  EXTRACT(MONTH FROM created_at)::INT      AS month,
+  SUM(amount)                              AS revenue,
+  COUNT(*)                                 AS orders,
+  CASE
+    WHEN GROUPING(
+      EXTRACT(YEAR FROM created_at),
+      EXTRACT(QUARTER FROM created_at),
+      EXTRACT(MONTH FROM created_at)
+    ) = 7 THEN 'Grand Total'
+    WHEN GROUPING(
+      EXTRACT(QUARTER FROM created_at),
+      EXTRACT(MONTH FROM created_at)
+    ) = 3 THEN 'Year Total'
+    WHEN GROUPING(EXTRACT(MONTH FROM created_at)) = 1
+      THEN 'Quarter Total'
+    ELSE 'Month Detail'
+  END                                      AS row_type
+FROM   orders
+WHERE  status = 'delivered'
+  AND  created_at >= '2024-01-01'
+GROUP BY ROLLUP(
+  EXTRACT(YEAR    FROM created_at),
+  EXTRACT(QUARTER FROM created_at),
+  EXTRACT(MONTH   FROM created_at)
+)
+ORDER BY year NULLS LAST,
+         quarter NULLS LAST,
+         month NULLS LAST;
+```
+
+```
+Output structure (3-level ROLLUP):
+
+2024 | Q1  | Jan | 45000  ← monthly detail
+2024 | Q1  | Feb | 38000  ← monthly detail
+2024 | Q1  | Mar | 52000  ← monthly detail
+2024 | Q1  | NULL| 135000 ← quarterly subtotal  ← ROLLUP adds this
+2024 | Q2  | Apr | 41000  ← monthly detail
+...
+2024 | NULL| NULL| 520000 ← yearly subtotal     ← ROLLUP adds this
+NULL | NULL| NULL| 520000 ← grand total          ← ROLLUP adds this
+```
+
+
+<Aside type="tip">
+**Interview Q**: *"How many grouping sets does ROLLUP(A, B, C) produce?"*  
+**A**: 4 sets ($n+1$). Always starts with all columns, drops one from the right each time, ends with grand total.
+</Aside>
+
+---
+
+## 4️⃣ CUBE — Every Possible Combination
+
+> **`CUBE` generates ALL possible combinations of the columns.**
+
+### Syntax & Logic
+
+```text
+CUBE(A, B, C) generates:
+  (A, B, C)  ← all three
+  (A, B)     ← drop C
+  (A, C)     ← drop B
+  (B, C)     ← drop A
+  (A)        ← only A
+  (B)        ← only B
+  (C)        ← only C
+  ()         ← grand total
+
+Formula: n columns → 2ⁿ grouping sets.
+CUBE(2) = 4 sets.
+CUBE(3) = 8 sets.
+CUBE(4) = 16 sets (grows fast!).
+```
+
+```sql
+-- CUBE example: all combinations of region and category
+SELECT
+  region,
+  category,
+  SUM(amount)        AS revenue,
+  COUNT(*)           AS orders,
+  GROUPING(region)   AS r_sub,
+  GROUPING(category) AS c_sub
+FROM   sales
+GROUP BY CUBE(region, category)
+ORDER BY region NULLS LAST, category NULLS LAST;
+```
+
+```
+CUBE(region, category) = GROUPING SETS (
+  (region, category),  ← detail
+  (region),            ← region subtotal
+  (category),          ← category subtotal  ← ROLLUP doesn't have this!
+  ()                   ← grand total
+)
+
+Result (2² = 4 grouping sets):
+┌────────┬─────────────┬─────────┬───────┬───────┐
+│ region │ category    │ revenue │ r_sub │ c_sub │
+├────────┼─────────────┼─────────┼───────┼───────┤
+│ North  │ Clothing    │   500   │   0   │   0   │← detail
+│ North  │ Electronics │  1800   │   0   │   0   │← detail
+│ North  │ NULL        │  2300   │   0   │   1   │← region subtotal
+│ South  │ Clothing    │   700   │   0   │   0   │← detail
+│ South  │ Electronics │   600   │   0   │   0   │← detail
+│ South  │ NULL        │  1300   │   0   │   1   │← region subtotal
+│ NULL   │ Clothing    │  1200   │   1   │   0   │← category subtotal ✅
+│ NULL   │ Electronics │  2400   │   1   │   0   │← category subtotal ✅
+│ NULL   │ NULL        │  3600   │   1   │   1   │← grand total
+└────────┴─────────────┴─────────┴───────┴───────┘
+
+CUBE gives category subtotals too — ROLLUP doesn't!
+```
+
+
+### ROLLUP vs CUBE — When to use which?
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>ROLLUP(A, B)</code></th>
+      <th><code>CUBE(A, B)</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Groupings</td><td>(A,B), (A), ()</td><td>(A,B), (A), (B), ()</td></tr>
+    <tr><td>Logic</td><td>Hierarchy (Left → Right)</td><td>All Permutations (Power Set)</td></tr>
+    <tr><td>Use Case</td><td>Date hierarchy, Org chart</td><td>Multi-dimensional analytics</td></tr>
+    <tr><td>Example</td><td>Year → Month (Month without Year is meaningless)</td><td>Region × Category (Both are independent dimensions)</td></tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="CUBE example" code={`-- CUBE(region, category)
+-- Includes (category) subtotals which ROLLUP misses!
+SELECT
+  region,
+  category,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY CUBE(region, category)
+ORDER BY region NULLS LAST, category NULLS LAST;`} />
+
+
+```sql
+-- When ROLLUP is RIGHT (hierarchy makes sense)
+GROUP BY ROLLUP(year, quarter, month)
+-- year subtotal ✅  quarter subtotal ✅  month-only subtotal ❌ meaningless
+-- ROLLUP correctly excludes month-only subtotal
+
+-- When CUBE is RIGHT (all combinations meaningful)
+GROUP BY CUBE(region, product_type, sales_channel)
+-- region-only ✅  product-only ✅  channel-only ✅  all combinations ✅
+```
+
+> 🎯 **Interview Q:** *"ROLLUP vs CUBE — when do you use each?"*
+> **A:** ROLLUP when columns have a strict hierarchy (year→quarter→month — month without year is meaningless). CUBE when every combination of columns produces meaningful insights (region × category × channel — any subset is a valid question).
+
+---
+
+## 5️⃣ Combining — Partial ROLLUP and Mixed Sets
+
+```sql
+-- Partial ROLLUP: rollup some columns, keep others fixed
+SELECT
+  region,
+  category,
+  salesperson,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY region, ROLLUP(category, salesperson);
+-- region is always grouped (not rolled up)
+-- category and salesperson roll up within each region
+
+-- Equivalent GROUPING SETS:
+GROUP BY GROUPING SETS (
+  (region, category, salesperson),
+  (region, category),
+  (region)
+)
+
+-- Mix ROLLUP and CUBE
+GROUP BY region, CUBE(category, channel);
+-- Fixed: region
+-- All combinations of: category × channel within each region
+```
+
+```sql
+-- Multiple GROUPING SETS in one query (mix and match)
+SELECT
+  region,
+  category,
+  channel,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY GROUPING SETS (
+  (region, category),   -- one combination
+  (region, channel),    -- another combination
+  (category),           -- just category
+  ()                    -- grand total
+);
+-- Exactly the four groupings you need — no more, no less ✅
+```
+
+---
+
+## 5️⃣ Internals — How Postgres Executes These
+
+PostgreSQL uses the `MixedAggregate` strategy.
+
+1. **Scan Table ONCE**: Postgres reads the heap or index once.
+2. **Multiple Hash Tables**: It maintains a separate hash table (or sort buffer) for **each** grouping set simultaneously.
+3. **Parallel Accumulation**: For every input row, it updates the accumulator in every relevant hash table.
+4. **Emit Results**: After the scan, it outputs rows from all hash tables.
+
+<Code lang="sql" title="EXPLAIN output" code={`EXPLAIN SELECT region, category, SUM(amount)
+FROM   sales
+GROUP BY ROLLUP(region, category);
+
+-- Output:
+-- MixedAggregate
+--   Hash Key: region, category    ← level 1
+--   Hash Key: region              ← level 2
+--   Group Key: ()                 ← grand total
+--   -> Seq Scan on sales          ← ONE scan! ✅`} />
+
+```
+Postgres uses MixedAggregate strategy:
+
+Step 1: Scan table ONCE
+Step 2: For each row, update accumulators for ALL grouping sets simultaneously
+
+Example: GROUPING SETS ((A,B), (A), ())
+
+For each input row:
+  hash_1[A,B]  → accumulate ← set 1
+  hash_2[A]    → accumulate ← set 2
+  hash_3[()]   → accumulate ← set 3 (single entry)
+
+After scan: emit all hash table entries across all sets
+One scan, multiple hash tables maintained in parallel ✅
+```
+
+```sql
+-- See in EXPLAIN
+EXPLAIN SELECT region, category, SUM(amount)
+FROM   sales
+GROUP BY ROLLUP(region, category);
+
+-- Output:
+-- MixedAggregate
+--   Hash Key: region, category    ← level 1
+--   Hash Key: region              ← level 2
+--   Group Key: ()                 ← grand total
+--   -> Seq Scan on sales          ← ONE scan! ✅
+```
+
+```
+Memory:
+  Maintains one hash table per grouping set
+  Total memory = sum of all hash table sizes
+  Can spill to disk if total > work_mem
+
+Performance vs UNION ALL:
+  UNION ALL: k scans (one per GROUP BY)
+  GROUPING SETS: 1 scan + k hash tables
+  Winner: GROUPING SETS for I/O
+  Loser: GROUPING SETS if memory is tight (k hash tables)
+```
+
+> 🎯 **Real-life SDE:** On large tables, GROUPING SETS can be 5-10× faster than UNION ALL of GROUP BYs because it scans the table once. The trade-off is higher memory usage. When `work_mem` is tight and table is huge — UNION ALL might be safer to avoid disk spilling.
+
+
+<Aside type="caution">
+**Performance Trade-off**: `GROUPING SETS` is generally **5-10× faster** than `UNION ALL` because it saves I/O (1 scan vs N scans). However, it consumes **more RAM** because it holds multiple hash tables in memory. If `work_mem` is too low, it will spill to disk.
+</Aside>
+
+---
+
+## 7️⃣ HAVING with GROUPING SETS
+
+```sql
+-- HAVING applies to each grouping set independently
+SELECT
+  region,
+  category,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY GROUPING SETS ((region, category), (region), ())
+HAVING SUM(amount) > 1000;    -- filter applies to each grouping level
+
+-- Only keeps groups (at any level) where revenue > 1000
+-- A region subtotal might pass even if some (region,category) combos don't
+
+-- Use GROUPING() in HAVING for level-specific filtering
+SELECT
+  region,
+  category,
+  SUM(amount) AS revenue
+FROM   sales
+GROUP BY GROUPING SETS ((region, category), (region), ())
+HAVING
+  -- For detail rows: revenue > 500
+  (GROUPING(region) = 0 AND GROUPING(category) = 0
+   AND SUM(amount) > 500)
+  OR
+  -- For subtotals and grand total: always show
+  GROUPING(category) = 1;
+```
+
+---
+
+## 6️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Financial Report with Subtotals" icon="chart">
+    ```sql
+    -- P&L report: department → team → employee
+    -- P&L report: department → team → employee hierarchy
+    SELECT
+    CASE GROUPING(department, team, employee_name)
+        WHEN 7 THEN '═══ COMPANY TOTAL'
+        WHEN 3 THEN '── ' || department || ' TOTAL'
+        WHEN 1 THEN '─ ' || department || ' / ' || team || ' TOTAL'
+        ELSE        department || ' / ' || team || ' / ' || employee_name
+    END                                       AS label,
+    COALESCE(SUM(salary), 0)                 AS total_salary,
+    COUNT(*) FILTER (WHERE GROUPING(employee_name) = 0) AS headcount
+    FROM   employees
+    WHERE  is_active = true
+    GROUP BY ROLLUP(department, team, employee_name)
+    ORDER BY department NULLS LAST,
+            team NULLS LAST,
+            employee_name NULLS LAST;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Analytics Dashboard (Cube)" icon="search">
+    ```sql
+    -- Revenue by every combo of Region, Product, Channel
+    SELECT
+    COALESCE(region,           'All Regions')    AS region,
+    COALESCE(product_category, 'All Categories') AS category,
+    COALESCE(channel,          'All Channels')   AS channel,
+    SUM(revenue)                                  AS total_revenue,
+    COUNT(DISTINCT customer_id)                   AS unique_customers,
+    AVG(order_value)                              AS avg_order
+    FROM   sales_fact
+    WHERE  sale_date >= DATE_TRUNC('quarter', NOW())
+    GROUP BY CUBE(region, product_category, channel)
+    HAVING SUM(revenue) > 0               -- hide empty combinations
+    ORDER BY
+    GROUPING(region),                   -- subtotals after details
+    GROUPING(product_category),
+    GROUPING(channel),
+    region, product_category, channel;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Inventory Summary (Rollup)" icon="box">
+    ```sql
+    -- Warehouse → Aisle → Shelf
+    SELECT
+    warehouse,
+    aisle,
+    shelf,
+    SUM(quantity)              AS total_units,
+    SUM(quantity * unit_cost)  AS inventory_value,
+    COUNT(DISTINCT product_id) AS unique_products,
+    CASE
+        WHEN GROUPING(warehouse, aisle, shelf) = 7 THEN 'grand_total'
+        WHEN GROUPING(aisle, shelf)            = 3 THEN 'warehouse_total'
+        WHEN GROUPING(shelf)                   = 1 THEN 'aisle_total'
+        ELSE                                        'shelf_detail'
+    END                        AS aggregation_level
+    FROM   inventory
+    WHERE  is_active = true
+    GROUP BY ROLLUP(warehouse, aisle, shelf)
+    ORDER BY warehouse NULLS LAST,
+            aisle     NULLS LAST,
+            shelf     NULLS LAST;
+    ```
+  </Card>
+
+### Pattern 4 — Time × Category Cross-Tab
+
+```sql
+-- Monthly revenue: rows = months, columns = categories (CUBE style)
+SELECT
+  EXTRACT(MONTH FROM created_at)::INT          AS month,
+  COALESCE(category, 'All Categories')         AS category,
+  SUM(amount)                                   AS revenue,
+  ROUND(
+    SUM(amount) * 100.0
+    / NULLIF(SUM(SUM(amount)) OVER
+        (PARTITION BY EXTRACT(MONTH FROM created_at)), 0)
+  , 1)                                          AS pct_of_month
+FROM   orders o
+JOIN   products p ON o.product_id = p.id
+WHERE  o.status = 'delivered'
+  AND  EXTRACT(YEAR FROM o.created_at) = 2024
+GROUP BY GROUPING SETS (
+  (EXTRACT(MONTH FROM created_at), category),  -- detail
+  (EXTRACT(MONTH FROM created_at)),            -- monthly total
+  (category),                                  -- category total
+  ()                                           -- grand total
+)
+ORDER BY month NULLS LAST, category NULLS LAST;
+```
+
+### Pattern 5 — A/B Test Multi-Level Summary
+
+```sql
+-- Test results: variant × device × region
+SELECT
+  COALESCE(variant, 'All Variants')  AS variant,
+  COALESCE(device,  'All Devices')   AS device,
+  COALESCE(region,  'All Regions')   AS region,
+  COUNT(*)                            AS sessions,
+  COUNT(*) FILTER (WHERE converted)  AS conversions,
+  ROUND(
+    COUNT(*) FILTER (WHERE converted)
+    * 100.0 / NULLIF(COUNT(*), 0), 2
+  )                                   AS conversion_rate,
+  AVG(revenue) FILTER (WHERE converted) AS avg_revenue_per_conversion
+FROM   ab_test_sessions
+WHERE  test_id  = :test_id
+  AND  start_at >= :test_start_date
+GROUP BY CUBE(variant, device, region)
+HAVING COUNT(*) >= 100               -- minimum sample size
+ORDER BY
+  GROUPING(variant),
+  GROUPING(device),
+  GROUPING(region),
+  variant, device, region;
+```
+
+  <Card title="Pattern 4: HAVING with Grouping Sets" icon="shield">
+    ```sql
+    -- Filter groups based on their level
+    SELECT region, category, SUM(amount)
+    FROM   sales
+    GROUP BY GROUPING SETS ((region, category), (region), ())
+    HAVING
+      -- Only show region subtotals > 1000
+      (GROUPING(category) = 1 AND SUM(amount) > 1000)
+      OR
+      -- OR show grand total regardless
+      (GROUPING(region) = 1);
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE t_sales (
+  region   TEXT,
+  category TEXT,
+  channel  TEXT,
+  amount   INT
+);
+INSERT INTO t_sales VALUES
+  ('North','Electronics','Online', 1000),
+  ('North','Electronics','Store',   800),
+  ('North','Clothing',   'Online',  500),
+  ('South','Electronics','Online',  600),
+  ('South','Clothing',   'Store',   400),
+  ('South','Clothing',   'Online',  300);
+
+-- 1. GROUPING SETS — manual control
+SELECT region, category, SUM(amount) AS rev
+FROM   t_sales
+GROUP BY GROUPING SETS ((region, category), (region), ())
+ORDER BY region NULLS LAST, category NULLS LAST;
+-- 6 detail rows + 2 region subtotals + 1 grand total = 9 rows
+
+-- 2. ROLLUP — hierarchy
+SELECT region, category, SUM(amount) AS rev
+FROM   t_sales
+GROUP BY ROLLUP(region, category)
+ORDER BY region NULLS LAST, category NULLS LAST;
+-- Same 9 rows — ROLLUP(A,B) = GROUPING SETS((A,B),(A),())
+
+-- 3. CUBE — all combinations
+SELECT region, category, SUM(amount) AS rev,
+       GROUPING(region) AS r_sub, GROUPING(category) AS c_sub
+FROM   t_sales
+GROUP BY CUBE(region, category)
+ORDER BY region NULLS LAST, category NULLS LAST;
+-- 2² = 4 grouping sets → more rows than ROLLUP
+-- Includes (category) subtotal that ROLLUP doesn't!
+
+-- 4. Count rows produced
+SELECT COUNT(*) FROM (
+  SELECT region, category, SUM(amount)
+  FROM t_sales GROUP BY GROUPING SETS((region,category),(region),(category),())
+) sub;
+-- Count the groups yourself to verify ✅
+
+-- 5. GROUPING() function
+SELECT
+  GROUPING(region)   AS r_flag,
+  GROUPING(category) AS c_flag,
+  region, category, SUM(amount)
+FROM t_sales
+GROUP BY CUBE(region, category);
+-- r_flag=0, c_flag=0 → detail row
+-- r_flag=1, c_flag=0 → category subtotal
+-- r_flag=0, c_flag=1 → region subtotal
+-- r_flag=1, c_flag=1 → grand total ✅
+
+-- 6. EXPLAIN — verify single scan
+EXPLAIN SELECT region, category, SUM(amount)
+FROM t_sales GROUP BY ROLLUP(region, category);
+-- MixedAggregate
+--   Hash Key: region, category
+--   Hash Key: region
+--   Group Key: ()
+--   -> Seq Scan on t_sales   ← ONE scan ✅
+
+-- 7. Verify ROLLUP = GROUPING SETS equivalence
+SELECT region, category, SUM(amount) FROM t_sales
+GROUP BY ROLLUP(region, category)
+EXCEPT
+SELECT region, category, SUM(amount) FROM t_sales
+GROUP BY GROUPING SETS((region,category),(region),());
+-- 0 rows → identical ✅
+
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+| :--- | :--- |
+| **What problem do these solve?** | Multiple `GROUP BY` levels in one query (one scan vs many). |
+| **ROLLUP(A,B,C) produces how many sets?** | $n+1 = 4$ sets: `(A,B,C)`, `(A,B)`, `(A)`, `()`. |
+| **CUBE(A,B,C) produces how many sets?** | $2^n = 8$ sets (all combinations). |
+| **ROLLUP vs CUBE?** | `ROLLUP` is hierarchical (left-to-right). `CUBE` is combinatorial (all permutations). |
+| **What does GROUPING() return?** | `1` if the column is NULL because it's a subtotal; `0` if it's a real value. |
+| **How does Postgres execute this?** | `MixedAggregate` — one table scan, updating multiple hash tables in parallel. |
+| **Performance vs UNION ALL?** | `GROUPING SETS` is faster (less I/O) but uses more RAM (multiple hash tables). |
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```
+GROUPING SETS / ROLLUP / CUBE — Complete Picture
+
+All three = shortcuts for multiple GROUP BY in one scan
+
+GROUPING SETS((A,B),(A),(B),()):   manual — you pick exactly which
+ROLLUP(A,B):                       auto hierarchy — drops right to left
+CUBE(A,B):                         auto all combos — power set
+
+Size comparison for 3 columns:
+  GROUPING SETS: you decide (1 to 2ⁿ sets)
+  ROLLUP(A,B,C): 4 sets (n+1)
+  CUBE(A,B,C):   8 sets (2ⁿ)
+
+NULL semantics:
+  NULL in GROUP BY result column = that column not grouped here
+  GROUPING(col) = 1 → subtotal NULL
+  GROUPING(col) = 0 → real grouped value
+
+Execution (MixedAggregate):
+  ONE table scan
+  Multiple hash tables maintained simultaneously
+  One hash table per grouping set
+  All emitted after scan completes
+
+Choose by:
+  Need exact control?      → GROUPING SETS
+  Have a hierarchy?        → ROLLUP
+  All combos meaningful?   → CUBE
+  Avoid large CUBE:        → CUBE(4+ cols) = 16+ sets → memory heavy
+
+Real-world:
+  Financial reports        → ROLLUP (fiscal hierarchy)
+  Analytics dashboards     → CUBE (slice any dimension)
+  Custom subtotals         → GROUPING SETS (pick exactly what you need)
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use `ROLLUP` for time-series and org-chart reports.
+2. ✅ Use `CUBE` for "slice and dice" analytics dashboards.
+3. ✅ Always use `ORDER BY GROUPING(...) DESC` to put details before subtotals.
+4. ✅ Monitor `work_mem` — complex cubes can spike memory usage.
+
+Mastering these functions turns you from a "query writer" into a "data analyst engineer". 🐘✨
+</Aside>

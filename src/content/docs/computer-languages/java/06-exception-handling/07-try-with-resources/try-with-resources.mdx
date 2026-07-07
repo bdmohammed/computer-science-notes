@@ -1,0 +1,999 @@
+---
+title: Java try with resources
+slug: computer-languages/java/runtime/try-with-resources
+description: Master Java's try-with-resources for automatic resource management, exception suppression, and cleaner code.
+sidebar:
+  label: "try-with-resources"
+  badge:
+    text: Exception Mechanics
+    variant: tip
+tags: [java, try-with-resources, AutoCloseable, exception-handling, interview]
+---
+
+## 🔒 try-with-Resources
+
+---
+
+### 🧠 What It Is
+
+`try-with-resources` is a `try` block that **automatically closes resources** when the block exits — normally or exceptionally. Any object implementing `AutoCloseable` declared in the resource specification is guaranteed to have `close()` called. It eliminates the `finally` boilerplate for resource cleanup and fixes the exception masking problem that manual `finally` cleanup causes.
+
+---
+
+### 🔬 Syntax
+
+```java
+// Single resource
+try (ResourceType r = new ResourceType()) {
+    r.use();
+}   // ← r.close() called here automatically
+
+// Multiple resources
+try (ResourceA a = new ResourceA();
+     ResourceB b = new ResourceB()) {
+    a.use();
+    b.use();
+}   // ← b.close() then a.close() — reverse declaration order
+
+// With catch and finally
+try (Connection conn = dataSource.getConnection()) {
+    process(conn);
+} catch (SQLException e) {
+    handle(e);
+} finally {
+    metrics.increment("db.calls");  // still valid — runs after close()
+}
+```
+
+---
+
+### 🔬 AutoCloseable — The Contract
+
+```java
+// java.lang.AutoCloseable — introduced Java 7
+public interface AutoCloseable {
+    void close() throws Exception;
+}
+
+// java.io.Closeable — pre-existing, now extends AutoCloseable
+public interface Closeable extends AutoCloseable {
+    void close() throws IOException;   // narrower — only IOException
+}
+
+// Works with try-with-resources:
+//   Any AutoCloseable implementation
+//   Any Closeable implementation (InputStream, Reader, Connection, etc.)
+//   Custom classes implementing AutoCloseable
+```
+
+```
+JDK classes already AutoCloseable:
+  InputStream, OutputStream
+  Reader, Writer
+  Connection, PreparedStatement, ResultSet
+  Scanner
+  ZipFile
+  Channel (NIO)
+  HttpClient (Java 11+)
+```
+
+---
+
+### 🔬 What Compiler Generates — Exact Translation
+
+```java
+// What you write:
+try (Connection conn = dataSource.getConnection()) {
+    process(conn);
+}
+
+// What compiler generates:
+Connection conn = dataSource.getConnection();
+Throwable primaryException = null;
+try {
+    process(conn);
+} catch (Throwable t) {
+    primaryException = t;
+    throw t;
+} finally {
+    if (conn != null) {
+        if (primaryException != null) {
+            try {
+                conn.close();
+            } catch (Throwable suppressedException) {
+                primaryException.addSuppressed(suppressedException);  // ← KEY
+            }
+        } else {
+            conn.close();
+        }
+    }
+}
+```
+
+```
+This is why try-with-resources FIXES exception masking:
+  Manual finally: close() exception REPLACES primary exception
+  try-with-resources: close() exception ATTACHED as suppressed
+  Primary exception survives — root cause preserved
+```
+
+---
+
+### 🔬 Multiple Resources — Close Order
+
+```java
+try (Connection conn   = dataSource.getConnection();    // opened first
+     PreparedStatement stmt = conn.prepareStatement(SQL); // opened second
+     ResultSet rs      = stmt.executeQuery()) {          // opened third
+    while (rs.next()) {
+        process(rs);
+    }
+}
+// Close order: rs → stmt → conn  (REVERSE of declaration)
+// Each close() called regardless of previous close() failure
+// Each close() exception: suppressed on primary, or suppressed on each other
+```
+
+```
+Declaration order:  conn → stmt → rs
+Close order:        rs   → stmt → conn
+
+LIFO — Last In First Out
+Same as stack — inner resource closed before outer
+Matches logical dependency: rs depends on stmt depends on conn
+```
+
+---
+
+### 🔬 Suppressed Exceptions — Access Pattern
+
+```java
+try (MyResource r = new MyResource()) {
+    throw new IOException("primary");       // ① primary exception
+    // r.close() throws RuntimeException   // ② suppressed
+}
+
+// Catching:
+catch (IOException e) {
+    System.out.println(e.getMessage());     // "primary"
+
+    Throwable[] suppressed = e.getSuppressed();
+    for (Throwable s : suppressed) {
+        System.out.println("suppressed: " + s.getMessage()); // "close failed"
+    }
+
+    // Full stack trace includes suppressed:
+    e.printStackTrace();
+    // IOException: primary
+    //     at ...
+    //     Suppressed: RuntimeException: close failed
+    //         at MyResource.close(...)
+}
+```
+
+---
+
+### 🔬 Custom AutoCloseable Resource
+
+```java
+public class ManagedTransaction implements AutoCloseable {
+
+    private final Connection conn;
+    private boolean committed = false;
+
+    public ManagedTransaction(DataSource ds) throws SQLException {
+        this.conn = ds.getConnection();
+        this.conn.setAutoCommit(false);
+    }
+
+    public void execute(String sql) throws SQLException {
+        conn.prepareStatement(sql).executeUpdate();
+    }
+
+    public void commit() throws SQLException {
+        conn.commit();
+        committed = true;
+    }
+
+    @Override
+    public void close() throws SQLException {
+        try {
+            if (!committed) {
+                conn.rollback();            // rollback if not committed
+            }
+        } finally {
+            conn.close();                   // always close
+        }
+    }
+}
+
+// Usage — clean, no finally needed
+try (ManagedTransaction txn = new ManagedTransaction(dataSource)) {
+    txn.execute("INSERT INTO orders VALUES (...)");
+    txn.execute("UPDATE inventory SET qty = qty - 1 WHERE sku = ?");
+    txn.commit();
+}   // ← txn.close() called: rolls back if not committed, always closes conn
+```
+
+---
+
+### 🔬 Close Order With Exceptions — Full Matrix
+
+```java
+class Res implements AutoCloseable {
+    final String name;
+    final boolean throwOnClose;
+
+    Res(String name, boolean throwOnClose) { this.name = name; }
+
+    public void close() {
+        System.out.println("closing " + name);
+        if (throwOnClose) throw new RuntimeException(name + " close failed");
+    }
+}
+
+try (Res a = new Res("A", false);
+     Res b = new Res("B", true);    // close throws
+     Res c = new Res("C", false)) {
+    throw new IOException("body failed");   // primary exception
+}
+// Output:
+// closing C    ← reverse order
+// closing B    ← throws RuntimeException — suppressed on IOException
+// closing A    ← still runs — B's failure doesn't skip A
+// IOException: body failed
+//   Suppressed: RuntimeException: B close failed
+```
+
+```
+Key guarantees:
+  1. ALL resources closed — one close() failure does not skip others
+  2. Close() exceptions: suppressed on primary, not thrown
+  3. If no primary exception and close() throws — close() exception IS primary
+```
+
+---
+
+### 💻 Real-World Code — Report Generation Pipeline
+
+```java
+public class ReportPipeline {
+
+    public void generate(String reportId, Path outputPath) throws ReportException {
+
+        try (Connection        conn   = dataSource.getConnection();
+             PreparedStatement stmt   = conn.prepareStatement(
+                 "SELECT * FROM report_data WHERE report_id = ?"
+             );
+             ResultSet          rs     = executeQuery(stmt, reportId);
+             BufferedWriter     writer = Files.newBufferedWriter(outputPath)) {
+
+            writer.write(REPORT_HEADER);
+
+            while (rs.next()) {
+                ReportRow row = mapRow(rs);
+                writer.write(formatRow(row));
+            }
+
+            writer.write(REPORT_FOOTER);
+
+        } catch (SQLException e) {
+            throw new ReportException("DB failure for report: " + reportId, e);
+        } catch (IOException e) {
+            throw new ReportException("Write failure for report: " + reportId, e);
+        }
+        // All resources closed automatically — no finally block needed
+        // If writer.close() fails — suppressed on ReportException
+        // If rs.close() AND stmt.close() both fail — both suppressed
+    }
+
+    private ResultSet executeQuery(PreparedStatement stmt,
+                                   String reportId) throws SQLException {
+        stmt.setString(1, reportId);
+        return stmt.executeQuery();
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Manual `finally` for 4 resources = 4 nested try-finally blocks, 16+ close() null checks, and any close() failure masks the real exception. 50+ lines of boilerplate replaced by 3-line resource declaration.
+
+---
+
+### 🔬 try-with-resources vs Manual finally — Direct Comparison
+
+```java
+// ❌ Manual finally — pre-Java 7
+Connection conn   = null;
+Statement  stmt   = null;
+ResultSet  rs     = null;
+try {
+    conn = dataSource.getConnection();
+    stmt = conn.createStatement();
+    rs   = stmt.executeQuery(sql);
+    process(rs);
+} catch (SQLException e) {
+    throw new RepositoryException("query failed", e);
+} finally {
+    if (rs   != null) try { rs.close();   } catch (SQLException e) { log.warn(e); }
+    if (stmt != null) try { stmt.close(); } catch (SQLException e) { log.warn(e); }
+    if (conn != null) try { conn.close(); } catch (SQLException e) { log.warn(e); }
+    // Exception masking still possible if close() throws and no primary exception
+}
+
+// ✅ try-with-resources — Java 7+
+try (Connection conn = dataSource.getConnection();
+     Statement  stmt = conn.createStatement();
+     ResultSet  rs   = stmt.executeQuery(sql)) {
+    process(rs);
+} catch (SQLException e) {
+    throw new RepositoryException("query failed", e);
+}
+// close() called automatically, reverse order, suppressed correctly
+```
+
+---
+
+### 🔬 Resource Variable Scope and Effectively Final
+
+```java
+try (Connection conn = dataSource.getConnection()) {
+    conn = dataSource.getConnection();   // ❌ COMPILE ERROR
+    // resource variable is implicitly final — cannot reassign
+    process(conn);
+}
+
+// Cannot use existing variable — must declare in resource spec
+Connection existing = dataSource.getConnection();
+try (existing) {                         // ✅ Java 9+ — effectively final variable
+    process(existing);
+}
+// Java 9+: can use effectively final variable directly
+// Java 7/8: must declare new variable in resource spec
+```
+
+---
+
+### 🔬 Java 9 Enhancement — Effectively Final Variables
+
+```java
+// Java 7/8 — must redeclare even for existing resource
+void process(Connection conn) throws SQLException {
+    try (Connection c = conn) {          // redundant redeclaration
+        c.createStatement().execute(sql);
+    }
+}
+
+// Java 9+ — effectively final variable directly in try
+void process(Connection conn) throws SQLException {
+    try (conn) {                         // ✅ conn is effectively final — no redeclaration
+        conn.createStatement().execute(sql);
+    }
+}
+```
+
+---
+
+## 🎯 Multi-catch Block
+
+---
+
+### 🧠 What It Is
+
+Multi-catch is a Java 7 feature that lets a **single catch block handle multiple exception types** separated by `|`. It eliminates duplicate handler code when different exception types need identical treatment. The caught variable is **implicitly `final`** — a compiler-enforced constraint with deep implications for rethrowing.
+
+---
+
+### 🔬 Syntax
+
+```java
+// Before Java 7 — duplicated handler
+try {
+    riskyOp();
+} catch (IOException e) {
+    log.error("failed", e);
+    throw new ServiceException("failed", e);
+} catch (SQLException e) {
+    log.error("failed", e);                     // exact duplicate
+    throw new ServiceException("failed", e);    // exact duplicate
+}
+
+// Java 7+ — multi-catch
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {        // one handler, two types
+    log.error("failed", e);
+    throw new ServiceException("failed", e);
+}
+```
+
+---
+
+### 🔬 Type Rules — What's Allowed
+
+```java
+// ✅ Unrelated types — siblings in hierarchy
+catch (IOException | SQLException e) { }
+
+// ✅ Three or more types
+catch (IOException | SQLException | ParseException e) { }
+
+// ❌ Subclass of another listed type — compile error
+catch (IOException | FileNotFoundException e) { }
+// FileNotFoundException IS-A IOException
+// Error: "Alternatives in a multi-catch statement cannot be related by subclassing"
+
+// ❌ Same type twice
+catch (IOException | IOException e) { }
+// Error: duplicate type
+
+// ❌ Types related by inheritance — either direction
+catch (Exception | IOException e) { }
+// IOException IS-A Exception → compile error
+```
+
+```
+Multi-catch type rule:
+  No two types in the | list may have
+  an inheritance relationship with each other.
+  All types must be independent branches of the hierarchy.
+
+  ✅ IOException | SQLException  (siblings under Exception)
+  ✅ NullPointerException | IllegalArgumentException
+  ❌ Exception | IOException     (parent-child)
+  ❌ IOException | FileNotFoundException (parent-child)
+```
+
+---
+
+### 🔬 `e` Is Effectively Final — The Core Constraint
+
+```java
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {
+    e = new IOException("replaced");    // ❌ COMPILE ERROR
+    // e is effectively final in multi-catch
+    // cannot reassign — compiler blocks it
+
+    throw e;                            // ✅ rethrow original — allowed
+}
+
+// Single catch — e is a regular local variable, can reassign
+try {
+    riskyOp();
+} catch (IOException e) {
+    e = new IOException("replaced");    // ✅ compiles — bad practice but allowed
+    throw e;                            // throws replaced exception
+}
+```
+
+```
+Why effectively final?
+  Multi-catch: e's type is the UNION of listed types
+  e could be IOException OR SQLException at runtime
+  Allowing reassignment:
+    e = new RuntimeException()  ← neither IOException nor SQLException
+    throw e  ← what type does compiler use for throws analysis?
+  Ambiguous — compiler blocks it entirely
+  Effectively final = safe, unambiguous rethrow
+```
+
+---
+
+### 🔬 Type of `e` — Union Type at Compile Time
+
+```java
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {
+    // Compile-time type of e:
+    // Least upper bound (LUB) of IOException and SQLException
+    // Both extend Exception directly
+    // LUB = Exception
+
+    e.getMessage();             // ✅ — getMessage() is on Throwable
+    e.getSQLState();            // ❌ COMPILE ERROR — getSQLState() is on SQLException only
+                                // compile-time type is Exception, not SQLException
+
+    if (e instanceof SQLException se) {
+        se.getSQLState();       // ✅ — pattern matching narrows type
+    }
+}
+```
+
+```
+Compile-time type resolution:
+  catch (IOException | SQLException e)
+  LUB(IOException, SQLException) = Exception
+  e's static type = Exception
+  Only methods on Exception (and Throwable) accessible without cast
+```
+
+---
+
+### 🔬 Bytecode — How Multi-catch Compiles
+
+```java
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {
+    handle(e);
+}
+```
+
+```
+Compiles to TWO exception table rows pointing to SAME handler:
+
+Exception table:
+┌───────┬─────┬────────┬─────────────┐
+│ Start │ End │ Target │ Type        │
+├───────┼─────┼────────┼─────────────┤
+│   0   │  8  │   12   │ IOException │
+│   0   │  8  │   12   │ SQLException│
+└───────┴─────┴────────┴─────────────┘
+
+Target 12 = single shared handler block
+NOT two separate handlers at 12 and 20
+Both types jump to identical bytecode location
+
+Before Java 7: two separate exception table rows → two handler copies
+After Java 7 multi-catch: two rows → ONE handler copy
+Result: smaller bytecode, no duplication
+```
+
+---
+
+### 🔬 Rethrowing With Multi-catch — Precise Rethrow
+
+```java
+// Multi-catch enables precise rethrow — Java 7 enhancement
+void process() throws IOException, SQLException {
+    try {
+        riskyOp();                          // declares throws IOException, SQLException
+    } catch (IOException | SQLException e) {
+        log.error("operation failed", e);
+        throw e;                            // ✅ compiler knows:
+                                            // e is EXACTLY IOException or SQLException
+                                            // NOT just Exception
+                                            // throws clause is satisfied precisely
+    }
+}
+```
+
+```
+Precise rethrow mechanics:
+  Without multi-catch (old way):
+    catch (Exception e) { throw e; }
+    → compiler sees throw Exception
+    → method must declare throws Exception (broad)
+
+  With multi-catch:
+    catch (IOException | SQLException e) { throw e; }
+    → compiler tracks: e ∈ {IOException, SQLException}
+    → method declares throws IOException, SQLException (precise)
+    → callers know exactly what can arrive
+```
+
+---
+
+### 💻 Real-World Code — Data Sync Service
+
+```java
+public class DataSyncService {
+
+    private final HttpClient    httpClient;
+    private final ObjectMapper  mapper;
+    private final SyncRepository repository;
+
+    public SyncResult sync(String sourceUrl) throws SyncException {
+
+        try {
+            // Step 1: fetch
+            HttpResponse<String> response =
+                httpClient.send(
+                    HttpRequest.newBuilder(URI.create(sourceUrl)).build(),
+                    BodyHandlers.ofString()
+                );                                      // throws IOException, InterruptedException
+
+            // Step 2: parse
+            List<DataRecord> records =
+                mapper.readValue(
+                    response.body(),
+                    new TypeReference<List<DataRecord>>() {}
+                );                                      // throws JsonProcessingException
+
+            // Step 3: persist
+            int saved = repository.saveAll(records);    // throws SQLException
+
+            return SyncResult.success(saved);
+
+        } catch (IOException | InterruptedException e) {
+            // Network failures — transient, suggest retry
+            log.warn("Network failure syncing {}: {}", sourceUrl, e.getMessage());
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();     // restore interrupt flag
+            }
+            throw new SyncException("Network failure — retry later", e, true);
+
+        } catch (JsonProcessingException e) {
+            // Parse failure — source sent bad data — don't retry
+            log.error("Parse failure from {}: {}", sourceUrl, e.getMessage());
+            throw new SyncException("Invalid data format from source", e, false);
+
+        } catch (SQLException e) {
+            // DB failure — may be transient
+            log.error("DB failure persisting sync from {}", sourceUrl, e);
+            throw new SyncException("Persistence failure", e, true);
+        }
+    }
+}
+```
+
+🔴 **What breaks if wrong:** Single `catch(Exception e)` with `throw new SyncException("failed", e, true)` → parse failures marked as retryable → source sends corrupt data → sync retried endlessly → DB flooded → cascading failure.
+
+---
+
+### 🔬 Multi-catch With Exception Hierarchy — Real Grouping Strategy
+
+```java
+try {
+    complexOp();
+
+} catch (FileNotFoundException | NoSuchElementException e) {
+    // "not found" group — both mean "thing doesn't exist"
+    // same recovery: 404 response
+    return Response.notFound(e.getMessage());
+
+} catch (IOException | SQLException e) {
+    // "infrastructure" group — both mean "system failure"
+    // same recovery: 503 + retry hint
+    log.error("Infrastructure failure", e);
+    return Response.serviceUnavailable("retry later");
+
+} catch (IllegalArgumentException | IllegalStateException e) {
+    // "bad call" group — both mean caller did something wrong
+    // same recovery: 400 response
+    return Response.badRequest(e.getMessage());
+
+} catch (Exception e) {
+    // safety net — unknown failure
+    log.error("Unexpected failure", e);
+    return Response.serverError("internal error");
+}
+```
+
+---
+
+## 💣 Interview Traps
+
+**🪤 Trap 1 — close() called BEFORE catch block**
+
+```java
+class TrackedResource implements AutoCloseable {
+    public void close() {
+        System.out.println("closed");
+    }
+}
+
+try (TrackedResource r = new TrackedResource()) {
+    System.out.println("body");
+    throw new IOException("fail");
+} catch (IOException e) {
+    System.out.println("catch");        // after close() or before?
+}
+
+// Output:
+// body
+// closed     ← close() fires BEFORE catch block
+// catch
+```
+
+`close()` runs **before** the catch block executes. Inside the catch block, the resource is **already closed**. Attempting to use `r` inside catch → closed resource → exception. Most devs assume catch runs first.
+
+---
+
+**🪤 Trap 2 — `close()` exception when no primary exception — becomes primary**
+
+```java
+class BrokenResource implements AutoCloseable {
+    public void close() {
+        throw new RuntimeException("close failed");
+    }
+}
+
+try (BrokenResource r = new BrokenResource()) {
+    System.out.println("body ok");      // no exception in body
+}
+// RuntimeException from close() propagates as PRIMARY exception
+// No suppression — nothing to suppress on
+// Caller sees: RuntimeException("close failed")
+```
+
+Suppression only happens when there's a **primary exception**. If body completes normally and `close()` throws → that exception is the primary. Not suppressed — fully propagates.
+
+---
+
+**🪤 Trap 3 — null resource reference skips close()**
+
+```java
+// What if resource acquisition fails?
+try (Connection conn = dataSource.getConnection();     // ① succeeds
+     PreparedStatement stmt = null) {                  // ② explicitly null
+    // stmt is null — close() NOT called on null
+    // conn.close() IS called
+}
+
+// Real scenario: conditional resource
+PreparedStatement stmt = condition ? conn.prepare(SQL) : null;
+try (PreparedStatement s = stmt) {
+    if (s != null) s.execute();
+}   // s.close() NOT called if s is null — JVM skips null resources
+```
+
+JVM checks: if resource reference is `null`, skip `close()`. No NPE. Useful for conditional resources but dangerous if you expect close() to always run.
+
+---
+
+**🪤 Trap 4 — Resource opened outside try — not closed on exception before try**
+
+```java
+// ❌ Resource opened before try — not protected
+Connection conn = dataSource.getConnection();   // ① if this throws: nothing to close
+try (conn) {                                    // ② conn protected inside try
+    process(conn);
+}
+// If getConnection() throws: no try-with-resources yet — conn never opened — fine
+// If process() throws: conn.close() called — fine
+// But:
+
+Connection conn = dataSource.getConnection();   // ① opens conn
+Connection conn2 = dataSource.getConnection();  // ② if this throws: conn LEAKS
+try (Connection c1 = conn; Connection c2 = conn2) {
+    process(c1, c2);
+}
+// conn opened, conn2 acquisition throws
+// try-with-resources never entered — conn.close() never called — LEAK
+```
+
+🔴 **Fix:** Always open resources inside the try-with-resources spec, not before:
+
+```java
+// ✅ Both opened inside spec — both protected
+try (Connection c1 = dataSource.getConnection();
+     Connection c2 = dataSource.getConnection()) {
+    process(c1, c2);
+}
+```
+
+---
+
+**🪤 Trap 5 — Suppressed exceptions lost when rethrowing without cause**
+
+```java
+try (MyResource r = new MyResource()) {
+    throw new IOException("primary");
+    // r.close() throws RuntimeException — suppressed on IOException
+} catch (IOException e) {
+    // e has suppressed: RuntimeException
+    throw new ServiceException("failed");   // ❌ suppressed exceptions GONE
+    // ServiceException has no cause, no suppressed
+    // close() failure permanently lost
+}
+
+// ✅ Preserve suppressed:
+} catch (IOException e) {
+    ServiceException se = new ServiceException("failed", e);  // chain cause
+    // suppressed exceptions travel with e — accessible via getCause().getSuppressed()
+    throw se;
+}
+```
+
+---
+
+**🪤 Trap 1 — Multi-catch variable type is LUB — specific methods inaccessible**
+
+```java
+try {
+    riskyOp();
+} catch (SQLException | IOException e) {
+    // Want to log SQL state for SQLException:
+    log.error("SQLState: " + e.getSQLState());  // ❌ COMPILE ERROR
+    // e's compile-time type = Exception (LUB)
+    // getSQLState() not on Exception
+
+    // ✅ Use pattern matching (Java 16+)
+    if (e instanceof SQLException se) {
+        log.error("SQLState: " + se.getSQLState());
+    }
+
+    // ✅ Or separate catch blocks if type-specific handling needed
+}
+```
+
+---
+
+**🪤 Trap 2 — `InterruptedException` in multi-catch — interrupt flag lost**
+
+```java
+try {
+    Thread.sleep(1000);
+} catch (InterruptedException | IOException e) {
+    log.error("operation failed", e);
+    // ❌ interrupt flag NOT restored
+    // If e is InterruptedException: flag consumed, not restored
+    // Thread continues running — shutdown signals ignored
+}
+
+// ✅ Handle InterruptedException separately OR check type:
+try {
+    Thread.sleep(1000);
+} catch (InterruptedException | IOException e) {
+    if (e instanceof InterruptedException) {
+        Thread.currentThread().interrupt();     // restore flag
+    }
+    log.error("operation failed", e);
+    throw new RuntimeException(e);
+}
+```
+
+`InterruptedException` in multi-catch is the most dangerous grouping. The interrupt flag is cleared when caught — if not restored, the thread ignores future interrupts. Thread pool shutdown, `Future.cancel()`, graceful termination — all silently broken.
+
+---
+
+**🪤 Trap 3 — Checked exception in multi-catch requires ALL types declared in throws**
+
+```java
+// ❌ Missing declaration — compile error
+void method() throws IOException {              // only declares IOException
+    try {
+        riskyOp();                              // throws IOException, SQLException
+    } catch (IOException | SQLException e) {
+        log.error("failed", e);
+        throw e;                                // COMPILE ERROR
+        // e could be SQLException — not declared in throws
+    }
+}
+
+// ✅ Declare all types
+void method() throws IOException, SQLException {
+    try {
+        riskyOp();
+    } catch (IOException | SQLException e) {
+        log.error("failed", e);
+        throw e;                                // ✅ both declared
+    }
+}
+```
+
+---
+
+**🪤 Trap 4 — Related types compile error is not always obvious**
+
+```java
+// ❌ Not obvious — UncheckedIOException extends RuntimeException
+//    IOException extends Exception
+//    No inheritance between them → ✅ allowed
+catch (IOException | UncheckedIOException e) { }   // ✅ compiles
+
+// ❌ Not obvious — both extend IndexOutOfBoundsException
+catch (ArrayIndexOutOfBoundsException |
+       StringIndexOutOfBoundsException e) { }       // ✅ compiles
+// Both extend IndexOutOfBoundsException but neither extends the other
+// → ✅ allowed (sibling relationship, not parent-child)
+
+// ❌ This fails:
+catch (IndexOutOfBoundsException |
+       ArrayIndexOutOfBoundsException e) { }        // ❌ COMPILE ERROR
+// ArrayIndexOutOfBounds IS-A IndexOutOfBounds → related by subclassing
+```
+
+The rule is specifically: **neither type may be a subtype of the other**. Siblings with a common parent are fine.
+
+---
+
+**🪤 Trap 5 — Multi-catch and variable shadowing**
+
+```java
+IOException e = new IOException("outer");       // outer variable
+
+try {
+    riskyOp();
+} catch (IOException | SQLException e) {        // ❌ COMPILE ERROR
+    // 'e' shadows outer 'e'
+    // catch variable (single or multi) cannot shadow enclosing local
+}
+```
+
+Same rule as single catch — catch variable cannot shadow a local variable in the enclosing method scope. Applies to both single and multi-catch.
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Compiler desugaring + `addSuppressed()` linked list**
+
+```
+Suppressed exception storage in Throwable:
+  private List<Throwable> suppressedExceptions;
+  // backed by ArrayList, initialized lazily
+  // addSuppressed() appends to this list
+  // getSuppressed() returns array copy
+
+Compiler desugaring (bytecode level):
+  try-with-resources compiles to:
+    1. Resource stored in synthetic local variable
+    2. Primary exception stored in synthetic local variable
+    3. Catch-all around body captures primary
+    4. finally block: calls close(), catches close exception
+    5. If primary exists: addSuppressed(closeException)
+    6. If no primary: throw closeException directly
+
+javap -c shows:
+  invokevirtual Throwable.addSuppressed()
+  at the catch-all around close() call
+
+Multiple resources:
+  Each resource gets its own synthetic variable
+  Compiler generates nested try-finally for each
+  Close order: innermost synthetic variable first (LIFO)
+```
+
+**Underlying primitive: Set union — multi-catch type set + LUB computation**
+
+```
+Multi-catch type analysis:
+
+Types listed: {IOException, SQLException}
+
+Step 1: Verify no subtype relationship
+  IOException ⊄ SQLException  ✅
+  SQLException ⊄ IOException  ✅
+
+Step 2: Compute LUB (Least Upper Bound) for e's static type
+  IOException  → Exception → Throwable → Object
+  SQLException → Exception → Throwable → Object
+  LUB = Exception  (first common ancestor)
+
+Step 3: e's static type = Exception
+  Only Exception/Throwable methods accessible on e directly
+
+Step 4: Bytecode generation
+  For each type T in {IOException, SQLException}:
+    Add exception table row: (start, end, handler_offset, T)
+  Both rows point to same handler bytecode
+
+Step 5: Effectively final enforcement
+  Compiler marks e as ACC_FINAL equivalent
+  Any write to e = compile error
+  Ensures: e's runtime type always ∈ {IOException, SQLException}
+           throw e is type-safe
+```
+
+
+---
+
+### 📊 try-with-resources — Behavior Reference
+
+| Scenario | Body exception | close() exception | Caller sees | Suppressed |
+|----------|---------------|-------------------|-------------|-----------|
+| Both succeed | None | None | Normal return | None |
+| Body throws, close() succeeds | IOException | None | IOException | None |
+| Body succeeds, close() throws | None | RuntimeException | RuntimeException | None |
+| Both throw | IOException | RuntimeException | IOException | RuntimeException |
+| Multiple resources, all close() throw | IOException | RE1, RE2, RE3 | IOException | RE1, RE2, RE3 |
+
+---
+
+### 📊 Multi-catch vs Single catch — When to Use
+
+| Situation | Use |
+|-----------|-----|
+| Same recovery for multiple unrelated types | Multi-catch |
+| Different recovery per type | Separate catch blocks |
+| Need type-specific methods on exception | Separate catch or instanceof |
+| `InterruptedException` mixed with others | Separate — restore interrupt flag |
+| Reducing boilerplate — identical handler | Multi-catch |
+| Precise rethrow needed | Multi-catch — preserves narrow type |
+| Types related by inheritance | Catch parent type only |
+
+---

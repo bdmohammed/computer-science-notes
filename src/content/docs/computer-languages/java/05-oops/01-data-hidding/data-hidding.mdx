@@ -16,6 +16,46 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 
 > **Data Hiding** (also called **Encapsulation**) is the practice of restricting direct access to an object's internal state, exposing only controlled interfaces for interaction.
 
+```
+Data Hiding
+│
+├── Core Mechanism
+│   └── Access Modifiers
+│       ├── private      → class only
+│       ├── (default)    → package only
+│       ├── protected    → package + subclasses
+│       └── public       → everywhere
+│
+├── How It's Achieved
+│   ├── private fields
+│   ├── public getters/setters (controlled access)
+│   ├── validation in setters
+│   └── immutable objects (no setters at all)
+│
+├── Levels of Hiding
+│   ├── Field level
+│   ├── Method level
+│   ├── Class level
+│   └── Package level
+│
+└── Related Concepts
+    ├── Encapsulation    (data hiding + bundling)
+    ├── Immutability     (hiding + no mutation)
+    └── Information hiding (hide implementation, expose contract)
+```
+
+```
+Data Hiding:
+  Restricting direct access to internal state
+  Forcing access through controlled interface (methods)
+
+Why:
+  ├── Prevent invalid state — validation in setter
+  ├── Change implementation without breaking callers
+  ├── Maintain invariants — class controls its own state
+  └── Reduce coupling — callers depend on interface, not fields
+```
+
 ```java
 // ❌ Without data hiding — fragile and unsafe
 class BankAccount {
@@ -60,11 +100,12 @@ You hide implementation details to:
       <th>Modifier</th>
       <th>Same Class</th>
       <th>Same Package</th>
-      <th>Subclass (Diff Package)</th>
+      <th>Subclass (Different Package)</th>
       <th>World</th>
       <th>Use Case</th>
     </tr>
   </thead>
+
   <tbody>
     <tr>
       <td><code>private</code></td>
@@ -74,14 +115,18 @@ You hide implementation details to:
       <td>❌</td>
       <td>Internal implementation details</td>
     </tr>
+
     <tr>
-      <td><code>default</code></td>
+      <td>
+      <code>default</code>(package-private)
+      </td>
       <td>✅</td>
       <td>✅</td>
       <td>❌</td>
       <td>❌</td>
       <td>Package-internal helpers</td>
     </tr>
+
     <tr>
       <td><code>protected</code></td>
       <td>✅</td>
@@ -90,21 +135,57 @@ You hide implementation details to:
       <td>❌</td>
       <td>Extension points for subclasses</td>
     </tr>
+
     <tr>
       <td><code>public</code></td>
       <td>✅</td>
       <td>✅</td>
       <td>✅</td>
       <td>✅</td>
-      <td>Public API — what clients use</td>    </tr>
+      <td>Public API — accessible everywhere</td>
+    </tr>
   </tbody>
 </table>
 
 <small>* `protected` access in subclass requires reference to be subclass type or `this`, not parent type.</small>
 
+---
+
+### protected — The Nuance
+
+```java
+package com.company.base;
+
+public class Animal {
+    protected String name;              // accessible to subclasses
+    protected void breathe() { }       // accessible to subclasses
+}
+
+package com.company.animals;           // different package
+import com.company.base.Animal;
+
+public class Dog extends Animal {
+    void test() {
+        this.name = "Rex";             // ✅ own inherited field
+        this.breathe();                // ✅ own inherited method
+
+        Animal other = new Animal();
+        other.name = "other";          // ❌ COMPILE ERROR
+        other.breathe();               // ❌ COMPILE ERROR
+        // protected accessed via reference to parent type
+        // only accessible through inheritance — not via parent reference
+    }
+}
+```
+
+> 🔑 `protected` in different package = accessible **only through inheritance** (`this.field` or `super.method()`). NOT accessible via a reference to the parent type. This distinction fails senior devs constantly.
+
+---
+
 ### 💻 Practical Access Modifier Examples
 
-<Code lang="java" title="Layered access control in a real class" code={`public class User {
+<Code lang="java" title="Layered access control in a real class" code={`
+public class User {
     // 🔒 Private: Core state — hidden from all external code
     private String passwordHash;
     private LocalDateTime lastLogin;
@@ -143,7 +224,8 @@ This minimizes your class's "surface area" and prevents accidental misuse.
 
 ### 🧱 Basic Getter/Setter Pattern
 
-<Code lang="java" title="Encapsulated field with validation" code={`public class Product {
+<Code lang="java" title="Encapsulated field with validation" code={`
+public class Product {
     private String name;
     private double price;    private int stock;
     
@@ -174,7 +256,64 @@ This minimizes your class's "surface area" and prevents accidental misuse.
     public List<String> getTags() {
         return Collections.unmodifiableList(tags);
     }
-}`} />
+}
+
+public class Employee {
+
+    // All fields private — data hidden
+    private String   name;
+    private String   email;
+    private int      age;
+    private double   salary;
+    private String   department;
+
+    // Constructor — single point of initialization
+    public Employee(String name, String email, int age, double salary) {
+        setName(name);          // reuse validation
+        setEmail(email);
+        setAge(age);
+        setSalary(salary);
+    }
+
+    // Getter — read access, no validation needed
+    public String getName()     { return name; }
+    public String getEmail()    { return email; }
+    public int    getAge()      { return age; }
+    public double getSalary()   { return salary; }
+
+    // No getDepartment() — internal only, not exposed
+
+    // Setter with validation
+    public void setName(String name) {
+        if (name == null || name.isBlank())
+            throw new IllegalArgumentException("name required");
+        this.name = name.trim();
+    }
+
+    public void setEmail(String email) {
+        if (email == null || !email.contains("@"))
+            throw new IllegalArgumentException("invalid email: " + email);
+        this.email = email.toLowerCase();
+    }
+
+    public void setAge(int age) {
+        if (age < 18 || age > 65)
+            throw new IllegalArgumentException("age out of range: " + age);
+        this.age = age;
+    }
+
+    public void setSalary(double salary) {
+        if (salary < 0)
+            throw new IllegalArgumentException("salary cannot be negative");
+        this.salary = salary;
+    }
+
+    // No setter for department — set only internally
+    private void setDepartment(String dept) {
+        this.department = dept;
+    }
+}
+`} />
 
 ### ⚠️ Common Getter/Setter Pitfalls
 
@@ -274,7 +413,9 @@ This minimizes your class's "surface area" and prevents accidental misuse.
 
 ### 🔹 Immutable Objects — Ultimate Data Hiding
 
-<Code lang="java" title="Immutable class pattern" code={`public final class Money {  // final class → cannot extend
+<Code lang="java" title="Immutable class pattern" code={`
+public final class Money {
+    // final class → cannot extend
     private final BigDecimal amount;  // final fields → cannot reassign
     private final Currency currency;
     
@@ -308,6 +449,64 @@ This minimizes your class's "surface area" and prevents accidental misuse.
 Money price = new Money(new BigDecimal("19.99"), Currency.USD);
 Money tax = new Money(new BigDecimal("2.00"), Currency.USD);
 Money total = price.add(tax);  // Returns new Money — original unchanged
+
+// Immutable: private final fields, no setters, defensive copies
+public final class Money {                      // final — no subclassing
+
+    private final BigDecimal amount;            // final — set once
+    private final Currency   currency;          // final — set once
+
+    public Money(BigDecimal amount, Currency currency) {
+        Objects.requireNonNull(amount, "amount required");
+        Objects.requireNonNull(currency, "currency required");
+        if (amount.compareTo(BigDecimal.ZERO) < 0)
+            throw new IllegalArgumentException("amount cannot be negative");
+
+        this.amount   = amount;
+        this.currency = currency;
+    }
+
+    // Only getters — no setters
+    public BigDecimal getAmount()   { return amount; }
+    public Currency   getCurrency() { return currency; }
+
+    // Operations return NEW instances — never mutate
+    public Money add(Money other) {
+        if (!this.currency.equals(other.currency))
+            throw new IllegalArgumentException("currency mismatch");
+        return new Money(this.amount.add(other.amount), this.currency);
+    }
+
+    public Money multiply(BigDecimal factor) {
+        return new Money(this.amount.multiply(factor), this.currency);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Money m)) return false;
+        return amount.compareTo(m.amount) == 0
+            && currency.equals(m.currency);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(amount.stripTrailingZeros(), currency);
+    }
+
+    @Override
+    public String toString() {
+        return amount + " " + currency;
+    }
+}
+
+Immutable class checklist:
+  ✅ class is final (or all constructors private)
+  ✅ all fields private final
+  ✅ no setters
+  ✅ constructor validates all inputs
+  ✅ mutable fields: defensive copy in constructor AND getter
+  ✅ operations return new instances
 `} />
 
 <CardGrid>
@@ -407,9 +606,62 @@ User user = new User.Builder("alice", "alice@example.com")
 5. ✅ Return `this` from setter methods for fluent chaining
 </Aside>
 
+## 🔬 Defensive Copy — Hiding Mutable State
+
+```java
+public final class Schedule {
+
+    private final List<LocalDate> holidays;     // mutable — must protect
+
+    public Schedule(List<LocalDate> holidays) {
+        Objects.requireNonNull(holidays);
+        // Defensive copy in constructor — caller can't mutate our list
+        this.holidays = new ArrayList<>(holidays);
+    }
+
+    public List<LocalDate> getHolidays() {
+        // Defensive copy in getter — caller can't mutate our list
+        return Collections.unmodifiableList(holidays);
+        // OR: return new ArrayList<>(holidays);
+    }
+
+    // ❌ Without defensive copy:
+    // Constructor stores caller's reference — caller mutates list = our state changes
+    // Getter returns our reference — caller mutates list = our state changes
+}
+```
+
+```java
+// Array defensive copy
+public final class Matrix {
+    private final int[][] data;
+
+    public Matrix(int[][] data) {
+        // Deep copy — 2D array
+        this.data = new int[data.length][];
+        for (int i = 0; i < data.length; i++) {
+            this.data[i] = data[i].clone();     // clone each row
+        }
+    }
+
+    public int[][] getData() {
+        // Return defensive copy
+        int[][] copy = new int[data.length][];
+        for (int i = 0; i < data.length; i++) {
+            copy[i] = data[i].clone();
+        }
+        return copy;
+    }
+}
+```
+
+> 🔑 `Collections.unmodifiableList()` wraps the list — but the underlying list can still be mutated if someone holds a reference. A true defensive copy (`new ArrayList<>(original)`) is independent — changes to original don't affect copy.
+
+
 ### 🔹 Package-Private Implementation — Hidden Helpers
 
-<Code lang="java" title="Package-private classes for internal implementation" code={`// File: com/example/payment/internal/ValidationHelper.java
+<Code lang="java" title="Package-private classes for internal implementation" code={`
+// File: com/example/payment/internal/ValidationHelper.java
 package com.example.payment.internal;  // Internal package
 
 // Package-private class — not visible outside payment package
@@ -445,7 +697,50 @@ public class Main {
         // Can only use public API:
         new PaymentService().process(100);  // ✅
     }
-}`} />
+}
+`} />
+
+```java
+// Package structure as data hiding boundary
+com.company.payment
+  ├── PaymentService.java      (public — exposed)
+  ├── PaymentResult.java       (public — exposed)
+  ├── PaymentGateway.java      (public interface — exposed)
+  └── internal/
+        ├── StripeClient.java  (package-private — hidden)
+        ├── RequestSigner.java (package-private — hidden)
+        └── RetryPolicy.java   (package-private — hidden)
+
+// StripeClient — internal detail, hidden from outside package
+class StripeClient {                    // no public — package-private
+    private final String apiKey;
+
+    StripeClient(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    Response charge(ChargeRequest request) {
+        // implementation using apiKey
+        return null;
+    }
+}
+
+// PaymentService — public facade — hides StripeClient
+public class PaymentService {
+    private final StripeClient client;  // internal — callers don't know it exists
+
+    public PaymentService(String apiKey) {
+        this.client = new StripeClient(apiKey);
+    }
+
+    public PaymentResult charge(String token, BigDecimal amount) {
+        // delegates to hidden StripeClient
+        // callers never see StripeClient — can swap to BraintreeClient
+        // without any caller changes
+        return null;
+    }
+}
+```
 
 <Aside type="note">
 **Package Structure Tip**: Use subpackages like `.internal`, `.impl`, or `.support` to clearly separate public API from internal implementation. This signals to users: "Don't depend on this — it may change".
@@ -696,6 +991,125 @@ public class Main {
   </Card>
 </CardGrid>
 
+**🪤 Trap 1 — private field accessible via reflection**
+
+```java
+public class Secret {
+    private String password = "secure123";
+}
+
+Secret s = new Secret();
+
+// Reflection bypasses access control
+Field field = Secret.class.getDeclaredField("password");
+field.setAccessible(true);              // bypasses private
+String pwd = (String) field.get(s);    // "secure123" — extracted
+field.set(s, "hacked");                // ← mutated
+
+// Protection:
+// Java 9+: modules restrict reflective access
+// SecurityManager: deprecated Java 17+, removed Java 21+
+// Record classes: fields are final — setAccessible still can't write
+```
+
+---
+
+**🪤 Trap 2 — protected field accessible via subclass — data exposed**
+
+```java
+package com.base;
+public class Config {
+    protected String apiKey = "secret-key";     // protected — dangerous
+}
+
+package com.attack;
+public class MaliciousConfig extends Config {
+    public String stealKey() {
+        return apiKey;                          // ✅ accessible via inheritance
+    }
+}
+
+// Fix: private + protected getter for read-only access
+public class Config {
+    private String apiKey;
+    protected String getApiKey() { return apiKey; }  // read-only, no setter
+}
+```
+
+---
+
+**🪤 Trap 3 — getter returning mutable object leaks internal state**
+
+```java
+public class Order {
+    private final List<OrderItem> items = new ArrayList<>();
+
+    // ❌ Returns direct reference — caller mutates internal list
+    public List<OrderItem> getItems() {
+        return items;
+    }
+}
+
+Order order = new Order();
+List<OrderItem> items = order.getItems();
+items.clear();                  // mutates Order's internal list — no validation
+items.add(maliciousItem);       // bypasses any Order-level validation
+
+// ✅ Fix — return unmodifiable view or copy
+public List<OrderItem> getItems() {
+    return Collections.unmodifiableList(items);
+}
+```
+
+---
+
+**🪤 Trap 4 — Data hiding broken by inner class access**
+
+```java
+public class Outer {
+    private String secret = "hidden";
+
+    public class Inner {
+        public String reveal() {
+            return secret;          // ✅ inner class accesses private field
+        }
+    }
+}
+
+// Inner class breaks data hiding relative to outside code
+Outer outer = new Outer();
+Outer.Inner inner = outer.new Inner();
+String secret = inner.reveal();     // "hidden" — exposed via inner class
+```
+
+Inner class has full access to all private members of outer class. If inner class is public, private data becomes indirectly public through inner class methods.
+
+---
+
+**🪤 Trap 5 — Subclass cannot reduce visibility of overridden method**
+
+```java
+class Parent {
+    public void process() { }       // public
+}
+
+class Child extends Parent {
+    @Override
+    protected void process() { }    // ❌ COMPILE ERROR — reduces visibility
+    // Cannot narrow: public → protected → default → private
+    // Can only widen or keep same
+}
+
+// But subclass CAN widen (rarely useful):
+class Parent {
+    protected void process() { }    // protected
+}
+class Child extends Parent {
+    @Override
+    public void process() { }       // ✅ widens — allowed
+}
+```
+
 ---
 
 ## 🧩 DSA Angle — Encapsulation in Algorithms
@@ -808,6 +1222,36 @@ public class Main {
     ```
   </Card>
 </CardGrid>
+
+**Underlying primitive: JVM access flags + bytecode verifier**
+
+```
+Access control enforcement — two levels:
+
+1. Compiler level (javac):
+   Checks access modifier during compilation
+   Produces COMPILE ERROR for violations
+   Most violations caught here
+
+2. JVM bytecode verifier level:
+   .class file contains access flags per field/method:
+     ACC_PUBLIC    = 0x0001
+     ACC_PRIVATE   = 0x0002
+     ACC_PROTECTED = 0x0004
+   Verifier checks flags on every field access / method invocation
+   Mismatch → IllegalAccessError at runtime
+
+3. Reflection bypass:
+   field.setAccessible(true) → bypasses verifier check
+   Java 9+ modules: module system blocks cross-module reflection
+   --add-opens required to allow reflection into module internals
+
+Object layout — private fields still in memory:
+  private fields: physically present in object on heap
+  Not accessible by name from outside class
+  But: accessible via memory address (Unsafe), JNI, reflection
+  True privacy is a language abstraction — not hardware enforcement
+```
 
 <Aside type="tip">
 **DSA Pro Tip**: Encapsulation enables **modular algorithm design**.  
@@ -990,6 +1434,101 @@ This leads to reusable, testable, and composable algorithm components.
     ```
   </Card>
 </CardGrid>
+
+```java
+public final class UserAccount {
+
+    private final UUID    id;
+    private       String  email;
+    private       String  passwordHash;
+    private       boolean locked;
+    private       int     failedLoginAttempts;
+    private       Instant lockedUntil;
+
+    private static final int MAX_ATTEMPTS   = 5;
+    private static final Duration LOCK_DURATION = Duration.ofMinutes(30);
+
+    public UserAccount(UUID id, String email, String rawPassword) {
+        this.id           = Objects.requireNonNull(id);
+        this.email        = validateEmail(email);
+        this.passwordHash = hashPassword(rawPassword);
+        this.locked       = false;
+        this.failedLoginAttempts = 0;
+    }
+
+    // Read-only ID — immutable after construction
+    public UUID getId() { return id; }
+
+    // Email — controlled write
+    public String getEmail() { return email; }
+    public void updateEmail(String newEmail) {
+        this.email = validateEmail(newEmail);
+    }
+
+    // Password — write only, never expose hash
+    public void changePassword(String currentRaw, String newRaw) {
+        if (!verifyPassword(currentRaw))
+            throw new AuthenticationException("Current password incorrect");
+        this.passwordHash = hashPassword(newRaw);
+        this.failedLoginAttempts = 0;   // reset on successful auth
+    }
+
+    // Login — encapsulates lockout logic
+    public boolean attemptLogin(String rawPassword) {
+        if (isLocked()) {
+            throw new AccountLockedException(
+                "Account locked until " + lockedUntil
+            );
+        }
+
+        if (verifyPassword(rawPassword)) {
+            failedLoginAttempts = 0;        // reset on success
+            return true;
+        }
+
+        failedLoginAttempts++;
+        if (failedLoginAttempts >= MAX_ATTEMPTS) {
+            locked      = true;
+            lockedUntil = Instant.now().plus(LOCK_DURATION);
+            throw new AccountLockedException(
+                "Account locked after " + MAX_ATTEMPTS + " failed attempts"
+            );
+        }
+
+        return false;
+    }
+
+    // Read-only lock status — internal state exposed minimally
+    public boolean isLocked() {
+        if (locked && Instant.now().isAfter(lockedUntil)) {
+            locked = false;             // auto-unlock after duration
+            failedLoginAttempts = 0;
+        }
+        return locked;
+    }
+
+    // Private — internal implementation detail
+    private String validateEmail(String email) {
+        if (email == null || !email.contains("@"))
+            throw new IllegalArgumentException("invalid email: " + email);
+        return email.toLowerCase().trim();
+    }
+
+    private String hashPassword(String raw) {
+        Objects.requireNonNull(raw, "password required");
+        if (raw.length() < 8)
+            throw new IllegalArgumentException("password too short");
+        return BCrypt.hashpw(raw, BCrypt.gensalt(12));
+    }
+
+    private boolean verifyPassword(String raw) {
+        return BCrypt.checkpw(raw, passwordHash);
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** `passwordHash` as public field → any code reads raw hash → logs it → hash in plaintext log → security breach. `failedLoginAttempts` as public field → any code resets it to 0 → lockout bypass → brute force attack succeeds.
+
 
 <Aside type="tip">
 **Production Best Practices**:

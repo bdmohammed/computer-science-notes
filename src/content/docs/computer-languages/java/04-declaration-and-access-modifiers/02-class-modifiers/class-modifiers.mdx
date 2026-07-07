@@ -25,12 +25,25 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 ### ✅ Allowed Modifiers
 
 ```text
-Top-Level Class Modifiers:
-├── public          → Accessible from any package
-├── default         → Package-private (no keyword)
-├── final           → Cannot be extended
-├── abstract        → Cannot be instantiated, may have abstract methods
-└── strictfp        → Strict IEEE 754 floating-point calculations
+Class Modifiers
+│
+├── Access Modifiers
+│   ├── public          → accessible everywhere
+│   ├── protected       → same package + subclasses (nested classes only)
+│   ├── (default)       → same package only (package-private)
+│   └── private         → enclosing class only (nested classes only)
+│
+├── Non-Access Modifiers
+│   ├── abstract        → cannot instantiate, may have abstract methods
+│   ├── final           → cannot be subclassed
+│   ├── static          → nested class only — no outer instance needed
+│   ├── strictfp        → floating point consistency (deprecated Java 17+)
+│   └── sealed          → restricts which classes can extend (Java 17+)
+│
+└── Invalid Combinations
+    ├── abstract + final      → contradictory
+    ├── abstract + private    → contradictory (top-level)
+    └── abstract + sealed     → special case
 ```
 
 ### ❌ NOT Allowed for Top-Level Classes
@@ -43,7 +56,22 @@ Invalid for Top-Level Class:
 ├── synchronized, volatile, transient → Never valid for classes
 ```
 
-<Code lang="java" title="Valid top-level class declarations" code={`// File: MyApp.java
+```
+Top-level class (not nested):
+  Only TWO access levels allowed:
+  ├── public       → accessible from any package
+  └── (default)    → accessible within same package only
+
+Why protected/private invalid for top-level:
+  protected = same package + subclasses
+  private   = enclosing class only
+  Top-level class has no enclosing class
+  → protected/private have no meaning → not allowed
+  Nested classes CAN use all four access levels
+```
+
+<Code lang="java" title="Valid top-level class declarations" code={`
+// File: MyApp.java
 public class MyApp { }           // ✅ public
 
 class Helper { }                 // ✅ default (package-private)
@@ -56,11 +84,14 @@ strictfp class Calculator { }    // ✅ strictfp
 
 // Combining valid modifiers:
 public final class Immutable { }      // ✅ public + final
-abstract strictfp class MathOps { }   // ✅ abstract + strictfp`} />
+abstract strictfp class MathOps { }   // ✅ abstract + strictfp
+`} />
 
-<Code lang="java" title="❌ Invalid top-level class declarations" code={`private class Secret { }      // ❌ C.E: modifier private not allowed here
+<Code lang="java" title="❌ Invalid top-level class declarations" code={`
+private class Secret { }      // ❌ C.E: modifier private not allowed here
 protected class Internal { }  // ❌ C.E: modifier protected not allowed here
-static class Nested { }       // ❌ C.E: modifier static not allowed here`} />
+static class Nested { }       // ❌ C.E: modifier static not allowed here
+`} />
 
 <Aside type="note">
 **Nested classes are different**: Inner classes CAN use `private`, `protected`, `static`. These restrictions apply only to **top-level** classes.
@@ -92,7 +123,7 @@ static class Nested { }       // ❌ C.E: modifier static not allowed here`} />
     <tr>
       <td><strong>Answers</strong></td>
       <td><em>WHERE can it be accessed from?</em></td>
-      <td><em>WHAT behavior does it have?</em></td>
+    classes  <td><em>WHAT behavior does it have?</em></td>
     </tr>
   </tbody>
 </table>
@@ -107,7 +138,8 @@ static class Nested { }       // ❌ C.E: modifier static not allowed here`} />
 
 > Accessible from **any package, any class** — used for public API components.
 
-<Code lang="java" title="public class — cross-package access" code={`// File: pack1/Test.java
+<Code lang="java" title="public class — cross-package access" code={`
+// File: pack1/Test.java
 package pack1;
 public class Test {
     public void methodOne() {
@@ -233,18 +265,25 @@ class Test2 {
 ## 🔒 final Modifier
 
 ### final Classes — Cannot Be Extended
+- The main advantage of final keyword is we can achieve security.
+- Whereas the main disadvantage is we are missing the key benefits of oops:
+- polymorsim (because of final methods)
+- inheritance (because of final classes) hence if there is no specific requirement never recommended to use final keyboard.
 
-<Code lang="java" title="final class prevents inheritance" code={`final class MyClass {
+
+<Code lang="java" title="final class prevents inheritance" code={`
+final class MyClass {
     void show() { System.out.println("MyClass"); }
 }
 
 class Child extends MyClass { }  // ❌ C.E: cannot inherit from final MyClass
 
 // Real-world examples of final classes in Java:
-// • String      → Immutability guarantee
-// • Integer     → Value semantics, caching
-// • Math        → Utility class, no state
-// • BigDecimal  → Precise arithmetic, immutability`} />
+// JDK examples of final classes:
+// String, Integer, Long, Double, Boolean
+// All wrapper classes are final
+// Math, System are final
+`} />
 
 #### Why Is `String` final?
 
@@ -266,9 +305,25 @@ class Child extends MyClass { }  // ❌ C.E: cannot inherit from final MyClass
   </Card>
 </CardGrid>
 
+```
+Why make a class final:
+  ├── Security — prevent malicious subclassing
+  │     (String is final — attackers can't override hashCode)
+  ├── Immutability guarantee — subclass can't add mutable state
+  ├── Performance — JIT can devirtualize method calls
+  └── Design intent — "not designed for extension"
+
+final class + all-private constructor → truly uninstantiable:
+  public final class MathUtils {
+      private MathUtils() { }     // no instantiation
+      public static double sqrt(double x) { ... }
+  }
+```
+
 ### final Methods — Cannot Be Overridden
 
-<Code lang="java" title="final method prevents overriding" code={`class Parent {
+<Code lang="java" title="final method prevents overriding" code={`
+class Parent {
     final void display() {
         System.out.println("Parent display");
     }
@@ -281,13 +336,15 @@ class Child extends Parent {
 // Why use final methods?
 // 1. Security: Prevent subclasses from changing critical behavior
 // 2. Performance: JVM can inline final methods (no virtual dispatch)
-// 3. Design: Enforce fixed behavior contract in framework APIs`} />
+// 3. Design: Enforce fixed behavior contract in framework APIs
+`} />
 
 <Aside type="note">
 **Important**: Every method inside a `final` class is **implicitly final** — you cannot override them because the class cannot be extended. However, **fields** inside a final class are NOT automatically final.
 </Aside>
 
-<Code lang="java" title="final class: methods implicit final, fields not" code={`final class Parent {
+<Code lang="java" title="final class: methods implicit final, fields not" code={`
+final class Parent {
     static int x = 10;  // NOT final — can be modified
     
     static {
@@ -308,8 +365,17 @@ class Child extends Parent {
 > **abstract** is applicable to **classes and methods**, but **NOT variables**.
 
 ### abstract Methods — Declaration Without Implementation
+```
+Even though we don't have implementation still we can declare a method with abstract
+modifier.
+That is abstract methods have only declaration but not implementation.
+Hence abstract method declaration should compulsory ends with semicolon.
+Child classes are responsible to provide implementation for parent class abstract
+methods.
+```
 
-<Code lang="java" title="abstract method rules" code={`abstract class Shape {
+<Code lang="java" title="abstract method rules" code={`
+abstract class Shape {
     // Abstract method: NO body, ends with semicolon
     abstract double area();        // ✅ Valid
     abstract double perimeter();   // ✅ Valid
@@ -334,7 +400,8 @@ class Child extends Parent {
 
 ### abstract Classes — Blueprint for Subclasses
 
-<Code lang="java" title="abstract class with mixed methods" code={`abstract class Vehicle {
+<Code lang="java" title="abstract class with mixed methods" code={`
+abstract class Vehicle {
     // Concrete field
     String brand;
     
@@ -361,12 +428,32 @@ class Car extends Vehicle {
     }
 }
 
+class Bus extends Vehicle {
+    Bus() { super("Audi"); }  // Call parent constructor
+    
+    @Override
+    void start() {  // ✅ MUST implement abstract method
+        System.out.println("Bus starting...");
+    }
+}
+
 // Usage:
 // Vehicle v = new Vehicle();  // ❌ C.E: Vehicle is abstract; cannot be instantiated
 Vehicle v = new Car();  // ✅ Reference of abstract type, object of concrete type
-v.start();  // Polymorphic call → "Car starting..."`} />
+v.start();  // Polymorphic call → "Car starting..."
+`} />
 
 #### 🔑 abstract Class Rules
+```
+abstract class rules:
+  ├── Cannot use new directly
+  ├── CAN have constructor (called by subclass via super())
+  ├── CAN have abstract + concrete methods
+  ├── CAN have fields, static members, constants
+  ├── CAN have 0 abstract methods (still not instantiable)
+  ├── Non-abstract subclass MUST implement all abstract methods
+  └── Abstract subclass may leave some abstract methods unimplemented
+```
 
 <CardGrid>
   <Card title="Cannot Be Instantiated" icon="error">
@@ -418,7 +505,8 @@ v.start();  // Polymorphic call → "Car starting..."`} />
 
 ### Subclass Implementation Rules
 
-<Code lang="java" title="Concrete subclass must implement ALL abstract methods" code={`abstract class Parent {
+<Code lang="java" title="Concrete subclass must implement ALL abstract methods" code={`
+abstract class Parent {
     abstract void methodOne();
     abstract void methodTwo();
 }
@@ -478,35 +566,50 @@ abstract class Child extends Parent {
     </tr>
     <tr>
       <td><code>abstract + synchronized</code></td>
-      <td><code>abstract</code> has no body to synchronize</td>
+      <td><code>synchronized</code> applies to method implementation/body, but <code>abstract</code> methods have no body</td>
       <td><code>abstract synchronized void method();</code> ❌</td>
+    </tr>
+    <tr>
+      <td><code>abstract + strictfp</code></td>
+      <td><code>abstract</code> methods have no implementation, so <code>strictfp</code> has no floating-point code to control</td>
+      <td><code>abstract strictfp void method();</code> ❌</td>
     </tr>
   </tbody>
 </table>
 
 ### For Classes
+```
+For TOP-LEVEL classes:
+┌──────────────┬─────────────────────────────────────────────────┐
+│ Modifier     │ Valid?   Notes                                   │
+├──────────────┼─────────────────────────────────────────────────┤
+│ public       │ ✅       one per file, matches filename          │
+│ (default)    │ ✅       package-private                         │
+│ abstract     │ ✅       cannot instantiate                      │
+│ final        │ ✅       cannot extend                           │
+│ sealed       │ ✅       restricted extension (Java 17+)         │
+│ public abstract│ ✅     abstract class accessible everywhere    │
+│ public final │ ✅       final class accessible everywhere       │
+│ public sealed│ ✅       sealed class accessible everywhere      │
+│ abstract final│ ❌      contradictory                           │
+│ protected    │ ❌       not valid for top-level                 │
+│ private      │ ❌       not valid for top-level                 │
+│ static       │ ❌       not valid for top-level                 │
+└──────────────┴─────────────────────────────────────────────────┘
 
-<table>
-  <thead>
-    <tr>
-      <th>Combination</th>
-      <th>Why Illegal</th>
-      <th>Example</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>final + abstract</code></td>
-      <td><code>final</code> prevents extension; <code>abstract</code> requires it → complete contradiction</td>
-      <td><code>final abstract class MyClass;</code> ❌</td>
-    </tr>
-    <tr>
-      <td><code>final class + abstract method</code></td>
-      <td><code>final</code> class cannot be extended; abstract method requires subclass implementation</td>
-      <td><code>final class X { abstract void m(); }</code> ❌</td>
-    </tr>
-  </tbody>
-</table>
+For NESTED classes — all four access levels valid:
+┌──────────────┬───────────────────────────────────────────────┐
+│ Modifier     │ Meaning                                        │
+├──────────────┼───────────────────────────────────────────────┤
+│ public       │ accessible everywhere                          │
+│ protected    │ same package + enclosing class subclasses      │
+│ (default)    │ same package only                              │
+│ private      │ enclosing class only                           │
+│ static       │ no outer instance reference                    │
+│ abstract     │ cannot instantiate directly                    │
+│ final        │ cannot extend                                  │
+└──────────────┴───────────────────────────────────────────────┘
+```
 
 <Aside type="danger">
 **Golden Rule**: `abstract` and `final` are **complete opposites** — they can never be combined on the same class or method. If you see this in an interview question, it's always a compile error.
@@ -597,7 +700,8 @@ With strictfp:
 • Critical for: financial calculations, scientific simulations, distributed consensus
 ```
 
-<Code lang="java" title="strictfp usage examples" code={`// Apply to entire class — all methods follow IEEE 754 strictly
+<Code lang="java" title="strictfp usage examples" code={`
+// Apply to entire class — all methods follow IEEE 754 strictly
 strictfp class FinancialCalculator {
     double computeInterest(double principal, double rate, int years) {
         return principal * Math.pow(1 + rate, years);  // Guaranteed consistent everywhere
@@ -646,6 +750,98 @@ abstract strictfp class ScientificBase {
     - Very specific edge cases in intermediate calculations
   </Card>
 </CardGrid>
+
+---
+## 🔬 static Modifier (Nested Classes Only)
+
+```java
+public class Outer {
+
+    // Static nested class — no reference to Outer instance needed
+    public static class Config {
+        int timeout;
+        String host;
+    }
+
+    // Inner class (non-static) — holds reference to Outer instance
+    public class Handler {
+        void handle() {
+            // can access Outer.this members
+            System.out.println(Outer.this.name);
+        }
+    }
+}
+
+// Usage:
+Outer.Config config = new Outer.Config();   // ✅ no Outer instance needed
+Outer outer = new Outer();
+Outer.Handler handler = outer.new Handler();// ✅ requires Outer instance
+```
+
+```
+static vs non-static nested class:
+  static nested:   no implicit Outer reference
+                   instantiated independently
+                   use for: helper classes, builders, DTOs
+
+  inner (non-static): holds implicit Outer.this reference
+                       cannot have static members (pre-Java 16)
+                       use for: iterators, event handlers
+                       memory trap: inner class prevents GC of outer
+```
+
+---
+
+## 🔬 sealed Class (Java 17+)
+
+```java
+// Restricts which classes can extend it
+// All permitted subclasses must be in same compilation unit
+// or explicitly listed
+
+public sealed class Shape
+    permits Circle, Rectangle, Triangle {
+    // only Circle, Rectangle, Triangle can extend Shape
+}
+
+// Each permitted subclass must be:
+// final    → no further extension
+// sealed   → further restricted extension
+// non-sealed → open extension (unseals that branch)
+
+public final class Circle extends Shape {
+    private final double radius;
+    public Circle(double radius) { this.radius = radius; }
+    public double area() { return Math.PI * radius * radius; }
+}
+
+public final class Rectangle extends Shape {
+    private final double width, height;
+    public Rectangle(double w, double h) { this.width=w; this.height=h; }
+    public double area() { return width * height; }
+}
+
+public non-sealed class Triangle extends Shape {
+    // non-sealed: anyone can extend Triangle
+}
+
+// sealed enables exhaustive pattern matching:
+double area = switch (shape) {
+    case Circle    c -> c.area();
+    case Rectangle r -> r.area();
+    case Triangle  t -> computeTriangleArea(t);
+    // no default needed — compiler knows all subtypes
+};
+```
+
+```
+sealed class rules:
+  ├── permits clause lists all direct subclasses
+  ├── permitted subclasses must extend the sealed class
+  ├── permitted subclasses: same package or same module
+  ├── each subclass must be: final | sealed | non-sealed
+  └── enables exhaustive switch without default
+```
 
 ---
 
@@ -714,7 +910,8 @@ abstract strictfp class ScientificBase {
 
 > Abstract classes enable the **Template Method Pattern** — define algorithm skeleton in abstract class, let subclasses fill in specific steps.
 
-<Code lang="java" title="Sorting algorithm framework using abstract class" code={`// Abstract base — defines template
+<Code lang="java" title="Sorting algorithm framework using abstract class" code={`
+// Abstract base — defines template
 abstract class SortingAlgorithm {
     
     // Template method: final = don't override the skeleton!
@@ -942,7 +1139,7 @@ new MergeSort().sort(data);   // Polymorphic call → merge sort logic`} />
 **Final Checklist for Class Design**:
 1. ✅ Start with **access level**: `public` for API, `default` for internals
 2. ✅ Ask: "Should this class be extended?" → `final` if no, `abstract` if template
-3. ✅ For numeric precision across platforms → consider `strictfp` (Java <17)
+3. ✅ For numeric precision across platforms → consider `strictfp` (Java \<17)
 4. ✅ Avoid illegal combinations: `abstract + final`, `abstract + private`, etc.
 5. ✅ Remember: `final` class ⇒ all methods implicitly final; fields NOT implicitly final
 6. ✅ Abstract class with no abstract methods is valid — useful for preventing instantiation while providing base functionality
@@ -952,7 +1149,8 @@ new MergeSort().sort(data);   // Polymorphic call → merge sort logic`} />
 
 ## 🧪 Test Your Understanding
 
-<Code lang="java" title="Predict compile/runtime behavior" code={`// Q1: Valid modifier combinations?
+<Code lang="java" title="Predict compile/runtime behavior" code={`
+// Q1: Valid modifier combinations?
 public final class A { }           // ?
 abstract final class B { }         // ?
 final abstract class C { }         // ?
@@ -996,6 +1194,41 @@ class User {
     }
 }
 `} />
+
+**Underlying primitive: vtable (virtual dispatch table) + klass metadata**
+
+```
+abstract class in JVM:
+  .class file flag: ACC_ABSTRACT
+  abstract method: ACC_ABSTRACT on method_info
+  vtable entry for abstract method: null pointer
+  invokespecial/invokevirtual on null vtable entry → AbstractMethodError
+
+final class in JVM:
+  .class file flag: ACC_FINAL
+  JVM: any attempt to load subclass of final class
+       → VerifyError during class loading
+  JIT: devirtualizes method calls
+       invokevirtual → direct call (no vtable lookup)
+       Result: inlining possible → significant perf gain
+
+sealed class in JVM (Java 17+):
+  New attribute: PermittedSubclasses
+  Lists permitted subclass names
+  JVM verifies at load time:
+    is this class in permitted list?
+    if not → IncompatibleClassChangeError
+
+static nested class:
+  No synthetic outer$this field in class bytecode
+  Instantiated normally: new Outer$Config()
+
+inner (non-static) class:
+  Compiler adds synthetic field: final Outer this$0
+  Constructor takes Outer reference as first param
+  javap shows: Outer$Handler(Outer)
+  This hidden reference prevents GC of outer instance
+```
 
 <details>
 <summary>✅ Click to reveal answers</summary>

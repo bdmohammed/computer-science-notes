@@ -1,0 +1,972 @@
+---
+title: C++ Iterative Statements
+slug: computer-languages/cpp/flow-control/iterative-statements
+description: Complete guide to for, range-based for, while, do-while loops — syntax rules, scope, undefined behavior traps, iterators, and modern C++20/23 features.
+sidebar:
+  label: "Loops"
+  badge:
+    text: Control Flow
+    variant: tip
+tags: [cpp, loops, for, while, do-while, range-for, iterator, interview, c++11, c++17, c++20, c++23]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔄 Iterative Overview
+```
+Iterative Statements
+│
+├── 🔵 Classic for
+│   ├── for(init; condition; update)
+│   ├── nested for
+│   ├── multiple variables
+│   └── omitted expressions
+│
+├── 🟢 while
+│   └── condition-first loop
+│
+├── 🟡 do...while
+│   └── body-first loop (runs at least once)
+│
+├── 🟣 Range-based for (C++11)
+│   ├── arrays
+│   ├── std::vector
+│   ├── std::list
+│   ├── std::set
+│   └── any range-capable type
+│
+├── 🔴 Iterator-based Iteration
+│   ├── begin()
+│   ├── end()
+│   ├── ++it
+│   ├── *it
+│   └── STL iterator categories
+│
+├── 🟠 STL Algorithms
+│   ├── std::for_each
+│   ├── std::transform
+│   ├── std::find
+│   ├── std::count_if
+│   ├── std::copy
+│   └── std::accumulate
+│
+├── 🟤 Ranges (C++20)
+│   ├── views::filter
+│   ├── views::transform
+│   ├── views::take
+│   ├── views::drop
+│   └── lazy evaluation
+│
+├── ⚡ Loop Control
+│   ├── break
+│   ├── continue
+│   ├── return
+│   └── goto
+│
+├── 🔄 Nested Iteration
+│   ├── nested for
+│   ├── nested while
+│   └── mixed nesting
+│
+└── ⚙️ Internals
+    ├── iterator abstraction
+    ├── input/output iterators
+    ├── forward iterators
+    ├── bidirectional iterators
+    ├── random-access iterators
+    ├── range concepts
+    └── compiler loop optimizations
+```
+
+---
+
+## `for` Loop
+
+> The most commonly used loop — ideal when the **number of iterations is known in advance**.
+
+> The classic C-style loop — ideal when you need **index access** or **complex control**.
+
+---
+
+### 🔑 Syntax & Execution Flow
+
+```cpp
+// Syntax
+for (initialization; condition; update) {
+    // body
+}
+
+// Classic counted loop
+for (int i = 0; i < 5; i++) {
+    std::cout << i << " ";  // 0 1 2 3 4
+}
+
+// Execution order:
+// 1. initialization (once)
+// 2. condition check
+// 3. body (if condition true)
+// 4. update
+// 5. goto 2
+```
+
+```
+for flow:
+    initialization
+            │
+            ▼
+  ┌───────────────────┐
+  │ evaluate condition│◄──────────────────┐
+  └────────┬──────────┘                   │
+           │                              │
+    ┌──────┴──────┐                       │
+  false          true                     │
+    │              │                      │
+    ▼         execute body                │
+ exit loop         │                      │
+              execute update──────────────┘
+```
+
+---
+
+### 🔬 The Three Sections — Deep Dive
+
+---
+
+#### 1. Initialization Section
+
+- Executed **exactly once** at loop start.
+- Can declare variables (scoped to loop) or use existing ones.
+- **Multiple variables allowed**, separated by commas.
+
+<Code lang="cpp" title="✅ Valid initialization patterns" code={`
+// Multiple same-type variables
+for (int i = 0, j = 10; i < j; ++i, --j) { 
+    std::cout << i << " " << j << '\\n';
+}
+// 0 10, 1 9, 2 8, 3 7, 4 6
+
+// C++17: Structured bindings in init (advanced)
+// for (auto [it, end] = std::make_pair(v.begin(), v.end()); it != end; ++it) { ... }
+
+// Any valid C++ statement allowed (even println!)
+int i = 0;
+for (std::cout << "Starting...\n"; i < 3; i++) {
+    std::cout << "Loop body\n";
+}
+//Starting...
+//Loop body
+//Loop body
+//---execution end---
+
+// Pre-declared variable
+// Empty sections — all three optional
+int i = 0;
+for (; i < 5; i++) { }  // initialization optional
+
+// Infinite loop
+for (;;) {                  // all three empty
+    // runs forever
+}
+
+// Reverse iteration
+for (int i = arr.length - 1; i >= 0; i--) {
+    std::cout << arr[i] << " ";
+}
+
+// Step by 2
+for (int i = 0; i < 10; i += 2) {
+    std::cout << i << " ";  // 0 2 4 6 8
+}
+`} />
+
+<Code lang="cpp" title="❌ Invalid initialization" code={`
+// Redeclaring in same scope
+int i = 0;
+for (int i = 0; i < 5; i++) { }                     // ❌ C.E: Variable i is already defined in this scope
+
+// Different types in same declaration statement
+// for (int i = 0, double d = 1.0; i < 5; ++i) { }  // ❌ Error: mixed declarations
+
+// Fix: Use separate statements or same type
+int i = 0;
+double d = 1.0;
+for (; i < 5; ++i, d += 1.0) { }
+
+// Redeclaring type keyword
+for (int i = 0, int j = 0; i < 5; i++) { }          // ❌ C.E: not a statement
+`} />
+
+---
+
+#### 2. Condition Section
+
+- Must evaluate to something **contextually convertible to `bool`**.
+- **Optional** — if omitted, treated as `true` (infinite loop).
+- Checked **before each iteration**.
+
+<Code lang="cpp" title="Condition examples" code={`
+// Standard boolean expression
+for (int i = 0; i < 10; ++i) { }
+
+// Omitted condition = infinite loop
+for (int i = 0; ; ++i) {  // condition defaults to true
+    if (i >= 10) break;   // manual exit required
+}
+
+// Function call returning bool
+bool hasMore(int i);
+for (int i = 0; hasMore(i); ++i) { }
+
+// ⚠️ C++ Trap: Implicit conversion to bool
+int x = 5;
+if (x) { }              // ✅ Valid: 5 is true
+for (; x; --x) { }      // ✅ Valid: loops until x becomes 0
+`} />
+
+---
+
+#### 3. Update Section
+
+- Executed **after each iteration** (after body).
+- Can be any valid expression statement.
+- Multiple updates allowed with comma operator.
+
+<Code lang="cpp" title="Update section flexibility" code={`
+// Standard increment
+for (int i = 0; i < 5; ++i) { }
+
+// Multiple updates
+for (int i = 0, j = 10; i < j; ++i, --j) { }
+
+// Side effects in update (discouraged but valid)
+for (int i = 0; i < 3; std::cout << "Update: " << i++ << '\\n') {
+    std::cout << "Body: " << i << '\\n';
+}
+`} />
+
+---
+
+### 🧱 Braces & Body Rules
+
+<Code lang="cpp" title="Braces are optional for single statement" code={`
+// ✅ Valid: single statement, no braces
+for (int i = 0; i < 3; ++i)
+    std::cout << i;
+
+// ❌ Invalid: declarative statement without braces
+// for (int i = 0; i < 3; ++i)
+//     int x = 10;  // ❌ Error: expected primary-expression before 'int'
+
+// ⚠️ Dangerous: only first line is part of loop
+for (int i = 0; i < 3; i++)
+    System.out.println(i);
+    System.out.println("always prints");  // NOT part of loop!
+
+// ✅ Fix: use braces for declarations
+for (int i = 0; i < 3; ++i) {
+    int x = 10;  // x scoped to loop body
+}
+
+`} />
+
+<Aside type="caution">
+**Best Practice**: **Always use braces**, even for single statements. Prevents bugs when adding lines later and improves readability.
+</Aside>
+
+---
+
+## ⚠️ `for` Loop — Undefined Behavior & Infinite Loops
+
+Unlike Java, C++ compilers **do not** generally enforce "unreachable code" errors for infinite loops at compile time (unless optimized with specific flags). Instead, infinite loops often lead to **runtime hangs** or **Undefined Behavior** if they involve signed overflow.
+
+<Card title="Case 1: Infinite Loop" icon="caution">
+    ```cpp
+        for (int i = 0; true; ++i) {
+            std::cout << "hello";
+        }
+        std::cout << "hi";  // ⚠️ Never reached at runtime.
+        // Compiler MAY warn, but usually compiles fine.
+    ```
+</Card>
+
+<Card title="Case 2: Signed Overflow UB" icon="error">
+    ```cpp
+        // ⚠️ DANGER: Signed integer overflow is Undefined Behavior in C++
+        for (int i = 0; i >= 0; ++i) {
+            // i will eventually overflow INT_MAX
+            // UB: Compiler may assume this never happens and optimize loop away!
+            std::cout << i;
+        }
+        // ✅ Fix: Use unsigned types for wrap-around logic
+        for (unsigned int i = 0; i >= 0; ++i) { /* wraps safely */ }
+    ```
+</Card>
+
+<Card title="Case 3: Omitted condition" icon="caution">
+    ```cpp
+        for (int i = 0; ; ++i) {  // infinite loop
+            if (i > 10) break;
+        }
+        std::cout << "Done";  // Reached after break
+    ```
+</Card>
+
+<Aside type="tip">
+**Compiler Optimization Note**: Modern compilers (GCC, Clang) may optimize away loops that have no side effects and rely on signed overflow, assuming UB doesn't happen. Always use `-fsanitize=undefined` during testing to catch these issues.
+</Aside>
+
+---
+
+## 🔄 `for` Loop Variations & Traps
+
+<Card title="Variation 1: Multiple variables" icon="rocket">
+    ```cpp
+        // Same type only in declaration
+        for (int i = 0, j = 10; i < j; ++i, --j) {
+            std::cout << i << " " << j << '\\n';
+        }
+    ```
+</Card>
+
+<Card title="Variation 2: Infinite loop pattern" icon="shield">
+    ```cpp
+        // Classic infinite loop with break
+        for (;;) {
+            if (shouldExit()) break;
+            process();
+        }
+        // Equivalent to: while (true) { ... }
+    ```
+</Card>
+
+<Card title="Trap 1: Modifying loop variable inside body" icon="error">
+    ```cpp
+        for (int i = 0; i < 5; ++i) {
+            std::cout << i << " ";  // prints: 0 2 4
+            ++i;  // ⚠️ Extra increment — skips every other value!
+        }
+        // Flow: i=0 → print 0 → ++i(body)→1 → ++i(update)→2 → check 2<5 → ...
+    ```
+
+    <Aside type="caution">
+        **Fix**: Avoid modifying loop variable inside body unless intentional.
+    </Aside>
+</Card>
+
+<Card title="Trap 2: Loop variable scope" icon="approve-check">
+    ```cpp
+        for (int i = 0; i < 5; ++i) { }
+        // std::cout << i;  // ❌ Error: 'i' was not declared in this scope
+        // i declared in for-init → scoped to loop only (C++ standard)
+
+        // ✅ Fix: Declare outside if needed after loop
+        int i;
+        for (i = 0; i < 5; ++i) { }
+        std::cout << i;  // ✅ 5
+    ```
+</Card>
+
+<Card title="Trap 3: Empty body semicolon" icon="caution">
+    ```cpp
+        // Semicolon = empty statement as loop body
+        for (int i = 0; i < 5; ++i);  // ← semicolon ends loop!
+        std::cout << "Done";   // Runs once after loop
+
+        // Common bug: accidental semicolon after for()
+        // ✅ Fix: Remove semicolon or add braces
+        for (int i = 0; i < 5; ++i) {
+            std::cout << i;
+        }
+    ```
+</Card>
+
+---
+
+## Range-Based `for` Loop (C++11) — Modern Standard
+
+> Simplified syntax for **traversing arrays, containers, and initializer lists**. Replaces Java's for-each.
+
+---
+
+### 🔑 Syntax
+
+```cpp
+// C++11/14
+for (declaration : range) {
+    // use declaration
+}
+
+// C++17: With initializer (similar to if-init)
+for (init-statement; declaration : range) {
+    // ...
+}
+```
+
+<Code lang="cpp" title="Range-based for examples" code={`
+#include <iostream>
+#include <vector>
+#include <array>
+
+int main() {
+    // Array traversal
+    int arr[] = {10, 20, 30, 40};
+    for (int num : arr) {
+        std::cout << num << " ";  // 10 20 30 40
+    }
+    
+    // Vector traversal
+    std::vector<std::string> names = {"Alice", "Bob", "Charlie"};
+    for (const auto& name : names) {  // ✅ const ref avoids copy
+        std::cout << name << " ";
+    }
+    
+    // C++17: Init-statement
+    if (std::vector<int> v = {1, 2, 3}; !v.empty()) {
+        for (const auto& val : v) {
+            std::cout << val << " ";
+        }
+    }
+    
+    return 0;
+}
+`} />
+
+---
+
+### Works On
+
+| Container | Works? |
+|---|---|
+| C-style array | ✅ |
+| `std::vector`, `std::list`, etc. | ✅ |
+| `std::string` | ✅ |
+| Any type with `begin()` / `end()` | ✅ |
+| `std::initializer_list` | ✅ |
+| Raw pointer | ❌ — no size info |
+
+```cpp
+std::vector<int> v = {1, 2, 3, 4, 5};
+
+// By value — COPY of each element
+for (int x : v) { x = 0; }    // modifies copy, NOT v
+
+// By reference — modify original
+for (int& x : v) { x *= 2; }  // modifies v
+
+// By const reference — read only, no copy
+for (const int& x : v) { std::cout << x; }
+
+// auto — let compiler decide
+for (auto x : v) { }          // copy
+for (auto& x : v) { }         // reference
+for (const auto& x : v) { }   // const ref ← production default
+```
+
+
+---
+
+### What Range-Based For Expands To
+
+```cpp
+for (const auto& x : v) { body; }
+
+// Compiler generates:
+{
+    auto&& __range = v;
+    auto __begin = __range.begin();
+    auto __end   = __range.end();
+    for (; __begin != __end; ++__begin) {
+        const auto& x = *__begin;
+        body;
+    }
+}
+```
+
+---
+
+### Range-Based For with Index (C++20)
+
+```cpp
+// C++20 — initializer in range-for
+for (int i = 0; const auto& x : v) {
+    std::cout << i << ": " << x << "\n";
+    i++;
+}
+```
+
+---
+
+### Lifetime Trap in Range-Based For
+
+```cpp
+// ❌ Dangling reference — range destroyed before loop ends
+for (auto x : get_vector()) { }    // ✅ safe — rvalue bound to __range
+
+// ❌ Dangerous case:
+for (auto& x : get_string()) { }   // temporary string → destroyed → UB
+                                    // __range = string&&, but string gone
+
+// ✅ Explicit lifetime extension
+auto s = get_string();
+for (auto& x : s) { }
+```
+
+---
+
+### ⚠️ Limitations & Best Practices
+
+<Card title="Cannot access index directly" icon="error">
+    ```cpp
+        std::vector<int> arr = {10, 20, 30};
+        for (int num : arr) {
+            // ❌ No built-in index
+        }
+        // ✅ Fix: Use traditional for loop or indexed access
+        for (size_t i = 0; i < arr.size(); ++i) {
+            std::cout << "arr[" << i << "] = " << arr[i];
+        }
+        // ✅ C++20: std::views::enumerate (third-party or C++23 proposal)
+    ```
+</Card>
+
+<Card title="Modifying elements" icon="approve-check">
+    ```cpp
+        std::vector<int> arr = {1, 2, 3};
+
+        // ❌ Read-only copy (primitives)
+        for (int x : arr) {
+            x = 99;  // Modifies copy, NOT original array!
+        }
+
+        // ✅ Modify original: use reference
+        for (int& x : arr) {
+            x = 99;  // ✅ Modifies actual element
+        }
+
+        // ✅ Read-only efficient: use const reference
+        for (const int& x : arr) {
+            // std::cout << x;
+        }
+    ```
+</Card>
+
+<Card title="Cannot remove from Container during iteration" icon="error">
+    ```cpp
+        std::vector<std::string> list = {"A", "B", "C"};
+        for (const auto& s : list) {
+            if (s == "B") {
+                // list.erase(...);  // ❌ Invalidates iterators! UB/Crash
+            }
+        }
+
+        // ✅ Fix: Use erase-remove idiom (C++20) or manual iterator
+        std::erase(list, "B");  // C++20: Safe and clean
+        // Or C++17: list.erase(std::remove(list.begin(), list.end(), "B"), list.end());
+    ```
+</Card>
+
+<Card title="Dangling References with Temporaries" icon="danger">
+    ```cpp
+        // ❌ DANGEROUS: Binding reference to temporary
+        std::vector<int> getVec();
+        for (const auto& x : getVec()) {
+            // getVec() returns temporary vector.
+            // It is destroyed at end of full expression.
+            // x is a dangling reference! UB!
+        }
+
+        // ✅ Fix: Store in named variable first
+        auto vec = getVec();
+        for (const auto& x : vec) {
+            // Safe: vec lives long enough
+        }
+    ```
+</Card>
+
+---
+
+### 🎯 When to Use Range-Based For
+
+✅ **Use range-based for when**:
+- Reading/traversing all elements sequentially.
+- Index not needed.
+- No structural modification (insertion/deletion) needed.
+- Code clarity is priority.
+
+❌ **Use traditional for when**:
+- Index access needed.
+- Reverse traversal needed (`std::rbegin`/`rend` helps though).
+- Removing items from Collection during iteration.
+- Skipping elements (step > 1).
+
+---
+
+## `while` Loop
+
+> Use when **number of iterations is NOT known in advance** — condition checked **before** each iteration.
+
+---
+
+### 🔑 Syntax & Rules
+
+```cpp
+    while (condition) {  // condition must be contextually convertible to bool
+        // body
+    }
+
+    // Condition checked BEFORE body — may never execute
+    int i = 0;
+    while (i < 5) {
+        std::cout << i << " ";  // 0 1 2 3 4
+        i++;
+    }
+
+    // Zero iterations — condition false from start
+    int x = 10;
+    while (x < 5) {
+        std::cout << "never";    // never executes
+    }
+
+    // Infinite loop — common server pattern
+    while (true) {
+        Request req = server.accept();
+        handle(req);
+        // exits only via break, return, or exception
+    }
+```
+
+```
+while flow:
+  ┌─────────────────────────┐
+  │  evaluate condition      │◄────────────────┐
+  └────────────┬────────────┘                  │
+               │                               │
+        ┌──────┴──────┐                        │
+      false          true                      │
+        │              │                       │
+        ▼         execute body─────────────────┘
+   exit loop
+```
+
+---
+
+### ⚠️ `while` Loop — Key Rules
+
+1. **Condition must be convertible to `bool`**.
+2. **Braces optional** for single statement.
+3. **No compile-time unreachable code error** generally (unlike Java), but compilers may warn.
+
+<Code lang="cpp" title="✅ Valid: Implicit bool conversion" code={`
+int* ptr = nullptr;
+while (ptr) {  // Valid: checks if ptr is not nullptr
+    // ...
+}
+
+int x = 5;
+while (x) {  // Valid: checks if x is non-zero
+    --x;
+}
+`} />
+
+---
+
+### 🎯 Classic `while` Use Cases
+
+<Code lang="cpp" title="Reading input until EOF" code={`
+#include <iostream>
+
+int main() {
+    int n;
+    // Reads integers until EOF or invalid input
+    while (std::cin >> n) {
+        std::cout << "Read: " << n << '\\n';
+    }
+    return 0;
+}
+`} />
+
+<Code lang="cpp" title="Processing Linked List" code={`
+struct Node { int data; Node* next; };
+
+void printList(Node* head) {
+    Node* current = head;
+    while (current != nullptr) {
+        std::cout << current->data << " ";
+        current = current->next;
+    }
+}
+`} />
+
+---
+
+## `do-while` Loop
+
+> **Executes body at least once** — condition checked **after** each iteration.
+
+### 🔑 Syntax & Key Difference
+
+```cpp
+do {
+    // body — always executes at least once
+} while (condition);   // condition checked AFTER body 
+                       // semicolon required
+
+// At least one execution guaranteed
+int i = 10;
+do {
+    std::cout << i << " ";  // Prints 10! (even though condition false)
+    i++;
+} while (i < 5);            // false — loop exits after first iteration
+
+// Classic use — menu driven programs
+do {
+    printMenu();
+    int choice = scanner.nextInt();
+    processChoice(choice);
+} while (choice != 0);      // keep going until user chooses 0
+```
+
+```
+do-while flow:
+  ┌─────────────┐
+  │ execute body │◄────────────────┐
+  └──────┬──────┘                  │
+         │                         │
+  evaluate condition               │
+         │                         │
+  ┌──────┴──────┐                  │
+false          true─────────────────┘
+  │
+  ▼
+exit loop
+```
+---
+
+### 🔄 `while` vs `do-while` Comparison
+
+```text
++----------------------+-----------------------------------+----------------------------------------+
+| Feature              | while                             | do-while                               |
++----------------------+-----------------------------------+----------------------------------------+
+| Condition check      | Before body (pre-test)            | After body (post-test)                 |
++----------------------+-----------------------------------+----------------------------------------+
+| Minimum executions   | 0 (may never run)                 | 1 (always runs once)                   |
++----------------------+-----------------------------------+----------------------------------------+
+| Syntax               | while (cond) { }                  | do { } while (cond);                   |
++----------------------+-----------------------------------+----------------------------------------+
+| Semicolon required   | ❌ No                             | ✅ Yes (after while)                  |
++----------------------+-----------------------------------+----------------------------------------+
+| Best for             | Unknown iterations, may skip      | Must run at least once                 |
+|                      |                                   | (e.g., menu)                           |
++----------------------+-----------------------------------+----------------------------------------+
+```
+
+> 🔑 `do-while` is the only loop guaranteed to execute **at least once**. The condition is checked **after** the body. The semicolon after `while(condition)` is mandatory — its absence is a compile error.
+
+---
+
+### ⚠️ `do-while` Rules & Traps
+
+<Card title="Braces optional for single non-declarative statement" icon="approve-check">
+    ```cpp
+        // ✅ Valid
+        do
+            std::cout << "hello" << std::endl;
+        while (true);  // ← semicolon required!
+        
+        // ❌ Invalid: declarative without braces
+        do
+            int x = 10;  // ❌ C.E
+        while (true);
+        
+        // ✅ Fix: use braces
+        do {
+            int x = 10;
+        } while (true);
+    ```
+</Card>
+
+<Card title="Semicolon after while is mandatory" icon="error">
+    ```cpp
+        do {
+            std::cout << "hello";
+        } while (true)  // ❌ Error: expected ';' after while condition
+    ```
+</Card>
+
+<Card title="Macro Pitfall" icon="caution">
+    ```cpp
+        // When using do-while in macros, always wrap in do { ... } while(0)
+        #define SAFE_CALL(x) do {
+            if (!x) logError();
+        } while(0)
+
+        // This ensures the macro behaves like a single statement
+        if (condition)
+            SAFE_CALL(func());
+        else
+            doSomethingElse();
+    ```
+</Card>
+
+---
+
+### 🎯 Classic `do-while` Use Case: Menu Systems
+
+<Code lang="cpp" title="Menu that shows at least once" code={`
+#include <iostream>
+
+int main() {
+    int choice;
+    do {
+        std::cout << "1. Start  2. Settings  3. Exit\\n";
+        std::cout << "Choose: ";
+        std::cin >> choice;
+        
+        switch (choice) {
+            case 1: std::cout << "Starting...\\n"; break;
+            case 2: std::cout << "Settings...\\n"; break;
+            case 3: std::cout << "Goodbye!\\n"; break;
+            default: std::cout << "Invalid choice\\n";
+        }
+    } while (choice != 3);  // Repeat until user chooses Exit
+    
+    return 0;
+}
+`} />
+
+---
+
+## 🔁 Iterators in C++ — STL Pattern
+
+C++ uses **Iterators** extensively, similar to Java's `Iterator`, but more powerful (random access, bidirectional, etc.).
+
+---
+
+### 🔑 Core Concepts
+
+<Card title="Iterator Concept" icon="information">
+    ```cpp
+        // Iterators generalize pointers.
+        // begin() returns iterator to first element.
+        // end() returns iterator to one-past-last element.
+
+        std::vector<int> v = {1, 2, 3};
+
+        // Manual iteration
+        for (auto it = v.begin(); it != v.end(); ++it) {
+            std::cout << *it << " ";  // Dereference to get value
+        }
+
+        // Range-based for is syntactic sugar for this!
+    ```
+</Card>
+
+<Card title="Const Iterators" icon="backspace">
+    ```cpp
+        const std::vector<int> cv = {1, 2, 3};
+
+        // ✅ Use cbegin/cend for read-only access
+        for (auto it = cv.cbegin(); it != cv.cend(); ++it) {
+            // *it = 5;  // ❌ Error: assignment of read-only location
+            std::cout << *it;
+        }
+    ```
+</Card>
+
+---
+
+### 💻 Practical Usage: Erase-Remove Idiom
+
+<Code lang="cpp" title="Removing elements safely" code={`
+#include <vector>
+#include <algorithm>
+#include <iostream>
+
+int main() {
+    std::vector<int> nums = {1, 2, 3, 4, 5, 3};
+    
+    // ❌ Don't erase inside range-for or simple iterator loop without care
+    
+    // ✅ C++20: std::erase (simplest)
+    std::erase(nums, 3);  // Removes all 3s
+    
+    // ✅ C++17: Erase-Remove Idiom
+    nums.erase(std::remove(nums.begin(), nums.end(), 3), nums.end());
+    
+    for (int n : nums) {
+        std::cout << n << " ";  // 1 2 4 5
+    }
+    
+    return 0;
+}
+`} />
+
+---
+
+## 🔬 Under the Hood — Assembly
+
+### `for` Loop
+
+```cpp
+for (int i = 0; i < 5; i++) {
+    arr[i] = i * 2;
+}
+```
+
+```asm
+; x86-64
+xor  eax, eax          ; i = 0
+
+.loop_start:
+cmp  eax, 5            ; i < 5?
+jge  .loop_end         ; if not → exit
+
+; body: arr[i] = i * 2
+lea  ecx, [eax + eax]  ; i * 2
+mov  [arr + rax*4], ecx
+
+inc  eax               ; i++
+jmp  .loop_start
+
+.loop_end:
+```
+
+---
+
+### Loop Optimizations Compiler Applies
+
+```
+1. Loop unrolling — repeat body N times, reduce branch overhead
+   for i in 0..8 → do 8 iterations without checking condition each time
+
+2. Vectorization (SIMD) — process 4/8/16 elements per iteration
+   int sum loop → use SSE/AVX to sum 8 ints per cycle
+
+3. Loop invariant code motion — move constant expressions out
+   for(i) { x = heavy_func(constant); ... }
+   → heavy_func called once, not N times
+
+4. Strength reduction — replace expensive ops with cheap ones
+   i * 8 in loop body → i << 3, or just add 8 each iteration
+
+5. Auto-vectorization — -O2 and above
+   sequential array reads/writes → SIMD width operations
+```
+
+```cpp
+// ✅ Write loops to help the vectorizer
+// Contiguous memory, no aliasing, simple body
+
+// ❌ Kills vectorization:
+for (int i = 0; i < n; i++) {
+    result[i] = func(src[i]);   // func is non-trivial — can't vectorize
+}
+
+// ✅ Vectorizer-friendly:
+for (int i = 0; i < n; i++) {
+    result[i] = src[i] * 2 + 1;  // simple arithmetic — auto-vectorized
+}
+```
+
+---

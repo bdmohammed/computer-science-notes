@@ -1,0 +1,908 @@
+---
+title: PostgreSQL FIRST_VALUE, LAST_VALUE, NTH_VALUE
+slug: computer-query-languages/postgresql/window-functions/first-last-nth-value
+description: Learn to use FIRST_VALUE, LAST_VALUE, and NTH_VALUE window functions in PostgreSQL for fetching specific row values within a partition.
+sidebar:
+  label: "FIRST_VALUE, LAST_VALUE, NTH_VALUE"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, running-total, moving-average, analytics, finance, interview]
+---
+
+
+# 📄 FIRST_VALUE, LAST_VALUE, NTH_VALUE
+
+---
+
+## 🧠 One-Line Mental Model
+
+> **FIRST_VALUE fetches the first row's value in the window, LAST_VALUE fetches the last — but LAST_VALUE has a lethal default frame trap that makes it return the current row's value instead of the partition's last, and NTH_VALUE fetches any specific position — all three let you broadcast boundary or reference values across every row without a JOIN.**
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← FIRST_VALUE / LAST_VALUE / NTH_VALUE computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+```sql
+-- All three are window functions — require OVER clause
+-- All three return a value FROM a specific position in the window frame
+
+SELECT
+  name,
+  salary,
+  FIRST_VALUE(salary) OVER (PARTITION BY dept ORDER BY salary DESC) AS highest_in_dept,
+  LAST_VALUE(salary)  OVER (PARTITION BY dept ORDER BY salary DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING
+                                     AND UNBOUNDED FOLLOWING)      AS lowest_in_dept,
+  NTH_VALUE(salary, 2) OVER (PARTITION BY dept ORDER BY salary DESC
+                              ROWS BETWEEN UNBOUNDED PRECEDING
+                                       AND UNBOUNDED FOLLOWING)    AS second_in_dept
+FROM employees;
+```
+
+---
+
+## 1️⃣ FIRST_VALUE — Fetch the First Row's Value
+
+### What It Does
+
+```
+FIRST_VALUE(col) returns the value of col from the FIRST row
+in the current window frame.
+
+employees (sorted by salary DESC within Engineering):
+┌──────────┬────────┐
+│ name     │ salary │
+├──────────┼────────┤
+│ Raj      │ 120000 │ ← FIRST (highest salary)
+│ Sharma   │ 115000 │
+│ Priya    │ 110000 │
+│ Dev      │  90000 │ ← LAST (lowest salary)
+└──────────┴────────┘
+
+FIRST_VALUE(salary) OVER (PARTITION BY dept ORDER BY salary DESC):
+  Raj:    120000  ← the first row's value (itself)
+  Sharma: 120000  ← same first row's value ✅
+  Priya:  120000  ← same first row's value ✅
+  Dev:    120000  ← same first row's value ✅
+
+All rows in the partition see the SAME value (the first row's) ✅
+```
+
+### Basic Syntax
+
+```sql
+-- Attach highest salary to every employee in their dept
+SELECT
+  name,
+  department,
+  salary,
+  FIRST_VALUE(salary) OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) AS dept_max_salary,
+
+  -- Gap from top
+  FIRST_VALUE(salary) OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) - salary AS gap_from_top,
+
+  -- Who is the top earner?
+  FIRST_VALUE(name) OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) AS top_earner_name
+
+FROM employees
+WHERE is_active = true
+ORDER BY department, salary DESC;
+```
+
+```
+Result:
+┌──────────┬──────────────┬────────┬──────────────────┬─────────────┐
+│ name     │ department   │ salary │ dept_max_salary  │ gap_from_top│
+├──────────┼──────────────┼────────┼──────────────────┼─────────────┤
+│ Raj      │ Engineering  │ 120000 │     120000       │      0      │← top
+│ Sharma   │ Engineering  │ 115000 │     120000       │   5000      │
+│ Priya    │ Engineering  │ 110000 │     120000       │  10000      │
+│ Dev      │ Engineering  │  90000 │     120000       │  30000      │
+│ Sam      │ Sales        │  85000 │      85000       │      0      │← top
+│ Ankit    │ Sales        │  75000 │      85000       │  10000      │
+└──────────┴──────────────┴────────┴──────────────────┴─────────────┘
+```
+
+### FIRST_VALUE and the Frame
+
+```sql
+-- FIRST_VALUE works correctly with ANY frame because
+-- "first" = first row in the frame, not just the partition
+
+-- Default frame (with ORDER BY): RANGE UNBOUNDED PRECEDING TO CURRENT ROW
+-- FIRST_VALUE always returns first row of frame → works correctly ✅
+
+-- Explicit frame (recommended for clarity)
+FIRST_VALUE(salary) OVER (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+)
+-- Same result — first row from start of partition to current row
+-- = always the partition's first row ✅
+```
+
+> 🎯 **FIRST_VALUE is safe with default frame — the "first" row of the cumulative frame is always the partition's first row, regardless of where current row is.**
+
+---
+
+## 2️⃣ LAST_VALUE — The Lethal Frame Trap
+
+**This is the most misunderstood window function. Get this right and you'll impress any interviewer.**
+
+### The Default Frame Problem
+
+```sql
+-- ❌ WRONG — returns CURRENT row's value, not partition's last!
+SELECT
+  name, salary,
+  LAST_VALUE(salary) OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+    -- Default frame: RANGE UNBOUNDED PRECEDING TO CURRENT ROW
+    --                                              ↑
+    --              frame ends at CURRENT ROW, not partition end!
+  ) AS dept_min_salary
+FROM employees;
+```
+
+```
+Why LAST_VALUE with default frame is broken:
+
+Frame shrinks to "rows up to current":
+
+For Raj (row 1):    frame=[Raj]           → LAST_VALUE = Raj's salary  = 120000 ❌
+For Sharma (row 2): frame=[Raj, Sharma]   → LAST_VALUE = Sharma's sal  = 115000 ❌
+For Priya (row 3):  frame=[Raj,Sharma,Priya]→LAST_VALUE=Priya's salary = 110000 ❌
+For Dev (row 4):    frame=[Raj,Sharma,Priya,Dev]→LAST_VALUE=Dev's sal  = 90000  ❌
+
+Every row returns ITS OWN salary — not the partition minimum!
+LAST_VALUE effectively becomes "current value" with default frame 💀
+```
+
+```sql
+-- ✅ CORRECT — must explicitly expand frame to partition end
+SELECT
+  name, salary,
+  LAST_VALUE(salary) OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING    -- from start
+             AND UNBOUNDED FOLLOWING    -- to END of partition ✅
+  ) AS dept_min_salary
+FROM employees;
+```
+
+```
+With ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING:
+
+For Raj (row 1):    frame=[Raj,Sharma,Priya,Dev] → LAST_VALUE = 90000 ✅
+For Sharma (row 2): frame=[Raj,Sharma,Priya,Dev] → LAST_VALUE = 90000 ✅
+For Priya (row 3):  frame=[Raj,Sharma,Priya,Dev] → LAST_VALUE = 90000 ✅
+For Dev (row 4):    frame=[Raj,Sharma,Priya,Dev] → LAST_VALUE = 90000 ✅
+
+All rows see the ENTIRE partition → LAST_VALUE = true last row ✅
+```
+
+```
+The fix — always explicit frame for LAST_VALUE:
+
+LAST_VALUE(col) OVER (
+  PARTITION BY ...
+  ORDER BY ...
+  ROWS BETWEEN UNBOUNDED PRECEDING   ← from partition start
+           AND UNBOUNDED FOLLOWING   ← to partition end ✅
+)
+```
+
+> 🎯 **Interview gold:** *"What's wrong with `LAST_VALUE(salary) OVER (PARTITION BY dept ORDER BY salary)`?"*
+> **A:** The default frame is `RANGE UNBOUNDED PRECEDING TO CURRENT ROW`. LAST_VALUE returns the last row of the frame — which is the current row. So it returns each row's own value, not the partition minimum. Fix: add `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` to expand frame to the entire partition.
+
+### FIRST_VALUE vs LAST_VALUE with Default Frame
+
+```
+Why FIRST_VALUE works but LAST_VALUE doesn't with default frame:
+
+Default frame: UNBOUNDED PRECEDING → CURRENT ROW (cumulative)
+
+FIRST_VALUE: always returns FIRST row of frame
+  Frame always starts at partition start (UNBOUNDED PRECEDING)
+  → FIRST row never changes → always returns partition's first value ✅
+
+LAST_VALUE: returns LAST row of frame
+  Frame ENDS at CURRENT ROW
+  → LAST row = current row → returns own value ❌
+
+This asymmetry is why FIRST_VALUE "just works" and
+LAST_VALUE requires explicit UNBOUNDED FOLLOWING frame.
+```
+
+---
+
+## 3️⃣ NTH_VALUE — Fetch Any Position
+
+```sql
+-- NTH_VALUE(col, n): fetch value from the Nth row in the frame
+
+SELECT
+  name,
+  department,
+  salary,
+  NTH_VALUE(salary, 1) OVER w AS first_salary,   -- same as FIRST_VALUE
+  NTH_VALUE(salary, 2) OVER w AS second_salary,  -- 2nd highest
+  NTH_VALUE(salary, 3) OVER w AS third_salary,   -- 3rd highest
+  NTH_VALUE(name,   2) OVER w AS second_name     -- name of 2nd highest
+FROM employees
+WINDOW w AS (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING  -- full partition ✅
+)
+ORDER BY department, salary DESC;
+```
+
+```
+Result:
+┌──────────┬──────────────┬────────┬───────────────┬───────────────┬───────────────┐
+│ name     │ department   │ salary │ first_salary  │ second_salary │ third_salary  │
+├──────────┼──────────────┼────────┼───────────────┼───────────────┼───────────────┤
+│ Raj      │ Engineering  │ 120000 │    120000     │    115000     │    110000     │
+│ Sharma   │ Engineering  │ 115000 │    120000     │    115000     │    110000     │
+│ Priya    │ Engineering  │ 110000 │    120000     │    115000     │    110000     │
+│ Dev      │ Engineering  │  90000 │    120000     │    115000     │    110000     │
+└──────────┴──────────────┴────────┴───────────────┴───────────────┴───────────────┘
+
+All rows see the same reference values from their partition ✅
+```
+
+### NTH_VALUE NULL Behavior
+
+```sql
+-- NTH_VALUE returns NULL when Nth row doesn't exist
+-- If partition has 3 rows and you ask for NTH_VALUE(col, 5) → NULL
+
+SELECT
+  name, department, salary,
+  NTH_VALUE(salary, 1) OVER w AS pos_1,   -- always exists ✅
+  NTH_VALUE(salary, 5) OVER w AS pos_5,   -- NULL if fewer than 5 rows
+  NTH_VALUE(salary, 10) OVER w AS pos_10  -- NULL if fewer than 10 rows
+FROM employees
+WINDOW w AS (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+);
+
+-- Handle NULL with COALESCE
+COALESCE(NTH_VALUE(salary, 3) OVER w, 0)  AS third_or_zero
+```
+
+### NTH_VALUE Frame Requirement — Same as LAST_VALUE
+
+```sql
+-- ❌ NTH_VALUE with default frame breaks for positions after current row
+NTH_VALUE(salary, 3) OVER (
+  PARTITION BY department
+  ORDER BY salary DESC
+  -- Default: ROWS UNBOUNDED PRECEDING TO CURRENT ROW
+  -- If current row is row 1 → can't see row 3 → returns NULL! 💀
+)
+
+-- ✅ Always use full partition frame for NTH_VALUE
+NTH_VALUE(salary, 3) OVER (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING  -- ✅
+)
+```
+
+> 🎯 **Rule:** Both LAST_VALUE and NTH_VALUE require `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` for correct results. FIRST_VALUE is the only one that works with default frame.
+
+---
+
+## 4️⃣ All Three Compared
+
+```sql
+-- Side by side with explicit frame for all
+SELECT
+  name,
+  department,
+  salary,
+  FIRST_VALUE(salary) OVER w  AS first_val,    -- partition max (sorted DESC)
+  LAST_VALUE(salary)  OVER w  AS last_val,     -- partition min (sorted DESC)
+  NTH_VALUE(salary,1) OVER w  AS nth_1,        -- same as FIRST_VALUE
+  NTH_VALUE(salary,2) OVER w  AS nth_2,        -- 2nd value
+  NTH_VALUE(salary,3) OVER w  AS nth_3,        -- 3rd value
+  NTH_VALUE(salary,4) OVER w  AS nth_4         -- NULL if < 4 rows in dept
+FROM employees
+WINDOW w AS (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+ORDER BY department, salary DESC;
+```
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│               FIRST_VALUE   LAST_VALUE   NTH_VALUE(col, N)          │
+├──────────────────────────────────────────────────────────────────────┤
+│ Returns:      1st row        Last row     Nth row in frame           │
+│ Default frame OK?  ✅ YES    ❌ NO!        ❌ NO! (for N > position)  │
+│ Fix needed?   None           UNBOUNDED    UNBOUNDED FOLLOWING        │
+│                              FOLLOWING                               │
+│ Returns NULL? Never          Never        When N > partition size    │
+│ DSA analogy:  arr[0]         arr[-1]      arr[N-1]                  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 5️⃣ When to Use These vs Alternatives
+
+```sql
+-- FIRST_VALUE vs MAX()
+
+-- Both give same result when ORDER BY matches:
+FIRST_VALUE(salary) OVER (PARTITION BY dept ORDER BY salary DESC)
+MAX(salary) OVER (PARTITION BY dept)
+
+-- MAX() is simpler and more readable → prefer MAX() ✅
+-- FIRST_VALUE wins when: you want a NON-AGGREGATED column from the first row
+
+-- Example: MAX can't give you the NAME of highest earner alongside salary
+MAX(salary) OVER (PARTITION BY dept)           -- ✅ max salary
+MAX(name)   OVER (PARTITION BY dept)           -- ❌ wrong! gives alphabetical max
+FIRST_VALUE(name) OVER (                       -- ✅ name of highest earner
+  PARTITION BY dept ORDER BY salary DESC
+)
+```
+
+```sql
+-- LAST_VALUE vs MIN()
+
+-- MIN() is simpler for min value:
+MIN(salary) OVER (PARTITION BY dept)           -- ✅ clean
+LAST_VALUE(salary) OVER (                      -- ✅ same but verbose
+  PARTITION BY dept ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+
+-- LAST_VALUE wins: get the NAME of lowest earner
+LAST_VALUE(name) OVER (
+  PARTITION BY dept
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)                                              -- ✅ name of lowest earner
+-- MIN/MAX can't do this reliably
+```
+
+```sql
+-- NTH_VALUE vs RANK/DENSE_RANK
+
+-- Find 2nd highest salary value: NTH_VALUE
+NTH_VALUE(salary, 2) OVER (
+  PARTITION BY dept ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+
+-- Find 2nd highest salary value: DENSE_RANK approach
+SELECT DISTINCT salary FROM (
+  SELECT salary, DENSE_RANK() OVER (
+    PARTITION BY dept ORDER BY salary DESC
+  ) AS dr FROM employees
+) r WHERE dr = 2
+
+-- NTH_VALUE: attached to every row (broadcast)
+-- DENSE_RANK: requires subquery + filter (separate rows)
+
+-- Use NTH_VALUE: when you want the Nth value ALONGSIDE each row
+-- Use DENSE_RANK: when you want to SELECT only Nth-ranked rows
+```
+
+> 🎯 **DSA connection:** FIRST_VALUE/LAST_VALUE/NTH_VALUE = indexed array access on a sorted group. `FIRST_VALUE = arr[0]`, `LAST_VALUE = arr[len-1]`, `NTH_VALUE(col,n) = arr[n-1]`. The "frame" is the array boundary definition.
+
+---
+
+## 6️⃣ Internals — How Postgres Executes These
+
+```
+All three use the WindowAgg node.
+They maintain a buffer of the frame's rows.
+
+For FIRST_VALUE:
+  Only need to remember the FIRST row → O(1) memory per partition ✅
+  Implementation: store first row, emit for every subsequent row
+
+For LAST_VALUE with UNBOUNDED FOLLOWING:
+  Must buffer entire partition (need to see all rows to know last)
+  O(partition_size) memory ⚠️
+  Postgres buffers entire partition before emitting rows
+
+For NTH_VALUE(col, N):
+  Must buffer at least N rows
+  If frame = full partition → buffer entire partition O(partition_size)
+
+EXPLAIN output:
+  WindowAgg (all three)
+    -> Sort (PARTITION BY + ORDER BY)
+         -> Seq Scan
+```
+
+```sql
+EXPLAIN (ANALYZE)
+SELECT name, salary,
+  FIRST_VALUE(salary) OVER w  AS fv,
+  LAST_VALUE(salary)  OVER w  AS lv,
+  NTH_VALUE(salary,2) OVER w  AS nv
+FROM employees
+WINDOW w AS (
+  PARTITION BY department
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+);
+
+-- WindowAgg
+--   -> Sort
+--        Sort Key: department, salary DESC
+--        Sort Method: quicksort  Memory: 25kB
+--        -> Seq Scan on employees
+
+-- With index on (department, salary DESC):
+-- WindowAgg
+--   -> Index Scan on idx_emp_dept_salary  ← no Sort! ✅
+```
+
+---
+
+## 7️⃣ Real-Life SDE Patterns
+
+### Pattern 1 — Product Price Benchmarking
+
+```sql
+-- Each product alongside its category's price reference points
+SELECT
+  p.name,
+  p.category,
+  p.price,
+
+  -- Category price anchors (all via window functions)
+  FIRST_VALUE(p.price)  OVER w               AS category_premium_price,
+  LAST_VALUE(p.price)   OVER w               AS category_budget_price,
+  NTH_VALUE(p.price, 2) OVER w               AS category_second_price,
+  FIRST_VALUE(p.name)   OVER w               AS premium_product_name,
+  LAST_VALUE(p.name)    OVER w               AS budget_product_name,
+
+  -- Price position
+  ROUND(
+    (p.price - LAST_VALUE(p.price) OVER w)
+    * 100.0
+    / NULLIF(FIRST_VALUE(p.price) OVER w
+             - LAST_VALUE(p.price) OVER w, 0),
+  1)                                          AS price_position_pct,
+
+  -- Classification
+  CASE
+    WHEN p.price = FIRST_VALUE(p.price) OVER w THEN '👑 Premium'
+    WHEN p.price = LAST_VALUE(p.price)  OVER w THEN '💰 Budget'
+    WHEN p.price = NTH_VALUE(p.price,2) OVER w THEN '🥈 Second tier'
+    ELSE '🏷️ Mid-range'
+  END                                         AS price_tier
+
+FROM products p
+WINDOW w AS (
+  PARTITION BY p.category
+  ORDER BY p.price DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+WHERE p.is_active = true
+ORDER BY p.category, p.price DESC;
+```
+
+### Pattern 2 — First and Last Transaction Per Account
+
+```sql
+-- Account summary with first/last transaction details
+SELECT DISTINCT
+  account_id,
+
+  -- First transaction details
+  FIRST_VALUE(transaction_date) OVER w        AS first_txn_date,
+  FIRST_VALUE(amount)           OVER w        AS first_txn_amount,
+  FIRST_VALUE(description)      OVER w        AS first_txn_desc,
+
+  -- Last transaction details
+  LAST_VALUE(transaction_date)  OVER w        AS last_txn_date,
+  LAST_VALUE(amount)            OVER w        AS last_txn_amount,
+  LAST_VALUE(description)       OVER w        AS last_txn_desc,
+
+  -- Account tenure
+  LAST_VALUE(transaction_date)  OVER w
+    - FIRST_VALUE(transaction_date) OVER w    AS account_tenure_days,
+
+  -- Transaction count
+  COUNT(*) OVER (PARTITION BY account_id)     AS total_transactions,
+
+  -- Total balance
+  SUM(amount) OVER (PARTITION BY account_id)  AS net_balance
+
+FROM transactions
+WINDOW w AS (
+  PARTITION BY account_id
+  ORDER BY transaction_date ASC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+ORDER BY account_id;
+```
+
+### Pattern 3 — Podium Results (Top 3)
+
+```sql
+-- Competition results with podium information per category
+SELECT
+  competitor_name,
+  category,
+  score,
+
+  -- Gold / Silver / Bronze reference
+  NTH_VALUE(score,           1) OVER w        AS gold_score,
+  NTH_VALUE(competitor_name, 1) OVER w        AS gold_name,
+  NTH_VALUE(score,           2) OVER w        AS silver_score,
+  NTH_VALUE(competitor_name, 2) OVER w        AS silver_name,
+  NTH_VALUE(score,           3) OVER w        AS bronze_score,
+  NTH_VALUE(competitor_name, 3) OVER w        AS bronze_name,
+
+  -- Gap from gold
+  NTH_VALUE(score, 1) OVER w - score          AS gap_from_gold,
+
+  -- Medal awarded
+  CASE
+    WHEN score = NTH_VALUE(score, 1) OVER w THEN '🥇'
+    WHEN score = NTH_VALUE(score, 2) OVER w THEN '🥈'
+    WHEN score = NTH_VALUE(score, 3) OVER w THEN '🥉'
+    ELSE ''
+  END                                          AS medal
+
+FROM competition_results
+WINDOW w AS (
+  PARTITION BY category
+  ORDER BY score DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+ORDER BY category, score DESC;
+```
+
+### Pattern 4 — Salary Band Reference (HR Dashboard)
+
+```sql
+-- Show each employee's salary relative to band boundaries
+WITH emp_data AS (
+  SELECT
+    e.id,
+    e.name,
+    e.department,
+    e.level,
+    e.salary,
+    FIRST_VALUE(e.salary) OVER w              AS band_max,
+    LAST_VALUE(e.salary)  OVER w              AS band_min,
+    NTH_VALUE(e.salary,2) OVER w              AS band_p75_approx,
+    COUNT(*) OVER (PARTITION BY e.department, e.level) AS peers,
+    FIRST_VALUE(e.name) OVER w                AS highest_paid_peer,
+    LAST_VALUE(e.name)  OVER w                AS lowest_paid_peer
+  FROM employees e
+  WINDOW w AS (
+    PARTITION BY e.department, e.level
+    ORDER BY e.salary DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  )
+  WHERE e.is_active = true
+)
+SELECT
+  name, department, level, salary, peers,
+  band_max, band_min,
+  band_max - band_min                          AS band_spread,
+  ROUND(
+    (salary - band_min) * 100.0
+    / NULLIF(band_max - band_min, 0), 1
+  )                                            AS position_in_band_pct,
+  highest_paid_peer,
+  lowest_paid_peer
+FROM emp_data
+ORDER BY department, level, salary DESC;
+```
+
+### Pattern 5 — Time Series: First Occurrence Detection
+
+```sql
+-- For each user: detect first qualifying event and broadcast to all rows
+
+WITH user_events AS (
+  SELECT
+    user_id,
+    event_type,
+    event_time,
+    amount,
+
+    -- First purchase event (not just first event)
+    FIRST_VALUE(event_time) OVER (
+      PARTITION BY user_id
+      ORDER BY CASE WHEN event_type = 'purchase' THEN 0 ELSE 1 END,
+               event_time ASC
+    )                                          AS first_purchase_time,
+
+    -- First high-value transaction
+    FIRST_VALUE(amount) OVER (
+      PARTITION BY user_id
+      ORDER BY amount DESC
+    )                                          AS max_transaction_ever,
+
+    -- Value of most recent event (LAST with UNBOUNDED FOLLOWING)
+    LAST_VALUE(event_time) OVER (
+      PARTITION BY user_id
+      ORDER BY event_time ASC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    )                                          AS latest_event_time
+
+  FROM user_activity
+  WHERE created_at >= NOW() - INTERVAL '1 year'
+)
+SELECT
+  user_id,
+  event_type,
+  event_time,
+  first_purchase_time,
+  event_time - first_purchase_time            AS time_since_first_purchase,
+  max_transaction_ever,
+  latest_event_time
+FROM user_events
+ORDER BY user_id, event_time;
+```
+
+### Pattern 6 — Market Basket Reference Pricing
+
+```sql
+-- E-commerce: for each product, show competitor pricing brackets
+
+SELECT
+  p.id,
+  p.name,
+  p.our_price,
+
+  -- Competitor price range
+  FIRST_VALUE(cp.price) OVER (
+    PARTITION BY p.category
+    ORDER BY cp.price DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  )                                            AS competitor_max,
+
+  LAST_VALUE(cp.price) OVER (
+    PARTITION BY p.category
+    ORDER BY cp.price DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  )                                            AS competitor_min,
+
+  NTH_VALUE(cp.price, 2) OVER (
+    PARTITION BY p.category
+    ORDER BY cp.price DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  )                                            AS competitor_second_highest,
+
+  -- Positioning
+  CASE
+    WHEN p.our_price > FIRST_VALUE(cp.price) OVER (
+      PARTITION BY p.category ORDER BY cp.price DESC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) THEN '📈 Above market'
+    WHEN p.our_price < LAST_VALUE(cp.price) OVER (
+      PARTITION BY p.category ORDER BY cp.price DESC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    ) THEN '📉 Below market'
+    ELSE '➡️ In range'
+  END                                          AS market_position
+
+FROM products p
+JOIN competitor_prices cp ON cp.category = p.category
+WHERE p.is_active = true
+ORDER BY p.category, p.our_price DESC;
+```
+
+---
+
+## 🔬 Verify Yourself
+
+```sql
+-- Setup
+CREATE TEMP TABLE t_emp (
+  id     INT,
+  name   TEXT,
+  dept   TEXT,
+  salary INT
+);
+INSERT INTO t_emp VALUES
+  (1, 'Raj',   'Eng',   120000),
+  (2, 'Sharma','Eng',   115000),
+  (3, 'Priya', 'Eng',   110000),
+  (4, 'Dev',   'Eng',    90000),
+  (5, 'Sam',   'Sales',  85000),
+  (6, 'Ankit', 'Sales',  75000),
+  (7, 'Meera', 'Sales',  75000);   -- tie with Ankit
+
+-- 1. FIRST_VALUE — works with default frame
+SELECT name, dept, salary,
+  FIRST_VALUE(salary) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+  ) AS first_val_default,          -- ✅ correct (always partition max)
+  FIRST_VALUE(salary) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  ) AS first_val_explicit           -- ✅ same result
+FROM t_emp ORDER BY dept, salary DESC;
+-- Both give same answer ✅ FIRST_VALUE safe with default frame
+
+-- 2. LAST_VALUE — BROKEN with default frame
+SELECT name, dept, salary,
+  LAST_VALUE(salary) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+    -- Default frame: ROWS UNBOUNDED PRECEDING TO CURRENT ROW
+  ) AS last_val_BROKEN,            -- ❌ returns own salary!
+  LAST_VALUE(salary) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  ) AS last_val_CORRECT             -- ✅ partition minimum
+FROM t_emp ORDER BY dept, salary DESC;
+-- Eng broken: 120000,115000,110000,90000 ← each row's own value 💀
+-- Eng correct: 90000,90000,90000,90000 ← partition min ✅
+
+-- 3. NTH_VALUE — also needs explicit frame
+SELECT name, dept, salary,
+  NTH_VALUE(salary, 1) OVER w AS nth_1,  -- same as FIRST_VALUE
+  NTH_VALUE(salary, 2) OVER w AS nth_2,  -- 2nd highest
+  NTH_VALUE(salary, 3) OVER w AS nth_3,  -- 3rd highest
+  NTH_VALUE(name,   1) OVER w AS top_name
+FROM t_emp
+WINDOW w AS (
+  PARTITION BY dept
+  ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+ORDER BY dept, salary DESC;
+-- Eng: nth_1=120000, nth_2=115000, nth_3=110000 ✅
+-- Sales: nth_1=85000, nth_2=75000, nth_3=75000 ✅ (tie)
+-- Sales nth_3: 75000 (both Ankit and Meera at 75000)
+
+-- 4. NTH_VALUE NULL when N > partition size
+SELECT dept, name, salary,
+  NTH_VALUE(salary, 5) OVER w AS nth_5,    -- Sales only has 3 rows → NULL
+  NTH_VALUE(salary, 10) OVER w AS nth_10   -- definitely NULL
+FROM t_emp
+WINDOW w AS (
+  PARTITION BY dept ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+)
+ORDER BY dept, salary DESC;
+-- Sales nth_5 = NULL ✅ (Sales has 3 employees, not 5)
+-- Eng nth_5 = NULL ✅ (Eng has 4 employees)
+
+-- 5. FIRST_VALUE for name of top earner
+SELECT name, dept, salary,
+  FIRST_VALUE(name) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+  ) AS top_earner,
+  salary - FIRST_VALUE(salary) OVER (
+    PARTITION BY dept ORDER BY salary DESC
+  ) AS gap_from_leader
+FROM t_emp ORDER BY dept, salary DESC;
+-- All Eng rows: top_earner='Raj' ✅
+
+-- 6. Compare with MAX/MIN (simpler alternatives)
+SELECT name, dept, salary,
+  MAX(salary) OVER (PARTITION BY dept) AS max_sal,   -- same as FIRST_VALUE(sal) sorted DESC
+  MIN(salary) OVER (PARTITION BY dept) AS min_sal    -- same as LAST_VALUE(sal) with full frame
+FROM t_emp ORDER BY dept, salary DESC;
+-- Use MAX/MIN for values, FIRST_VALUE/LAST_VALUE for non-aggregate cols
+
+-- 7. EXPLAIN: WindowAgg + Sort
+EXPLAIN SELECT name, salary,
+  FIRST_VALUE(salary) OVER w,
+  LAST_VALUE(salary)  OVER w,
+  NTH_VALUE(salary,2) OVER w
+FROM t_emp
+WINDOW w AS (
+  PARTITION BY dept ORDER BY salary DESC
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+);
+-- WindowAgg → Sort(dept, salary DESC) → Seq Scan
+-- All three computed in ONE WindowAgg pass ✅
+```
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| What does FIRST_VALUE return? | Value of the column from the FIRST row in the frame |
+| What does LAST_VALUE return? | Value of the column from the LAST row in the frame |
+| LAST_VALUE with default frame? | Returns current row's value — each row sees itself as the "last" |
+| Fix for LAST_VALUE? | `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` |
+| Does FIRST_VALUE need the fix? | No — "first" of the cumulative frame is always the partition's first |
+| NTH_VALUE(col, n) with default frame? | Returns NULL for positions after current row — needs full frame too |
+| NTH_VALUE returns NULL when? | When N is larger than the partition size |
+| FIRST_VALUE vs MAX()? | MAX() for max value (simpler). FIRST_VALUE when you need the name/other col of max row |
+| LAST_VALUE vs MIN()? | MIN() for min value (simpler). LAST_VALUE when you need the name/other col of min row |
+| NTH_VALUE vs DENSE_RANK? | NTH_VALUE broadcasts Nth value to all rows. DENSE_RANK identifies which rows ARE Nth |
+| Frame for all three — safe default? | `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` — always explicit |
+| EXPLAIN node? | WindowAgg + Sort — same as other window functions |
+| All three in one query? | Computed in ONE WindowAgg pass if same OVER (same sort) |
+| DSA analogy? | arr[0] (FIRST), arr[-1] (LAST), arr[N-1] (NTH) — indexed access on sorted partition |
+
+---
+
+## 🧠 Full Mental Model
+
+```
+FIRST_VALUE / LAST_VALUE / NTH_VALUE
+
+All three: return a value FROM a specific position in the window frame
+
+FIRST_VALUE(col):    position = first row of frame
+LAST_VALUE(col):     position = last row of frame
+NTH_VALUE(col, N):   position = Nth row of frame (1-indexed)
+
+The critical frame difference:
+
+Default frame (with ORDER BY):
+  RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (cumulative)
+  ↑ frame grows as current row advances ↑
+
+FIRST_VALUE + default:  ✅ SAFE
+  "First" of cumulative frame = always partition's first row
+  (UNBOUNDED PRECEDING never changes)
+
+LAST_VALUE + default:   ❌ BROKEN
+  "Last" of cumulative frame = CURRENT ROW (frame ends here)
+  Returns own value, not partition's last row
+
+NTH_VALUE + default:    ❌ BROKEN for N > position
+  Nth row beyond current row = not in frame = NULL
+
+THE FIX for LAST_VALUE and NTH_VALUE:
+  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  → frame = entire partition → "last" = true last row ✅
+
+When to use vs alternatives:
+  Max/min VALUE:     MAX() OVER w / MIN() OVER w (simpler)
+  Max/min LABEL:     FIRST_VALUE(name)/LAST_VALUE(name) (only option)
+  Nth value:         NTH_VALUE(col, N) or DISTINCT + DENSE_RANK
+
+DSA mapping:
+  sorted_partition = [120K, 115K, 110K, 90K]
+  FIRST_VALUE  = sorted_partition[0]   = 120K
+  LAST_VALUE   = sorted_partition[-1]  = 90K
+  NTH_VALUE(2) = sorted_partition[1]   = 115K
+
+Memory:
+  FIRST_VALUE: O(1) — only need to remember first value
+  LAST_VALUE:  O(partition) — must buffer entire partition
+  NTH_VALUE:   O(N) minimum, O(partition) with full frame
+```

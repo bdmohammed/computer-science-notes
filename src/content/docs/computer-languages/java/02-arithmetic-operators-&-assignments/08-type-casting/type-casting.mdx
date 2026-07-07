@@ -16,6 +16,30 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 
 > **Type casting** converts a value from one data type to another. Java supports two forms: **implicit** (automatic) and **explicit** (manual).
 
+```
+Type Casting in Java
+│
+├── Widening (Implicit)
+│   ├── Automatic — no cast needed
+│   ├── No data loss (usually)
+│   └── byte → short → int → long → float → double
+│                char ──────┘
+│
+├── Narrowing (Explicit)
+│   ├── Manual cast required: (type) value
+│   ├── Potential data loss — truncation / overflow
+│   └── double → float → long → int → short → byte
+│
+├── Reference Casting
+│   ├── Upcasting   — subclass → superclass (implicit)
+│   └── Downcasting — superclass → subclass (explicit, may throw CCE)
+│
+└── Special Cases
+    ├── String ↔ primitive  (not a cast — use methods)
+    ├── Casting with expressions
+    └── Pattern matching cast (Java 16+)
+```
+
 ---
 
 ## 🔼 Implicit Type Casting (Widening / Upcasting)
@@ -32,22 +56,26 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 
 ### 🧭 Implicit Casting Hierarchy
 
-```mermaid
-flowchart LR
-    byte[byte<br/>8-bit] --> short[short<br/>16-bit] --> int[int<br/>32-bit] --> long[long<br/>64-bit] --> float[float<br/>32-bit] --> double[double<br/>64-bit]
-    char[char<br/>16-bit] --> int
+```
+Widening hierarchy:
+  byte(8) → short(16) → int(32) → long(64) → float(32) → double(64)
+      char(16) ─────────┘
 
-    classDef type fill:#fff,stroke:#000,stroke-width:2px;
-    class byte,short,int,long,float,double,char type;
+Note: long(64) → float(32) is widening but MAY lose precision
+  long  l = 1234567890123L;
+  float f  = l;               // f = 1.23456794E12 — precision lost silently
+  // widening = no data loss in range, but float has fewer significant digits
 ```
 
 <Aside type="note">
 **Key Insight**: `char` (16-bit unsigned) promotes to `int` (32-bit signed), but **not** to `byte`/`short` implicitly — those are smaller and would risk loss.
+> 🔑 `long → float` and `long → double` are widening but can **silently lose precision**. A `long` has 64 bits of integer precision — `float` only has 23 bits mantissa. The value fits in range but digits are lost.
 </Aside>
 
 ### 💻 Implicit Casting Examples
 
-<Code lang="java" title="Numeric widening — automatic" code={`// int → long → double (all implicit)int i = 100;
+<Code lang="java" title="Numeric widening — automatic" code={`
+// int → long → double (all implicit)int i = 100;
 long l = i;        // ✅ auto: int to long
 double d = i;      // ✅ auto: int to double
 
@@ -59,7 +87,23 @@ System.out.println(x);  // 97 (Unicode value of 'a')
 // byte → short → int (implicit chain)
 byte b = 10;
 short s = b;       // ✅ auto
-int num = s;       // ✅ auto`} />
+int num = s;       // ✅ auto
+
+// No cast needed — compiler handles automatically
+byte   b = 10;
+short  s = b;       // byte  → short  ✅
+int    i = s;       // short → int    ✅
+long   l = i;       // int   → long   ✅
+float  f = l;       // long  → float  ✅
+double d = f;       // float → double ✅
+
+// char widens to int and above
+char c = 'A';       // 65
+int  x = c;         // 65  ✅
+long y = c;         // 65L ✅
+
+// All valid — no cast syntax needed
+`} />
 
 <Code lang="java" title="Mixed expression promotion" code={`byte b = 5;
 short s = 10;
@@ -87,22 +131,76 @@ If the target type can hold **all possible values** of the source type, the conv
 | **Information loss?** | ⚠️ **Possible** — precision or data may be lost |
 | **Syntax** | `(targetType) value` |
 
-### 🧭 Explicit Casting Hierarchy
+```java
+// Syntax: (targetType) expression
+double d = 9.99;
+int    i = (int) d;         // 9 — truncated toward zero (NOT rounded)
 
-```mermaid
-flowchart LR
-    byte["byte\n8-bit"] --> short["short\n16-bit"] --> int["int\n32-bit"] --> long["long\n64-bit"] --> float["float\n32-bit"] --> double["double\n64-bit"]
-    char["char\n16-bit"] --> int
+long   l = 300L;
+byte   b = (byte) l;        // 44 — overflow: 300 % 256 = 44
 
-    classDef type fill:#fff,stroke:#16a34a,stroke-width:2px,color:#000;
-    class byte,short,int,long,float,double,char type;
+double big = 1234567890.123;
+float  f   = (float) big;   // 1.23456794E9 — precision loss
+
+int    x   = 65;
+char   c   = (char) x;      // 'A' — int to char
 ```
+
 <Aside type="caution">
 **Warning**: When casting from larger to smaller types, **most significant bits are discarded** — only least significant bits are kept. This can cause:
 - Sign changes (positive → negative)
 - Value wrapping (overflow)
 - Precision loss (decimal truncation)
 </Aside>
+
+---
+
+### What Happens During Narrowing
+
+```
+double → int:
+  1. Drop fractional part (truncate toward zero)
+  2. If value too large for int → take low 32 bits only
+
+  double d = 9.99   → int: 9        (truncate)
+  double d = -9.99  → int: -9       (truncate toward zero)
+  double d = 1e18   → int: undefined behavior
+                           (implementation-specific bit pattern)
+
+long → int:
+  Take low 32 bits — high 32 bits DISCARDED
+  300L  = 0x000000012C → low 32 = 0x0000012C = 300? No:
+  300L  → binary: 100101100
+  (byte) 300:
+    300 in binary: 1 0010 1100
+    byte takes low 8 bits: 0010 1100 = 44
+
+Formula for integer narrowing:
+  result = value % (2^targetBits)
+  adjusted for sign
+```
+
+---
+
+## 🔬 Step 3 — Casting in Expressions
+
+```java
+// Cast has high precedence — applies to immediate value
+double result = (double) 5 / 2;     // 2.5 — 5 cast to double, then divide
+double wrong  = (double)(5 / 2);    // 2.0 — integer divide first, then cast
+
+// Cast only what you need
+int a = 5, b = 2;
+double d1 = (double) a / b;         // 2.5 ✅ — a cast, b widened
+double d2 = a / (double) b;         // 2.5 ✅ — b cast, a widened
+double d3 = (double)(a / b);        // 2.0 ❌ — integer divide first
+
+// Chain of casts
+int x = (int)(double)(long) 9.9f;   // float→long→double→int = 9
+// float 9.9f → long 9L → double 9.0 → int 9
+```
+
+> 🔑 `(double) a / b` ≠ `(double)(a / b)`. Cast applies to what immediately follows it. Parentheses control what gets cast — this is the most common cast precedence bug.
 
 ---
 
@@ -265,9 +363,192 @@ Or simpler: if `value > 127`, subtract 256; if `value < -128`, add 256.
 
 ## 🧳 Object Reference Casting
 
+```java
+Parent class reference can be used to hold Child class object but by using that reference
+we can't call Child specific methods.
+
+Example:
+Object o=new String("ashok");       //valid
+System.out.println(o.hashCode());   //valid
+
+System.out.println(o.length());//
+C.E:cannot find symbol,
+  symbol : method length(),
+  location: class java.lang.Object
+Similarly we can use interface reference to hold implemented class object.
+Example:
+Runnable r=new Thread();
+
+Type casting syntax:
+A B= (C) D;  // explicit cast required for downcasting
+A --> class/interface type
+B --> name of reference variable
+C --> type to cast to class/interface
+D --> name of reference variable being cast
+
+Compile time checking :
+Rule 1: The type of "D" and "C" must have some relationship [either Child to Parent (or) Parent to Child (or) same type] otherwise we will get compile time error saying inconvertible types.
+
+Rule 2: "C" must be either same (or) derived type of "A" otherwise we will get compile time error saying incompatible types.
+Found: C
+Required: A 
+
+Examples:
+1).
+Object o=new String("ashok");
+StringBuffer sb=(StringBuffer)o; //Valid
+// This compiles successfully ✅ because String and StringBuffer are both subclasses of Object — they have a common ancestor, so the compiler allows the cast.
+// But fails at runtime ❌
+
+2).
+String s=new String("ashok");
+StringBuffer sb=(StringBuffer)s; //C.E: incompatible types: java.lang.String cannot be converted to java.lang.StringBuffer
+// Object
+// ├── String
+// └── StringBuffer
+
+Runtime checking :
+The underlying object type of "D" must be either same (or) derived type of "C" otherwise we will get runtime exception saying ClassCastException.
+Examples:
+1).
+Object o=new String("ashok"); <- underlying runtime type object is String
+StringBuffer sb=(StringBuffer)o; //RE: ClassCastException: java.lang.String cannot be cast to java.lang.StringBuffer
+
+
+                    Object
+                   /      \
+                  /        \
+              Base1      Base2
+              /   \       /   \
+             /     \     /     \
+       Derived1 Derived2 Derived3 Derived4
+
+Base1 b=new Derived2();//valid
+Object o=(Base1)b;//valid
+Object o1=(Base2)o;//invalid
+Object o2=(Base2)b;//invalid
+Base2 b1=(Base1)(new Derived1());//invalid
+Base2 b2=(Base2)(new Derived3());//valid
+Base2 b2=(Base2)(new Derived1());//invalid
+
+Through Type Casting just we are converting the type of object but not object itself that is we are performing type casting but not object casting.
+
+Through Type Casting we are not create any new objects for the existing objects we are providing another type of reference variable(mostly Parent type).
+Example:
+String s = new String("ashok");
+Object o = (Object) s; // Type cast — no new object created
+
+System.out.println(s === o); //true
+
+or
+// equivalent code
+Object o = new String("ashok");
+                ___________ 
+String s --->  |  ashok    |
+Object o --->  |___________|
+
+Integer I = new Integer(10);
+Number n = (Number) I; // Type cast — no new object created
+Object o = (Object) n; // Type cast — no new object created
+
+System.out.println(I == n); // true
+System.out.println(n == o); // true
+                ___________ 
+Integer I --->  |           |
+Number  n --->  |    10     |
+Object  o --->  |___________|
+
+equivalent code
+Integer I = new Integer(10);
+Number n = I; // Upcast — no cast syntax needed
+Object o = n; // Upcast — no cast syntax needed
+or 
+Number n = new Integer(10)
+Object o = new Integer(10)
+
+A
+|
+B
+|
+C
+
+C c = new C();
+
+1. (B)c; // valid — C IS-A B
+equivalent To:
+B b = new C(); 
+// Compile time: B Reference
+// Runtime     : C Reference
+
+2. (A)((B)c); // valid — C IS-A B and B IS-A A
+equivalent To:
+A a = new C(); 
+// Compile time: A Reference
+// Runtime     : C Reference
+
+
+P -> m1()
+|
+|
+C -> m2()
+
+C c = new C();
+c.m1();       //Parent
+c.m2();       //Child
+((P)c).m1();  //Parent
+// equivalent To:
+// P p = new C();
+// p.m1();    //Parent
+((P)c).m2();  //CE: cannot find symbol, m2() is not a member of P
+
+
+A -> m1() //A
+|
+B -> m1() //B
+|
+C -> m1() //C
+
+C c = new C();
+c.m1();       //C
+((B)c).m1();  //C
+// equivalent To:
+// B b = new C();
+// b.m1();    //In overridden method call, runtime type (C) determines which m1() is called — C's version executes
+(A)((B)c);    //C
+
+A -> static m1() //A
+|
+B -> static m1() //B
+|
+C -> static m1() //C
+
+C c = new C();
+c.m1();       //C
+((B)c).m1();  //B
+// equivalent To:
+// B b = new C();
+// b.m1();    //In Overridden static method call, reference type (B) determines which m1() is called — B's version executes 
+(A)((B)c);    //A
+
+A -> int x = 777;
+|
+B -> int x = 888;
+|
+C -> int x = 999;
+
+C c = new C();
+c.x;          //777
+((B)c).x;     //888
+// equivalent To:
+// B b = new C();
+// b.x;    //In variable hiding, reference type (B) determines which x is accessed — B's version (888) is accessed 
+(A)((B)c);    //A
+```
+
 ### Downcasting Objects — Runtime Check Required
 
-<Code lang="java" title="Object → Subclass casting" code={`// Upcasting (implicit) — always safe
+<Code lang="java" title="Object → Subclass casting" code={`
+// Upcasting (implicit) — always safe
 String s = "Hello";
 Object obj = s;  // ✅ String IS-A Object
 
@@ -281,7 +562,8 @@ String s3 = (String) obj3;  // 💥 Runtime: ClassCastException!
 
 ### ✅ Safe Casting with `instanceof` (Java 16+ Pattern Matching)
 
-<Code lang="java" title="Guard casts with instanceof" code={`Object obj = getDynamicValue();
+<Code lang="java" title="Guard casts with instanceof" code={`
+Object obj = getDynamicValue();
 
 // ❌ Unsafe — may throw ClassCastException
 // String s = (String) obj;
@@ -310,6 +592,133 @@ if (obj instanceof String s) {
 **Golden Rule**: **Always** use `instanceof` (or pattern matching) before downcasting unless you are 100% certain of the runtime type.  
 `ClassCastException` is a `RuntimeException` — it won't be caught at compile time!
 </Aside>
+
+---
+
+## 🔬 Reference Upcasting (Implicit)
+
+```java
+// Subclass reference assigned to superclass type — always safe
+class Animal { void speak() { } }
+class Dog extends Animal {
+    void fetch() { }
+}
+
+Dog dog = new Dog();
+Animal a = dog;             // ✅ upcast — implicit, always succeeds
+// a holds Dog object but Animal reference
+// can only call Animal methods through a:
+a.speak();                  // ✅
+a.fetch();                  // ❌ COMPILE ERROR — Animal ref doesn't know fetch()
+
+// Polymorphic dispatch still works
+class Cat extends Animal {
+    @Override void speak() { System.out.println("meow"); }
+}
+Animal c = new Cat();
+c.speak();                  // "meow" — runtime type (Cat) determines method
+```
+
+```
+Upcast:
+  Dog  ──► Animal  (subclass to superclass)
+  Safe — Dog IS-A Animal
+  Implicit — no cast syntax
+  Loses access to subclass-specific methods at compile time
+  Runtime object unchanged — still a Dog
+```
+
+---
+
+## 🔬 Reference Downcasting (Explicit)
+
+```java
+// Superclass reference cast back to subclass
+Animal a = new Dog();       // upcast first
+
+// Downcast — explicit cast required
+Dog d = (Dog) a;            // ✅ safe — actual object IS a Dog
+d.fetch();                  // ✅ subclass method accessible again
+
+// UNSAFE downcast — ClassCastException at runtime
+Animal a2 = new Cat();
+Dog d2 = (Dog) a2;          // ❌ ClassCastException — Cat is not Dog
+// Compiles fine — fails at runtime
+// "Cat cannot be cast to class Dog"
+```
+
+```
+Downcast safety check:
+  Always use instanceof before downcast
+
+  // ❌ Unsafe
+  Dog d = (Dog) animal;
+
+  // ✅ Safe — pre Java 16
+  if (animal instanceof Dog) {
+      Dog d = (Dog) animal;
+      d.fetch();
+  }
+
+  // ✅ Best — Java 16+ pattern matching
+  if (animal instanceof Dog d) {
+      d.fetch();              // d bound — no explicit cast
+  }
+```
+
+---
+
+## 🔬 ClassCastException — When and Why
+
+```java
+// CCE thrown when:
+// actual runtime type is NOT the target cast type or its subtype
+
+Object obj = Integer.valueOf(42);
+String s = (String) obj;        // ❌ CCE — Integer is not String
+
+// Heap pollution — generic type erasure
+List<String> strings = new ArrayList<>();
+List raw = strings;             // raw type
+raw.add(42);                    // Integer added — no error yet
+
+String first = strings.get(0); // ❌ CCE — 42 is not String
+// CCE thrown at get() — not at add()
+// Root cause far from exception site
+```
+
+```
+CCE at runtime:
+  JVM checks: is object's actual type
+              assignable to target type?
+  Uses: object header → klass pointer → inheritance chain
+  If not: throw ClassCastException
+          message: "X cannot be cast to class Y"
+```
+
+---
+
+## 🔬 String ↔ Primitive (Not a Cast)
+
+```java
+// Primitive → String (NOT a cast — use methods)
+int i = 42;
+String s1 = String.valueOf(i);      // "42"  ✅ preferred
+String s2 = Integer.toString(i);    // "42"  ✅
+String s3 = "" + i;                 // "42"  ✅ (but creates extra object)
+String s4 = (String) i;             // ❌ COMPILE ERROR — not castable
+
+// String → primitive (NOT a cast — use parse methods)
+String s = "42";
+int    x  = Integer.parseInt(s);    // 42   ✅
+double d  = Double.parseDouble(s);  // 42.0 ✅
+int    y  = (int) s;                // ❌ COMPILE ERROR — not castable
+
+// String → wrapper (valueOf)
+Integer n = Integer.valueOf("42");  // ✅
+```
+
+> 🔑 You **cannot cast** between `String` and primitives — no inheritance relationship exists. Use `Integer.parseInt()`, `String.valueOf()` etc. Attempting `(int) someString` = compile error always.
 
 ---
 
@@ -354,6 +763,106 @@ if (obj instanceof String s) {
     - Large `int` values (> 2²⁴) may lose low-order bits  
     - Use `double` for exact large integer representation
   </Card>
+
+  <Card title="Q: `long → float` widening loses precision silently?" icon="caution">
+
+  ```java
+    long l = 123456789012345L;
+    float f = l;                    // widening — no cast needed
+    System.out.println(l);          // 123456789012345
+    System.out.println(f);          // 1.23456794E14 — digits lost
+    System.out.println((long) f);   // 123456800000000 — not original value
+
+    // No compile warning. No runtime exception.
+    // Widening does NOT guarantee precision — only range.
+  ```
+  </Card>
+
+  <Card title="Q: Casting result of expression vs casting operand?" icon="caution">
+
+  ```java
+  int a = 1_000_000;
+  int b = 1_000_000;
+
+  long wrong   = (long)(a * b);   // a*b overflows int FIRST → then cast to long
+                                  // result: some garbage long value
+
+  long correct = (long) a * b;    // a cast to long FIRST → b widened → long multiply
+                                  // result: 1_000_000_000_000L ✅
+
+  // Rule: cast the FIRST operand — forces entire expression to wider type
+  ```
+  </Card>
+
+  <Card title="Q: Downcast compiles even when impossible?" icon="caution">
+
+  ```java
+  class A { }
+  class B extends A { }
+  class C extends A { }
+
+  A a = new B();
+  C c = (C) a;        // ❌ CCE at runtime — B is not C
+                      // ✅ COMPILES — compiler only checks:
+                      // "could a reference of type A ever hold a C?"
+                      // Answer: yes (C extends A) → allows cast
+                      // Runtime check reveals actual object is B → CCE
+  ```
+  </Card>
+
+  <Card title="Q: char/int/byte casting behavior?" icon="caution">
+
+  ```java
+  // int → char: takes low 16 bits as Unicode
+  int x = 65;
+  char c = (char) x;          // 'A'
+
+  int y = 65536 + 65;         // 65601
+  char c2 = (char) y;         // 'A' — low 16 bits = 65 = 'A'
+
+  // char → byte: further narrowing
+  char ch = '\u00FF';         // 255
+  byte b = (byte) ch;         // -1 — 255 overflows signed byte
+
+  // Printing int vs char
+  int n = 65;
+  System.out.println(n);          // 65
+  System.out.println((char) n);   // A
+  System.out.println("" + n);     // "65"
+  System.out.println("" + (char) n); // "A"
+  ```
+  </Card>
+
+  <Card title="Q: Pattern matching scope?" icon="caution">
+
+  ```java
+  // Pattern variable scoped to true branch only
+  if (obj instanceof String s) {
+      System.out.println(s.length());  // ✅ in scope
+  }
+  // s not accessible here
+
+  // Negation — s available in false branch? No.
+  if (!(obj instanceof String s)) {
+      // s NOT in scope here
+      return;
+  }
+  s.length();                         // ✅ — Java flow analysis knows: reached here = String
+  // Compiler proves: if we reach this line, obj IS String
+  // s IS in scope after negated instanceof + early return
+
+  // Complex condition
+  if (obj instanceof String s && s.length() > 5) {
+      // s in scope — && short-circuits safely
+      System.out.println(s);         // ✅
+  }
+
+  if (obj instanceof String s || s.length() > 5) { // ❌ COMPILE ERROR
+      // s might not be bound if left side false
+      // || doesn't guarantee instanceof was true
+  }
+  ```
+  </Card>
 </CardGrid>
 
 ---
@@ -362,54 +871,89 @@ if (obj instanceof String s) {
 
 <CardGrid>
   <Card title="Pattern: Safe Byte Conversion for Hashing" icon="shield">
-    When converting hash codes to byte arrays (e.g., for serialization):
-```java
-    int hash = obj.hashCode();
-    byte[] bytes = new byte[4];
-    bytes[0] = (byte) (hash >> 24);  // Extract each byte safely
-    bytes[1] = (byte) (hash >> 16);
-    bytes[2] = (byte) (hash >> 8);
-    bytes[3] = (byte) hash;
-    // Explicit casts are intentional — we want the low 8 bits of each shift
-```
+  When converting hash codes to byte arrays (e.g., for serialization):
+  ```java
+      int hash = obj.hashCode();
+      byte[] bytes = new byte[4];
+      bytes[0] = (byte) (hash >> 24);  // Extract each byte safely
+      bytes[1] = (byte) (hash >> 16);
+      bytes[2] = (byte) (hash >> 8);
+      bytes[3] = (byte) hash;
+      // Explicit casts are intentional — we want the low 8 bits of each shift
+  ```
   </Card>
   
   <Card title="Pattern: Rounding vs. Truncation" icon="rocket">
     Choose the right conversion for numeric algorithms:
-```java
-    double score = 94.7;
-    
-    // ❌ Truncation (may under-report):
-    int grade1 = (int) score;  // 94
-    
-    // ✅ Rounding (more accurate):
-    int grade2 = (int) Math.round(score);  // 95
-    
-    // ✅ Floor/Ceil for specific logic:
-    int minPass = (int) Math.ceil(60.1);  // 61
-    int maxFail = (int) Math.floor(59.9); // 59
-```
+  ```java
+      double score = 94.7;
+      
+      // ❌ Truncation (may under-report):
+      int grade1 = (int) score;  // 94
+      
+      // ✅ Rounding (more accurate):
+      int grade2 = (int) Math.round(score);  // 95
+      
+      // ✅ Floor/Ceil for specific logic:
+      int minPass = (int) Math.ceil(60.1);  // 61
+      int maxFail = (int) Math.floor(59.9); // 59
+  ```
   </Card>
 
   <Card title="Pattern: Defensive Object Casting" icon="backspace">
     Always validate before downcasting in polymorphic code:
-```java
-    void handle(Component c) {
-        // ✅ Pattern matching (Java 16+)
-        if (c instanceof Button b) {
-            b.click();
-        } else if (c instanceof Label l) {
-            l.setText("Clicked!");
-        }
-        // No ClassCastException risk — type checked at runtime
-    }
-    
-    // Pre-Java-16 fallback:
-    if (c instanceof Button) {
-        Button b = (Button) c;  // safe cast after instanceof check
-        b.click();
-    }
-```
+  ```java
+      void handle(Component c) {
+          // ✅ Pattern matching (Java 16+)
+          if (c instanceof Button b) {
+              b.click();
+          } else if (c instanceof Label l) {
+              l.setText("Clicked!");
+          }
+          // No ClassCastException risk — type checked at runtime
+      }
+      
+      // Pre-Java-16 fallback:
+      if (c instanceof Button) {
+          Button b = (Button) c;  // safe cast after instanceof check
+          b.click();
+      }
+  ```
+  </Card>
+
+    <Card title="Underlying primitive: JVM `checkcast` instruction + type narrowing bytecodes" icon="backspace">
+    Always validate before downcasting in polymorphic code:
+
+    ```text
+    Primitive narrowing — JVM bytecodes:
+      d2i  → double to int   (truncate)
+      d2l  → double to long
+      d2f  → double to float
+      f2i  → float to int
+      f2l  → float to long
+      i2b  → int to byte     (sign-extend low 8 bits)
+      i2c  → int to char     (zero-extend low 16 bits)
+      i2s  → int to short    (sign-extend low 16 bits)
+      i2l  → int to long     (widening)
+      l2i  → long to int     (low 32 bits)
+
+    Reference cast — JVM bytecode:
+      checkcast  Type
+        1. pops reference from stack
+        2. if null → push null (no exception)
+        3. checks: is object's actual class assignable to Type?
+        4. yes → push reference back (same reference)
+        5. no  → throw ClassCastException
+
+      checkcast is generated for EVERY explicit reference cast
+      instanceof is generated for instanceof keyword check
+      Pattern matching: instanceof + checkcast + astore (compiled together)
+
+    Cost:
+      checkcast: walks klass hierarchy — O(depth)
+      Typically 1-3 levels — negligible
+      JIT inlines and caches the type check
+    ```
   </Card>
 </CardGrid>
 
@@ -426,6 +970,62 @@ if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
 </Aside>
 
 ---
+
+## 💻 Real-World Code — Deserialization Layer
+
+```java
+public class ConfigParser {
+
+    // Raw map from JSON/YAML parser — all values as Object
+    private final Map<String, Object> raw;
+
+    public ConfigParser(Map<String, Object> raw) {
+        this.raw = raw;
+    }
+
+    // Safe downcast with instanceof check
+    public String getString(String key) {
+        Object value = raw.get(key);
+        if (value == null) return null;
+        if (value instanceof String s) return s;            // Java 16+ pattern
+        return String.valueOf(value);                       // fallback — toString
+    }
+
+    // Numeric narrowing with range check
+    public int getInt(String key, int defaultValue) {
+        Object value = raw.get(key);
+        if (value == null) return defaultValue;
+
+        if (value instanceof Integer i)  return i;
+        if (value instanceof Long l) {
+            if (l < Integer.MIN_VALUE || l > Integer.MAX_VALUE) {
+                throw new ConfigException(key + " value out of int range: " + l);
+            }
+            return (int)(long) l;                          // safe narrowing after check
+        }
+        if (value instanceof String s) return Integer.parseInt(s);
+        throw new ConfigException("Cannot convert to int: " + value.getClass());
+    }
+
+    // Widening — always safe
+    public double getDouble(String key, double defaultValue) {
+        Object value = raw.get(key);
+        if (value == null) return defaultValue;
+
+        if (value instanceof Double d)  return d;
+        if (value instanceof Float f)   return (double) f;  // widening
+        if (value instanceof Integer i) return (double) i;  // widening
+        if (value instanceof Long l)    return (double) l;  // widening — may lose precision
+        if (value instanceof String s)  return Double.parseDouble(s);
+        throw new ConfigException("Cannot convert to double: " + value.getClass());
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Direct `(int) raw.get("port")` → CCE if YAML parser returned `Long` (YAML integers default to Long in most parsers). Service crashes on startup with misleading CCE rather than helpful error.
+
+---
+
 
 ## 🔑 Quick Reference Summary
 

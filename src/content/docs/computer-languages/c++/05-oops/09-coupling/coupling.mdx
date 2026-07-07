@@ -1,0 +1,1226 @@
+---
+title: C++ Coupling & Dependency Management
+slug: computer-languages/cpp/design/coupling
+description: Master coupling in C++ — header dependencies, PIMPL idiom, forward declarations, dependency injection, and architectural patterns for maintainable systems.
+sidebar:
+  label: "Coupling"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [cpp, coupling, pimpl, dependency-injection, architecture, interview, solid]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🔗 Coupling in C++ — Complete Guide
+
+> **Coupling** is the degree to which one module relies on the internals of another. In C++, coupling is uniquely tied to **Compilation Dependencies**. If changing `Class B` forces `Class A` to recompile, they are tightly coupled.
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of coupling as **Compilation Gravity**.
+- **Tight Coupling**: `#include "B.h"` in `A.h`. Changing `B` triggers a cascade of recompilations.
+- **Loose Coupling**: Forward declarations, Interfaces (ABCs), PIMPL. Changing `B` only requires recompiling `B.cpp`.
+**Goal**: "High Cohesion, Low Coupling" — minimize header inclusion chains.
+</Aside>
+
+---
+
+## 📋 Types of Coupling in C++
+
+```
+Coupling in C++
+├── Compilation Coupling (Header Dependencies) ← Unique to C/C++
+│   ├── #include in Header (Tightest)
+│   ├── Forward Declaration (Loose)
+│   └── PIMPL Idiom (Opaque Pointer)
+│
+├── Logical Coupling (Runtime)
+│   ├── Direct Instantiation (new Concrete())
+│   ├── Interface-based (Abstract Base Classes)
+│   └── Dependency Injection
+│
+└── Linkage Coupling
+    ├── Static Linking (Monolithic)
+    └── Dynamic Linking (Shared Libraries/Plugins)
+```
+
+<CardGrid>
+  <Card title="Tight Coupling (Header)" icon="error">
+    ```cpp
+    // A.h
+    #include "B.h" // 🔴 A depends on B's full definition
+    
+    class A {
+        B b; // B must be fully defined here
+    };
+    
+    // Change B.h → A.h recompiles → Everything including A.h recompiles!
+    ```
+  </Card>
+  
+  <Card title="Loose Coupling (Forward Decl/PIMPL)" icon="approve-check">
+    ```cpp
+    // A.h
+    class B; // ✅ Forward declaration only
+    
+    class A {
+        std::unique_ptr<B> pImpl; // Size of ptr is known
+    };
+    
+    // Change B.h → Only B.cpp and A.cpp recompile.
+    // Users of A.h are unaffected.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣ Compilation Coupling — The C++ Specific Challenge
+
+In Java, imports are logical. In C++, `#include` copies code textually. This creates a **Dependency Graph** that impacts build times.
+
+### 🔴 Content Coupling via Headers
+
+<Code lang="cpp" title="❌ Tight Header Coupling" code={`
+// Engine.h
+#include "PhysicsEngine.h" // 🔴 Heavy include
+#include "Renderer.h"      // 🔴 Heavy include
+
+class GameEngine {
+    PhysicsEngine physics; // Requires full definition
+    Renderer renderer;     // Requires full definition
+};
+
+// main.cpp
+#include "GameEngine.h" 
+// Now main.cpp indirectly includes PhysicsEngine.h and Renderer.h
+// Change PhysicsEngine.h → main.cpp recompiles!
+`} />
+
+### ✅ The Fix: Forward Declarations & PIMPL
+
+<Code lang="cpp" title="✅ Loose Coupling with PIMPL" code={`
+// Engine.h
+#include <memory>
+
+// Forward declarations instead of includes
+class PhysicsEngine;
+class Renderer;
+
+class GameEngine {
+public:
+    GameEngine();
+    ~GameEngine(); // Must be defined in .cpp if using unique_ptr with incomplete type
+    
+    void update();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> pImpl; // Opaque pointer
+};
+
+// Engine.cpp
+#include "Engine.h"
+#include "PhysicsEngine.h" // Includes ONLY in source file
+#include "Renderer.h"
+
+struct GameEngine::Impl {
+    PhysicsEngine physics;
+    Renderer renderer;
+};
+
+GameEngine::GameEngine() : pImpl(std::make_unique<Impl>()) {}
+GameEngine::~GameEngine() = default;
+
+void GameEngine::update() {
+    pImpl->physics.step();
+}
+`} />
+
+<Aside type="note">
+**Why PIMPL?**
+1. **Binary Compatibility**: You can change private members without breaking ABI.
+2. **Compile Time**: Reduces header dependency chains.
+3. **Encapsulation**: Hides implementation details completely from the user.
+</Aside>
+
+---
+
+## 2️⃣ Logical Coupling — Runtime Dependencies
+
+Similar to Java, creating concrete objects inside classes creates tight logical coupling.
+
+<CardGrid>
+  <Card title="❌ Tight Logical Coupling" icon="error">
+    ```cpp
+    class OrderService {
+    public:
+        void placeOrder(const Order& order) {
+            // 🔴 Hardcoded dependency
+            StripePaymentGateway gateway; 
+            gateway.charge(order.total);
+        }
+    };
+    
+    // Problems:
+    // • Cannot test without real Stripe API
+    // • Cannot swap to PayPal without modifying code
+    ```
+  </Card>
+  
+  <Card title="✅ Loose Coupling via ABCs" icon="approve-check">
+    ```cpp
+    // Abstraction
+    class PaymentGateway {
+    public:
+        virtual ~PaymentGateway() = default;
+        virtual void charge(double amount) = 0;
+    };
+    
+    class OrderService {
+        std::unique_ptr<PaymentGateway> gateway;
+    public:
+        // ✅ Dependency Injected
+        OrderService(std::unique_ptr<PaymentGateway> gw) 
+            : gateway(std::move(gw)) {}
+            
+        void placeOrder(const Order& order) {
+            gateway->charge(order.total);
+        }
+    };
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 3️⃣ Interface Segregation in C++
+
+In C++, large Abstract Base Classes (ABCs) force clients to depend on methods they don't use.
+
+<Code lang="cpp" title="✅ Small, Focused Interfaces" code={`
+// ❌ Fat Interface
+class IUserService {
+public:
+    virtual ~IUserService() = default;
+    virtual User findById(int id) = 0;
+    virtual void update(User u) = 0;
+    virtual void sendEmail(int id) = 0; // Not needed by all clients
+};
+
+// ✅ Segregated Interfaces
+class IUserReader {
+public:
+    virtual ~IUserReader() = default;
+    virtual User findById(int id) = 0;
+};
+
+class IUserWriter {
+public:
+    virtual ~IUserWriter() = default;
+    virtual void update(User u) = 0;
+};
+
+// Client depends only on what it needs
+class BillingService {
+    IUserReader* reader; // Minimal coupling
+public:
+    BillingService(IUserReader* r) : reader(r) {}
+};
+`} />
+
+---
+
+## 4️⃣ Event-Driven Decoupling
+
+Using callbacks or `std::function` to decouple producers from consumers.
+
+<Code lang="cpp" title="Decoupling via std::function" code={`
+#include <functional>
+#include <vector>
+
+class EventBus {
+    std::vector<std::function<void(const std::string&)>> listeners;
+public:
+    void subscribe(std::function<void(const std::string&)> listener) {
+        listeners.push_back(listener);
+    }
+    
+    void publish(const std::string& event) {
+        for (auto& l : listeners) l(event);
+    }
+};
+
+// Producer doesn't know who listens
+class Inventory {
+    EventBus& bus;
+public:
+    Inventory(EventBus& b) : bus(b) {}
+    
+    void removeItem(const std::string& item) {
+        // ... logic
+        bus.publish("ItemRemoved: " + item);
+    }
+};
+
+// Consumer is completely independent
+class Logger {
+public:
+    void onEvent(const std::string& e) {
+        std::cout << "Log: " << e << std::endl;
+    }
+};
+
+int main() {
+    EventBus bus;
+    Logger logger;
+    
+    bus.subscribe([&logger](const std::string& e){ logger.onEvent(e); });
+    
+    Inventory inv(bus);
+    inv.removeItem("Sword");
+}
+`} />
+
+---
+
+## 💣 Interview Traps — C++ Specific
+
+<CardGrid>
+  <Card title="Trap 1 — Include What You Use" icon="error">
+    ```cpp
+    // A.h
+    #include <vector> // 🔴 Unnecessary if only using vector*
+    #include "B.h"    // 🔴 Maybe only need forward decl?
+    
+    // Fix:
+    class B; // Forward declare if possible
+    // Only #include if you inherit from B or hold B by value
+    ```
+  </Card>
+  
+  <Card title="Trap 2 — Returning Concrete Types" icon="warning">
+    ```cpp
+    class Repo {
+    public:
+        std::vector<int> getData(); // 🔴 Caller coupled to std::vector
+    };
+    
+    // ✅ Fix: Return interface or view
+    std::span<const int> getData(); // C++20: Non-owning view
+    // Or return std::unique_ptr<IDataCollection>
+    ```
+  </Card>
+
+  <Card title="Trap 3 — Static Globals = Common Coupling" icon="caution">
+    ```cpp
+    // Config.h
+    static std::string DB_URL = "localhost"; // 🔴 Mutable global state
+    
+    // Fix: Use Dependency Injection or Singleton (carefully)
+    class AppConfig {
+        std::string dbUrl;
+    public:
+        AppConfig(std::string url) : dbUrl(url) {}
+        const std::string& getDbUrl() const { return dbUrl; }
+    };
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 📊 Coupling Spectrum — Decision Guide
+
+```text
+TIGHT ◄────────────────────────────────────► LOOSE
+
+Header     Value     Pointer    Interface  Template  Event
+Include    Member    Ref/Ptr    (ABC)      (CRTP)    Bus
+
+Recompile  Strong    Weak       Weak       None     None
+Impact     Logic     Logic      Logic      Static   Runtime
+```
+
+<CardGrid>
+  <Card title="Quick Self-Check" icon="information">
+    ```text
+    Ask these questions about your headers:
+    
+    1. Do I #include a header just to use a pointer?
+       → If yes: Use Forward Declaration.
+    
+    2. Do I hold a member by value?
+       → If yes: Can I use PIMPL or unique_ptr?
+    
+    3. Do I create objects with 'new' inside methods?
+       → If yes: Inject via Constructor.
+    
+    4. Do I depend on a large ABC with unused methods?
+       → If yes: Split the interface.
+    ```
+  </Card>
+  
+  <Card title="Refactoring Checklist" icon="rocket">
+    ```text
+    To reduce C++ coupling:
+    
+    ✅ Replace #include with forward declarations where possible
+    ✅ Use PIMPL for stable ABIs and fast compiles
+    ✅ Depend on Abstract Base Classes (interfaces)
+    ✅ Use std::function for callbacks/events
+    ✅ Return std::span or views instead of containers
+    ✅ Avoid global mutable state
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🏭 SDE/SRE Relevance — What You Must Know
+
+<CardGrid>
+  <Card title="🔴 MUST KNOW — Build System Impact" icon="danger">
+    ```text
+    • Header Coupling drives Compile Times
+      → Large projects can take hours to build if coupled poorly.
+    
+    • PIMPL reduces Recompilation Cascades
+      → Critical for large libraries (e.g., Qt, LLVM).
+    
+    • Circular Includes
+      → Cause compiler errors. Fix with forward decls.
+    
+    • ODR Violations (One Definition Rule)
+      → Happen when coupled headers define symbols differently.
+    ```
+  </Card>
+  
+  <Card title="🟡 GOOD TO KNOW — Architecture" icon="information">
+    ```text
+    • Layered Architecture
+      → UI → Logic → Data. Higher layers depend on lower.
+    
+    • Dependency Inversion
+      → High-level modules depend on ABCs, not concrete low-level classes.
+    
+    • Modules (C++20)
+      → New feature to physically enforce encapsulation and reduce coupling.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is the difference between Java and C++ coupling?
+    A: Java coupling is logical (runtime). C++ coupling is also 
+       physical (compilation). #include creates hard dependencies.
+    
+    Q: How do you reduce header coupling?
+    A: Forward declarations, PIMPL, Interfaces (ABCs).
+    
+    Q: What is PIMPL?
+    A: Pointer to Implementation. Hides private data in .cpp, 
+       reducing header dependencies and ABI breaks.
+    ```
+  </Card>
+  
+  <Card title="Patterns & Fixes" icon="rocket">
+    ```text
+    Q: How to decouple a class from a specific database?
+    A: Define an IDatabase ABC. Inject it into the service.
+    
+    Q: Why is returning std::vector tight coupling?
+    A: Caller depends on std::vector implementation. 
+       Use std::span or iterators for loose coupling.
+    
+    Q: How to handle circular dependencies in C++?
+    A: Use forward declarations. If types are held by value, 
+       refactor to break the cycle (e.g., introduce mediator).
+    ```
+  </Card>
+
+  <Card title="Modern C++ Features" icon="shield">
+    ```text
+    Q: How do C++20 Modules help coupling?
+    A: Modules replace #include. They export only specific symbols,
+       hiding implementation details physically, not just logically.
+    
+    Q: What is std::function's role in coupling?
+    A: It allows type-erased callbacks. The caller doesn't need
+       to know the callee's class type, just the signature.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Coupling Decision Tree
+
+```text
+Need to use another class?
+│
+├─ Do you need its full definition (size/methods)?
+│  ├─ Yes → #include "B.h" (Tight)
+│  └─ No  → class B; (Forward Decl - Loose)
+│
+├─ Do you want to hide implementation details?
+│  └─ Yes → Use PIMPL Idiom
+│
+├─ Do you want to swap implementations at runtime?
+│  └─ Yes → Use Abstract Base Class + Injection
+│
+└─ Do you want to notify multiple listeners?
+   └─ Yes → Use std::function / EventBus
+```
+
+### Coupling Anti-Patterns & Fixes
+
+| Anti-Pattern | Symptom | Fix |
+|-------------|---------|-----|
+| `#include` in Header for Pointers | Long compile times, cascading rebuilds | Forward Declaration |
+| Holding Concrete Member by Value | ABI breaks, tight coupling | PIMPL (`unique_ptr<Impl>`) |
+| `new Concrete()` in Method | Untestable, rigid | Constructor Injection (ABC) |
+| Returning `std::vector` | Caller coupled to container type | Return `std::span` or Iterators |
+| Global Mutable State | Race conditions, hidden deps | Dependency Injection |
+
+<Aside type="caution">
+**Final Checklist for Low Coupling**:
+1. ✅ Forward declare whenever possible in headers.
+2. ✅ Use PIMPL for stable libraries.
+3. ✅ Depend on Abstract Base Classes, not concretions.
+4. ✅ Use `std::span` or views to decouple from container types.
+5. ✅ Avoid global state; inject dependencies.
+6. ✅ Use C++20 Modules if available to enforce boundaries.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict coupling severity" code={`
+// Q1: What is the coupling issue here?
+// A.h
+#include "B.h"
+class A {
+    B* ptr;
+};
+
+// Q2: How to fix this compilation dependency?
+// Service.h
+#include "Database.h"
+class Service {
+    Database db;
+};
+
+// Q3: Why is this tight coupling?
+void process() {
+    Logger log; // Local instantiation
+    log.write("Hi");
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Unnecessary #include. Since A only holds a pointer to B, 
+    it should use 'class B;' forward declaration.
+
+Q2: Use PIMPL or Interface. 
+    If Service owns Database, consider injecting IDatabase* 
+    or using unique_ptr<IDatabase> with forward decl.
+
+Q3: Tight logical coupling. 'process' cannot be tested without 
+    a real Logger. Inject ILogger& instead.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your headers for unnecessary `#includes`.
+2. ✅ Implement PIMPL for your core library classes.
+3. ✅ Replace concrete dependencies with Abstract Base Classes.
+4. ✅ Use `std::span` to decouple algorithms from containers.
+
+Mastering coupling in C++ leads to faster builds, stable ABIs, and testable code. 🚀
+</Aside>
+
+---
+
+# 🔗 C++ Coupling — Complete Deep Dive
+
+---
+
+## 📌 What Is Coupling?
+
+The **degree of interdependence** between software modules — how much one module knows about or depends on another.
+
+```
+High Coupling:                    Low Coupling:
+┌──────────┐  ←───────────────►  ┌──────────┐
+│ Module A │  knows internals of  │ Module B │
+│          │  ◄─── references ──► │          │
+│          │  shares data with    │          │
+└──────────┘                      └──────────┘
+Change B → must change A          Change B → A unaffected
+
+
+Low Coupling:
+┌──────────┐                      ┌──────────┐
+│ Module A │──► interface only ──►│ Module B │
+└──────────┘                      └──────────┘
+A knows WHAT B does, not HOW
+Change B internals → A unaffected
+```
+
+---
+
+## 🗺️ Types of Coupling (Worst → Best)
+
+```
+COUPLING SPECTRUM
+│
+├── Content Coupling    (WORST)   → directly modifies another's internals
+├── Common Coupling                → both access global shared state
+├── Control Coupling               → passes flags controlling behavior
+├── Stamp/Data Structure Coupling  → shares complex data structures
+├── Data Coupling                  → shares simple primitive data
+├── Message Coupling    (BEST)    → communicates via message/interface only
+└── No Coupling                    → completely independent
+```
+
+---
+
+## 🔴 Content Coupling — Worst
+
+One module **directly accesses/modifies internals** of another.
+
+```cpp
+// ❌ Content coupling — accessing private members via UB
+class Account {
+    double balance_ = 1000.0;   // private
+};
+
+class Hacker {
+    void steal(Account& acc) {
+        // Access private via reinterpret_cast — UB but "works"
+        double& bal = *reinterpret_cast<double*>(&acc);
+        bal = 0.0;              // directly modifies Account internals
+    }
+};
+
+// ❌ Content coupling — friend overuse
+class Processor {
+    void process(Account& acc) {
+        acc.balance_ -= 100;    // direct access via friend — tight coupling
+    }
+    friend class Processor;     // in Account — breaks encapsulation
+};
+```
+
+---
+
+## 🔴 Common Coupling — Global State
+
+Multiple modules **share mutable global state**.
+
+```cpp
+// ❌ Common coupling — global mutable state
+namespace globals {
+    int  connection_count = 0;
+    bool system_ready     = false;
+    std::string log_path  = "/var/log/app.log";
+}
+
+class Server {
+    void start() {
+        globals::system_ready     = true;      // modifies global
+        globals::connection_count = 0;
+        std::cout << "Logging to: " << globals::log_path;
+    }
+};
+
+class Client {
+    void connect() {
+        if (!globals::system_ready) return;    // reads global
+        globals::connection_count++;           // modifies global
+    }
+};
+
+// Problems:
+// - Thread safety: every thread races on globals
+// - Testing: impossible to isolate — globals persist between tests
+// - Order: initialization order fiasco
+// - Hidden dependencies: nothing in signatures shows the coupling
+```
+
+### Fix — Dependency Injection
+
+```cpp
+// ✅ Inject dependencies — coupling made explicit and controllable
+struct SystemState {
+    int         connection_count = 0;
+    bool        system_ready     = false;
+    std::string log_path;
+};
+
+class Server {
+    SystemState& state_;   // explicit dependency
+public:
+    explicit Server(SystemState& state) : state_(state) { }
+    void start() {
+        state_.system_ready = true;
+        state_.connection_count = 0;
+    }
+};
+
+class Client {
+    SystemState& state_;
+public:
+    explicit Client(SystemState& state) : state_(state) { }
+    void connect() {
+        if (!state_.system_ready) return;
+        state_.connection_count++;
+    }
+};
+
+// Usage:
+SystemState state;
+Server server(state);
+Client client(state);
+// Coupling visible in constructors — no hidden surprise
+// Testable: inject mock state
+```
+
+---
+
+## 🟡 Control Coupling — Flag Passing
+
+One module **tells another HOW to behave** via flags.
+
+```cpp
+// ❌ Control coupling — flag controls internal behavior
+class Printer {
+public:
+    enum class Mode { PLAIN, HTML, JSON, XML };
+
+    void print(const std::string& data, Mode mode) {
+        if (mode == Mode::PLAIN) {
+            std::cout << data;
+        } else if (mode == Mode::HTML) {
+            std::cout << "<p>" << data << "</p>";
+        } else if (mode == Mode::JSON) {
+            std::cout << "\"" << data << "\"";
+        }
+        // Caller controls internal logic via flag — tight coupling
+        // Adding new mode: modify Printer AND all callers
+    }
+};
+
+// ✅ Fix — polymorphism/strategy pattern
+class IFormatter {
+public:
+    virtual std::string format(const std::string& data) const = 0;
+    virtual ~IFormatter() = default;
+};
+
+class PlainFormatter  : public IFormatter {
+    std::string format(const std::string& d) const override { return d; }
+};
+class HTMLFormatter   : public IFormatter {
+    std::string format(const std::string& d) const override {
+        return "<p>" + d + "</p>";
+    }
+};
+class JSONFormatter   : public IFormatter {
+    std::string format(const std::string& d) const override {
+        return "\"" + d + "\"";
+    }
+};
+
+class Printer {
+    const IFormatter& fmt_;
+public:
+    explicit Printer(const IFormatter& f) : fmt_(f) { }
+    void print(const std::string& data) {
+        std::cout << fmt_.format(data);  // no flag — polymorphism
+    }
+};
+// Add new format: new class only — Printer unchanged
+```
+
+---
+
+## 🟡 Stamp Coupling — Data Structure Sharing
+
+Modules share **complex data structures** but only need parts.
+
+```cpp
+// ❌ Stamp coupling — pass entire struct when only name needed
+struct Employee {
+    int         id;
+    std::string first_name;
+    std::string last_name;
+    double      salary;
+    std::string department;
+    Address     home_address;
+    Benefits    benefits_package;
+    // ... 20 more fields
+};
+
+void print_name(const Employee& e) {   // needs ONLY first_name + last_name
+    std::cout << e.first_name << " " << e.last_name;
+    // Now coupled to Employee — if struct changes, this function affected
+}
+
+// ✅ Fix — pass only what is needed
+void print_name(std::string_view first, std::string_view last) {
+    std::cout << first << " " << last;
+    // Coupled to nothing — works with Employee, Person, User, etc.
+}
+
+// ✅ Or use structured binding (C++17)
+void print_name(const auto& entity) {
+    std::cout << entity.first_name << " " << entity.last_name;
+    // Concept-constrained: anything with first_name + last_name
+}
+```
+
+---
+
+## 🟢 Data Coupling — Simple Data Only
+
+Modules communicate via **simple primitive parameters**.
+
+```cpp
+// ✅ Data coupling — only primitive types passed
+double calculate_tax(double income, double rate) {
+    return income * rate;  // depends on nothing — pure function
+}
+
+int find_index(const int* arr, int size, int target) {
+    for (int i = 0; i < size; i++)
+        if (arr[i] == target) return i;
+    return -1;
+}
+// No class dependencies — maximally decoupled
+```
+
+---
+
+## 🟢 Message Coupling — Best
+
+Communicate only through **abstract interfaces**.
+
+```cpp
+// ✅ Message coupling — modules know only interfaces
+class IMessageBus {
+public:
+    virtual void publish(const std::string& topic,
+                        const std::string& payload) = 0;
+    virtual void subscribe(const std::string& topic,
+                          std::function<void(std::string)> handler) = 0;
+    virtual ~IMessageBus() = default;
+};
+
+class OrderService {
+    IMessageBus& bus_;   // knows only the interface
+public:
+    explicit OrderService(IMessageBus& bus) : bus_(bus) { }
+
+    void place_order(int item_id, int qty) {
+        // publish event — no knowledge of who handles it
+        bus_.publish("order.placed",
+            "{\"item\":" + std::to_string(item_id) + "}");
+    }
+};
+
+class InventoryService {
+    IMessageBus& bus_;
+public:
+    explicit InventoryService(IMessageBus& bus) : bus_(bus) {
+        bus_.subscribe("order.placed", [this](std::string payload) {
+            handle_order(payload);
+        });
+    }
+    void handle_order(const std::string& payload) { /* ... */ }
+};
+
+// OrderService and InventoryService: ZERO direct coupling
+// Both depend only on IMessageBus interface
+```
+
+---
+
+## 🔷 C++-Specific Coupling Forms
+
+### 1. Include Dependency Coupling
+
+```cpp
+// ❌ Header includes everything → recompile cascade
+// user_service.hpp:
+#include "database.hpp"       // heavy dependency
+#include "email_sender.hpp"   // pulls in smtp, ssl, openssl
+#include "cache.hpp"          // pulls in redis, network
+#include "logger.hpp"
+
+class UserService {
+    Database&    db_;
+    EmailSender& email_;
+    Cache&       cache_;
+    Logger&      logger_;
+};
+// Every file that includes user_service.hpp
+// transitively includes all four heavy headers
+// Build time: 30s per TU
+
+// ✅ Forward declare + inject via interface
+// user_service.hpp:
+class IDatabase;      // forward declare
+class IEmailSender;   // forward declare
+class ICache;         // forward declare
+class ILogger;        // forward declare
+
+class UserService {
+    IDatabase&    db_;
+    IEmailSender& email_;
+    ICache&       cache_;
+    ILogger&      logger_;
+public:
+    UserService(IDatabase&, IEmailSender&, ICache&, ILogger&);
+};
+// user_service.hpp: zero heavy includes — just forward decls
+// user_service.cpp: includes concrete headers (only compiled once)
+// Build time: 2s per TU
+```
+
+### 2. Inheritance Coupling
+
+```cpp
+// ❌ Deep inheritance = tight coupling to base
+class BaseController {
+protected:
+    Database db_;
+    Cache    cache_;
+    Logger   logger_;
+    Auth     auth_;
+
+    virtual void before_action() { auth_.verify(); }
+    virtual void after_action()  { logger_.flush(); }
+};
+
+class UserController : public BaseController {
+    // Tightly coupled to BaseController's implementation
+    // Change BaseController → may break UserController
+    // Cannot test UserController without BaseController
+    // Cannot reuse UserController logic without entire hierarchy
+};
+
+// ✅ Prefer composition over inheritance
+class UserController {
+    Auth&   auth_;      // inject what you need
+    Logger& logger_;    // only what you need
+public:
+    UserController(Auth& a, Logger& l)
+        : auth_(a), logger_(l) { }
+
+    void get_user(int id) {
+        auth_.verify();       // same effect — no inheritance needed
+        // ... logic ...
+        logger_.info("User fetched");
+    }
+};
+// Testable: inject mock Auth, mock Logger
+// Reusable: no base class required
+```
+
+### 3. Template Coupling
+
+```cpp
+// ❌ Template instantiation couples at compile time
+template<typename T>
+class Processor {
+    T worker_;    // Processor coupled to T — change T = recompile Processor
+public:
+    void process() { worker_.do_work(); }
+};
+
+// Every instantiation: Processor<RealWorker>, Processor<MockWorker>
+// generates separate binary — code bloat
+
+// ✅ Type erasure — decouple at runtime
+class Processor {
+    std::function<void()> work_fn_;  // erased type — any callable
+public:
+    explicit Processor(std::function<void()> fn) : work_fn_(fn) { }
+    void process() { work_fn_(); }
+};
+
+RealWorker rw;
+Processor p([&rw]{ rw.do_work(); });   // any worker — no template dep
+```
+
+### 4. Callback Coupling
+
+```cpp
+// ❌ Hard-coded callback — coupled to specific function
+class EventLoop {
+public:
+    void on_data_received(const uint8_t* data, size_t len) {
+        DataProcessor::process_static(data, len);  // coupled to DataProcessor
+    }
+};
+
+// ✅ Callback via std::function — decoupled
+class EventLoop {
+    std::function<void(const uint8_t*, size_t)> on_data_;
+public:
+    void set_data_handler(std::function<void(const uint8_t*, size_t)> h) {
+        on_data_ = std::move(h);
+    }
+    void on_data_received(const uint8_t* data, size_t len) {
+        if (on_data_) on_data_(data, len);
+    }
+};
+
+EventLoop loop;
+DataProcessor dp;
+loop.set_data_handler([&dp](const uint8_t* d, size_t n) {
+    dp.process(d, n);
+});
+// EventLoop knows nothing about DataProcessor
+```
+
+---
+
+## 🔷 Measuring Coupling
+
+```
+Fan-out (afferent coupling):
+  How many modules does this module DEPEND ON?
+  High fan-out = this module knows too much = fragile
+
+Fan-in (efferent coupling):
+  How many modules DEPEND ON this module?
+  High fan-in = this module is highly reused = stable, important
+```
+
+```cpp
+class PaymentService {   // fan-out analysis
+    Database&      db_;        // dependency 1
+    EmailSender&   email_;     // dependency 2
+    SMSGateway&    sms_;       // dependency 3
+    AuditLogger&   audit_;     // dependency 4
+    FraudDetector& fraud_;     // dependency 5
+    CurrencyAPI&   currency_;  // dependency 6
+    // fan-out = 6 — high — needs splitting
+};
+
+class CurrencyConverter {  // fan-in analysis
+    // Used by: PaymentService, ReportService, BillingService,
+    //          InvoiceService, QuoteService
+    // fan-in = 5 — high — must be VERY stable
+    double convert(double amount, Currency from, Currency to);
+};
+```
+
+---
+
+## 🔷 Coupling Reduction Patterns
+
+### PIMPL — Compile-Time Decoupling
+
+```cpp
+// ❌ Without PIMPL — heavy header coupling
+#include <boost/asio.hpp>      // all users get this dependency
+#include <openssl/ssl.h>       // all users get this
+
+class TLSConnection {
+    boost::asio::io_context ctx_;
+    SSL* ssl_ = nullptr;
+public:
+    void connect(const std::string& host, int port);
+};
+
+// ✅ With PIMPL — coupling hidden in .cpp
+// tls_connection.hpp (user-visible):
+class TLSConnection {
+    struct Impl;
+    std::unique_ptr<Impl> pimpl_;
+public:
+    TLSConnection();
+    ~TLSConnection();
+    void connect(const std::string& host, int port);
+};
+// Users include ZERO heavy headers — just see Impl forward decl
+```
+
+### Service Locator — Runtime Decoupling
+
+```cpp
+class ServiceLocator {
+    std::unordered_map<std::type_index,
+                       std::shared_ptr<void>> services_;
+public:
+    template<typename T>
+    void register_service(std::shared_ptr<T> svc) {
+        services_[std::type_index(typeid(T))] = std::move(svc);
+    }
+
+    template<typename T>
+    T& get() {
+        auto it = services_.find(std::type_index(typeid(T)));
+        if (it == services_.end())
+            throw std::runtime_error("Service not registered: " +
+                                     std::string(typeid(T).name()));
+        return *static_cast<T*>(it->second.get());
+    }
+};
+
+ServiceLocator locator;
+locator.register_service<IDatabase>(make_shared<PostgreSQLDB>());
+locator.register_service<ILogger>(make_shared<FileLogger>());
+
+class UserService {
+    ServiceLocator& loc_;
+public:
+    UserService(ServiceLocator& l) : loc_(l) { }
+    void create_user(std::string name) {
+        loc_.get<ILogger>().info("Creating user: " + name);
+        loc_.get<IDatabase>().execute("INSERT INTO users ...");
+    }
+};
+```
+
+---
+
+## 🔬 Under the Hood — Coupling Impacts Build
+
+```
+Tight include coupling → compilation cascade:
+
+database.hpp changed
+  → account.hpp includes it → recompile
+  → transaction.hpp includes it → recompile
+  → user_service.hpp includes it → recompile
+  → payment_service.hpp includes it → recompile
+  → 47 .cpp files recompile → 3 minutes
+
+With forward declarations + interfaces:
+database.hpp changed
+  → database.cpp recompiles → 2 seconds
+  → Everything else: header unchanged → NO recompile
+```
+
+```
+Fan-out → compile-time coupling:
+Each include = TU depends on that header
+Transitive includes multiply the coupling
+1 change can trigger 100s of recompilations in a large codebase
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Monolith refactoring from tight to loose coupling:**
+
+```cpp
+// ❌ Before: OrderService knows everything
+class OrderService {
+    MySQL          db_;          // direct concrete class
+    SendGridAPI    email_;       // direct concrete class
+    StripeAPI      payment_;     // direct concrete class
+    RedisCache     cache_;       // direct concrete class
+    ElasticsearchLogger log_;    // direct concrete class
+
+    void place_order(Order& o) {
+        if (!db_.query("SELECT ..."))        // coupled to MySQL syntax
+            throw;
+        payment_.stripe_charge(o.total);     // coupled to Stripe API
+        email_.sendgrid_send("order", ...);  // coupled to SendGrid
+        cache_.redis_set(o.id, ...);         // coupled to Redis
+    }
+};
+// Test: must mock MySQL, Stripe, SendGrid, Redis, Elasticsearch
+// Add new payment gateway: modify OrderService
+// Switch to PostgreSQL: modify OrderService
+
+// ✅ After: OrderService depends only on interfaces
+class OrderService {
+    IDatabase&      db_;
+    IEmailService&  email_;
+    IPaymentGate&   payment_;
+    ICache&         cache_;
+    ILogger&        log_;
+
+public:
+    OrderService(IDatabase& db, IEmailService& em,
+                 IPaymentGate& pay, ICache& ca, ILogger& lo)
+        : db_(db), email_(em), payment_(pay)
+        , cache_(ca), log_(lo) { }
+
+    void place_order(Order& o) {
+        if (!db_.find_product(o.product_id)) throw ProductNotFound{};
+        payment_.charge(o.total, o.payment_method);
+        email_.send_order_confirmation(o);
+        cache_.store(o.id, o);
+        log_.info("Order placed: " + std::to_string(o.id));
+    }
+};
+// Test: inject mocks — test in isolation
+// Switch MySQL→Postgres: new IDatabase impl, zero OrderService change
+// Add PayPal: new IPaymentGate impl, zero OrderService change
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```
+"Is inheritance always tight coupling?"
+```
+> Yes — inheritance is the **tightest coupling** short of content coupling. Derived class depends on ALL of base class internals. Change base → derived may break. "Prefer composition over inheritance" is a direct response to coupling. Exception: inheriting from pure interfaces (all pure virtual, no data) = loose coupling via abstraction.
+
+**Trap 2:**
+```cpp
+// Is this loose or tight coupling?
+template<typename Logger>
+class Service {
+    Logger logger_;
+public:
+    void do_work() { logger_.log("working"); }
+};
+```
+> **Tight at compile time, flexible at design time.** `Logger` must have `.log()` at compile time — implicit interface. Change `Logger`'s API → recompile `Service`. But: easy to swap implementations. Use Concepts (C++20) to make the implicit interface explicit: `requires (Logger l) { l.log(std::string{}); }`.
+
+**Trap 3:**
+```
+"Global constants are common coupling — agree or disagree?"
+```
+> **Disagree** — `const` global values are NOT common coupling. Common coupling requires **mutable** shared state. `constexpr int MAX_SIZE = 1024` shared across modules is fine — it never changes, can't cause data races, doesn't create hidden dependencies. Common coupling = `extern int counter` (mutable global).
+
+**Trap 4:**
+```cpp
+class A { friend class B; };
+class B { void use(A& a) { a.private_member_; } };
+// Type of coupling?
+```
+> **Content coupling** — `B` directly accesses `A`'s private members. `friend` is a named, intentional breach of encapsulation, but it's still the tightest coupling: `B` knows `A`'s internals. Change `A`'s private implementation → `B` must change too.
+
+**Trap 5:**
+```
+"std::function reduces coupling compared to raw function pointers — why?"
+```
+> `std::function` accepts lambdas, functors, member function pointers, and free functions — type-erased. Caller doesn't know or care which callable is used. Raw function pointer `void(*)(int)` requires exactly a free function with that signature — specific type must be known. `std::function` = data coupling (just the signature). Raw pointer = stamp coupling (specific function type).
+
+---

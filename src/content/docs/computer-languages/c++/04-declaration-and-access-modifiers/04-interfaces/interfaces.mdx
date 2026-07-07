@@ -1,0 +1,1235 @@
+---
+title: C++ Interfaces (Abstract Classes & Concepts)
+slug: computer-languages/cpp/oop/interfaces
+description: Complete guide to simulating interfaces with pure virtual classes, multiple inheritance, CRTP, and C++20 Concepts — comparison with Java interfaces.
+sidebar:
+  label: "Interfaces"
+  badge:
+    text: OOP
+    variant: tip
+tags: [cpp, interface, abstract, polymorphism, concepts, multiple-inheritance, interview, c++20]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔌 Interfaces in C++ — The Reality
+
+> **C++ does not have an `interface` keyword.**  
+> Instead, C++ uses **Abstract Base Classes (ABCs)** with **pure virtual functions** to define contracts.  
+> With **C++20**, **Concepts** provide a modern, compile-time alternative for generic programming.
+
+```text
+C++ "Interface" Mechanisms
+│
+├── Abstract Base Classes (Runtime Polymorphism)
+│   ├── Pure Virtual Functions (= 0)
+│   ├── Multiple Inheritance (supported!)
+│   └── Virtual Destructors (mandatory)
+│
+├── C++20 Concepts (Compile-Time Constraints)
+│   ├── requires clauses
+│   ├── template constraints
+│   └── Static polymorphism (zero overhead)
+│
+└── Key Differences from Java
+    ├── No default methods (until C++11/14 workarounds)
+    ├── No static fields/methods in ABCs (use separate utils)
+    ├── No implicit public access (must specify)
+    └── Diamond Problem (requires virtual inheritance)
+```
+
+---
+
+## 🗂️ Simulating Interfaces with Abstract Base Classes
+
+An interface in C++ is a class where **all methods are pure virtual** and there are **no member variables**.
+
+<Code lang="cpp" title="Defining an Interface (ABC)" code={`
+#include <iostream>
+#include <string>
+
+// "Interface" definition
+class Drawable {
+public:
+    // Pure virtual function = 0 makes the class abstract
+    virtual void draw() const = 0; 
+    
+    // Virtual destructor is CRITICAL for polymorphism
+    virtual ~Drawable() = default; 
+};
+
+// Another "Interface"
+class Resizable {
+public:
+    virtual void resize(double factor) = 0;
+    virtual ~Resizable() = default;
+};
+
+// Implementation
+class Circle : public Drawable, public Resizable { // Multiple inheritance!
+    double radius;
+public:
+    Circle(double r) : radius(r) {}
+    
+    void draw() const override {
+        std::cout << "Drawing Circle with radius " << radius << "\\n";
+    }
+    
+    void resize(double factor) override {
+        radius *= factor;
+    }
+};
+
+// Usage
+int main() {
+    // Drawable* d = new Drawable(); // ❌ Error: cannot instantiate abstract class
+    
+    Drawable* shape = new Circle(5.0); // Polymorphic pointer
+    shape->draw();                     // "Drawing Circle..."
+    
+    // Safe downcast if needed
+    if (auto* c = dynamic_cast<Circle*>(shape)) {
+        c->resize(2.0);
+    }
+    
+    delete shape; // Calls virtual destructor
+    return 0;
+}
+`} />
+
+### 🔑 Core Rules for C++ Interfaces (ABCs)
+
+<CardGrid>
+  <Card title="Must Override All Pure Virtuals" icon="error">
+    ```cpp
+    class Shape {
+    public:
+        virtual void area() const = 0;
+    };
+    
+    // class Square : public Shape { }; // ❌ Error: Square is still abstract
+    
+    class Square : public Shape {
+    public:
+        void area() const override { /* impl */ } // ✅ Now concrete
+    };
+    ```
+  </Card>
+  
+  <Card title="Virtual Destructor is Mandatory" icon="shield">
+    ```cpp
+    class Base {
+    public:
+        virtual ~Base() = default; // ✅ Essential!
+    };
+    
+    // If you delete a derived object via a base pointer
+    // without a virtual destructor, behavior is UNDEFINED.
+    // Derived destructors won't run → memory leaks!
+    ```
+  </Card>
+
+  <Card title="Access Specifiers Are Explicit" icon="information">
+    ```cpp
+    class MyInterface {
+        void foo(); // ❌ Private by default! Cannot be implemented publicly.
+    public:
+        virtual void bar() = 0; // ✅ Public abstract method
+    };
+    // Java interfaces are implicitly public. C++ is not.
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="note">
+**Java vs C++**: 
+- Java: `interface Foo { void bar(); }` (implicitly public abstract).
+- C++: `class Foo { public: virtual void bar() = 0; };` (explicit).
+</Aside>
+
+---
+
+## 🔄 Multiple Inheritance & The Diamond Problem
+
+C++ supports multiple inheritance, which allows a class to implement multiple "interfaces". However, this introduces the **Diamond Problem**.
+
+### 💻 Syntax Examples
+
+<Code lang="cpp" title="Multiple Interface Implementation" code={`
+class Flyable {
+public:
+    virtual void fly() = 0;
+    virtual ~Flyable() = default;
+};
+
+class Swimmable {
+public:
+    virtual void swim() = 0;
+    virtual ~Swimmable() = default;
+};
+
+// Duck implements BOTH interfaces
+class Duck : public Flyable, public Swimmable {
+public:
+    void fly() override { std::cout << "Flying\\n"; }
+    void swim() override { std::cout << "Swimming\\n"; }
+};
+`} />
+
+### ⚠️ The Diamond Problem
+
+If two interfaces inherit from a common base, you get duplicate subobjects.
+
+<Code lang="cpp" title="Diamond Inheritance Resolution" code={`
+class Animal {
+public:
+    virtual void breathe() = 0;
+    virtual ~Animal() = default;
+};
+
+// Virtual inheritance solves the diamond problem
+class Mammal : public virtual Animal { 
+public:
+    void breathe() override { std::cout << "Lungs\\n"; }
+};
+
+class Bird : public virtual Animal { 
+public:
+    void breathe() override { std::cout << "Air Sacs\\n"; }
+};
+
+// Bat is both Mammal and Bird? (Biologically debatable, but technically valid C++)
+class Bat : public Mammal, public Bird {
+public:
+    // Must resolve ambiguity if both parents implement breathe() differently
+    // Or provide its own implementation
+    void breathe() override { std::cout << "Bat Breathing\\n"; }
+};
+`} />
+
+<Aside type="tip">
+**Rule of Thumb**: Use `virtual public Base` when inheriting from an interface that might be shared. This ensures only **one copy** of the base class exists in the final object.
+</Aside>
+
+---
+
+## 🛠️ Modern C++: Default Implementations & Static Methods
+
+Java 8 added default/static methods to interfaces. C++ can simulate this, but it's less clean.
+
+### 1. Default Methods (via Regular Virtual Functions)
+
+<Code lang="cpp" title="Simulating Default Methods" code={`
+class Logger {
+public:
+    virtual void log(const std::string& msg) {
+        // Default implementation
+        std::cout << "[LOG] " << msg << std::endl;
+    }
+    virtual ~Logger() = default;
+};
+
+class ConsoleLogger : public Logger {
+    // Inherits default log() automatically
+};
+
+class FileLogger : public Logger {
+public:
+    void log(const std::string& msg) override {
+        // Custom implementation
+        std::cerr << "[FILE] " << msg << std::endl;
+    }
+};
+`} />
+
+### 2. Static Utility Methods
+
+C++ interfaces (ABCs) cannot have static methods that are part of the contract in the same way Java does. You typically use a separate namespace or a helper class.
+
+<Code lang="cpp" title="Static Utilities" code={`
+namespace MathUtils {
+    inline int square(int n) { return n * n; }
+}
+
+// Or inside a non-abstract base class
+class Geometry {
+public:
+    static double pi() { return 3.14159; }
+    virtual double area() const = 0;
+};
+`} />
+
+---
+
+## 📦 Member Variables in Interfaces?
+
+**Java**: `public static final` constants are allowed.  
+**C++**: **Avoid data members in ABCs**. If you add data, it's no longer a pure interface; it's a base class with state. This complicates multiple inheritance (diamond problem again).
+
+✅ **Best Practice**: Use `constexpr` static members for constants if absolutely necessary, but prefer free functions or enums.
+
+<Code lang="cpp" title="Constants in ABCs" code={`
+class Config {
+public:
+    static constexpr int MAX_SIZE = 100;
+    virtual void apply() = 0;
+    virtual ~Config() = default;
+};
+
+// Access: Config::MAX_SIZE
+`} />
+
+---
+
+## 🏷️ Marker Interfaces & Type Traits
+
+Java uses marker interfaces (`Serializable`). C++ uses **Type Traits** and **Concepts** (C++20) for compile-time checks, which are zero-overhead.
+
+### C++20 Concepts (The Modern "Marker")
+
+<Code lang="cpp" title="C++20 Concepts" code={`
+#include <concepts>
+
+// Define a concept (constraint)
+template<typename T>
+concept Printable = requires(T t) {
+    { std::cout << t } -> std::same_as<std::ostream&>;
+};
+
+// Use the concept in a template
+void printAll(const Printable auto& item) {
+    std::cout << item << std::endl;
+}
+
+// Compile-time error if type doesn't satisfy concept
+// printAll(std::vector<int>{}); // Error if vector doesn't have operator<<
+`} />
+
+### Pre-C++20: SFINAE / Type Traits
+
+<Code lang="cpp" title="Type Traits Check" code={`
+#include <type_traits>
+
+template<typename T>
+typename std::enable_if<std::is_integral<T>::value, void>::type
+process(T val) {
+    // Only compiles if T is an integer
+    std::cout << "Integer: " << val << std::endl;
+}
+`} />
+
+---
+
+## 🆚 Interface vs Abstract Class vs Concrete Class
+
+### 📊 Comprehensive Comparison Table
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>C++ ABC (Interface)</th>
+      <th>C++ Abstract Class</th>
+      <th>Java Interface</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Syntax</strong></td><td><code>class I \{ virtual void f()=0; \};</code></td><td>Same as ABC, but with some impl</td><td><code>interface I \{ void f(); \}</code></td></tr>
+    <tr><td><strong>State</strong></td><td>❌ None (ideally)</td><td>✅ Yes</td><td>❌ Only static final</td></tr>
+    <tr><td><strong>Multiple Inheritance</strong></td><td>✅ Yes (watch diamonds)</td><td>✅ Yes</td><td>✅ Yes</td></tr>
+    <tr><td><strong>Default Impl</strong></td><td>✅ Via regular virtual func</td><td>✅ Yes</td><td>✅ <code>default</code> keyword</td></tr>
+    <tr><td><strong>Constructors</strong></td><td>✅ (For derived init)</td><td>✅ Yes</td><td>❌ No</td></tr>
+    <tr><td><strong>Performance</strong></td><td>⚠️ Vtable lookup</td><td>⚠️ Vtable lookup</td><td>⚠️ Vtable lookup</td></tr>
+    <tr><td><strong>Compile-Time Check</strong></td><td>❌ Runtime (usually)</td><td>❌ Runtime</td><td>❌ Runtime</td></tr>
+    <tr><td><strong>Modern Alternative</strong></td><td>C++20 Concepts</td><td>C++20 Concepts</td><td>N/A</td></tr>
+  </tbody>
+</table>
+
+### 🎯 When to Choose Which?
+
+<CardGrid>
+  <Card title="Use ABC (Interface) When…" icon="rocket">
+    ```text
+    ✅ You need runtime polymorphism (vtables).
+    ✅ You need to store heterogeneous objects in a container (e.g., vector<Base*>).
+    ✅ You are designing a plugin system or API boundary.
+    ```
+  </Card>
+  
+  <Card title="Use C++20 Concepts When…" icon="shield">
+    ```text
+    ✅ You are writing generic/template code.
+    ✅ You want zero-overhead abstraction (no vtables).
+    ✅ You want compile-time errors for invalid types.
+    ✅ You don't need to store objects heterogeneously.
+    ```
+  </Card>
+
+  <Card title="Use Concrete Class When…" icon="approve-check">
+    ```text
+    ✅ You have a complete implementation.
+    ✅ Performance is critical and you want to avoid indirect calls.
+    ✅ You don't need extensibility.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔧 Constructor Discussion
+
+**Java**: Interfaces have no constructors.  
+**C++**: ABCs **can** have constructors. Why? To initialize member variables if the ABC has any (though pure interfaces shouldn't). Even if empty, the constructor is called during derived class construction.
+
+<Code lang="cpp" title="ABC Constructor" code={`
+class Shape {
+protected:
+    std::string name;
+public:
+    Shape(const std::string& n) : name(n) {} // Initializes base part
+    virtual double area() const = 0;
+    virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+    double radius;
+public:
+    Circle(const std::string& n, double r) : Shape(n), radius(r) {} // Call base ctor
+    double area() const override { return 3.14 * radius * radius; }
+};
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you define an interface in C++?" icon="information">
+    Create a class with **pure virtual functions** (`virtual void foo() = 0;`) and a **virtual destructor**.
+  </Card>
+  
+  <Card title="Q: Can C++ support multiple inheritance?" icon="approve-check">
+    **YES**. A class can inherit from multiple ABCs. Beware of the **Diamond Problem** — solve it with `virtual inheritance`.
+  </Card>
+
+  <Card title="Q: What is the difference between Java Interface and C++ ABC?" icon="caution">
+    - Java: Implicitly public, no state, `default` methods.
+    - C++: Explicit access, can have state (but shouldn't for pure interfaces), no `default` keyword (use regular virtual funcs).
+  </Card>
+
+  <Card title="Q: Why is a virtual destructor important?" icon="error">
+    Without it, deleting a derived object via a base pointer causes **Undefined Behavior** (derived destructor won't run).
+  </Card>
+
+  <Card title="Q: What are C++20 Concepts?" icon="rocket">
+    A way to constrain template parameters at **compile time**. They replace SFINAE and provide better error messages. They are a form of **static interface**.
+  </Card>
+
+  <Card title="Q: Can an ABC have static methods?" icon="information">
+    **Yes**, but they are not polymorphic. They belong to the class, not the instance.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle — Polymorphism in Containers
+
+> Use ABCs to store different types in a single container.
+
+<Code lang="cpp" title="Polymorphic Container" code={`
+#include <memory>
+#include <vector>
+
+class Task {
+public:
+    virtual void execute() = 0;
+    virtual ~Task() = default;
+};
+
+class PrintTask : public Task {
+    std::string msg;
+public:
+    PrintTask(const std::string& m) : msg(m) {}
+    void execute() override { std::cout << msg << std::endl; }
+};
+
+class SleepTask : public Task {
+    int ms;
+public:
+    SleepTask(int m) : ms(m) {}
+    void execute() override { /* sleep */ }
+};
+
+int main() {
+    std::vector<std::unique_ptr<Task>> tasks;
+    tasks.push_back(std::make_unique<PrintTask>("Hello"));
+    tasks.push_back(std::make_unique<SleepTask>(100));
+    
+    for (auto& t : tasks) {
+        t->execute(); // Polymorphic call
+    }
+    return 0;
+}
+`} />
+
+---
+
+## 🔑 Quick Reference Summary
+
+### ABC Rules
+
+| Rule | Detail |
+|------|--------|
+| **Pure Virtual** | `virtual void f() = 0;` |
+| **Virtual Destructor** | `virtual ~Base() = default;` |
+| **Override** | Use `override` keyword in derived classes |
+| **Final** | Use `final` to prevent further overriding |
+| **Access** | Must be `public` to be part of the interface |
+
+### Java vs C++ Mapping
+
+| Java | C++ Equivalent |
+|------|----------------|
+| `interface` | `class` with pure virtual funcs |
+| `implements` | `public Base` |
+| `extends` (interface) | `public virtual Base` |
+| `default` method | Regular virtual method with body |
+| `static` method | Static member function |
+| `instanceof` | `dynamic_cast` |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Always add `virtual ~Base() = default;`.
+2. ✅ Use `override` in derived classes.
+3. ✅ Use `virtual public` for diamond inheritance.
+4. ✅ Prefer **C++20 Concepts** for generic code (zero overhead).
+5. ✅ Avoid data members in pure interfaces.
+6. ✅ Remember: C++ access is **private** by default!
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict compile/runtime behavior" code={`
+class A {
+public:
+    virtual void foo() = 0;
+    // ~A() {} // Missing virtual!
+};
+
+class B : public A {
+public:
+    void foo() override {}
+};
+
+int main() {
+    A* ptr = new B();
+    ptr->foo();
+    delete ptr; // ?
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+• delete ptr; // ⚠️ Undefined Behavior! 
+// Because A's destructor is not virtual, B's destructor will not be called.
+// Fix: Add virtual ~A() = default;
+```
+</details>
+
+<Aside type="tip">
+**Pro Interview Strategy**:
+1. Explain **vtables** and how pure virtual functions work.
+2. Discuss **Diamond Problem** and `virtual inheritance`.
+3. Highlight **C++20 Concepts** as the modern alternative for static polymorphism.
+4. Emphasize **RAII** and smart pointers with polymorphic objects.
+</Aside>
+
+---
+
+# 🔌 C++ Interfaces — Complete Deep Dive
+
+---
+
+## 📌 C++ Has No `interface` Keyword
+
+```java
+// Java
+interface Drawable { void draw(); }   // ← doesn't exist in C++
+```
+
+C++ achieves interfaces through **pure abstract classes** — and goes further with **concepts** (C++20) for compile-time interfaces.
+
+```
+"Interfaces" in C++
+│
+├── Pure Abstract Class         → runtime polymorphism (vtable)
+│   └── all methods = 0, no data members
+│
+├── Concepts (C++20)            → compile-time interface
+│   └── type constraints checked at compile time
+│
+├── Template Duck Typing        → implicit interface (no vtable)
+│   └── if it compiles, it satisfies the interface
+│
+└── Type Erasure                → runtime polymorphism without inheritance
+    └── std::function, std::any, custom wrappers
+```
+
+---
+
+## 🔷 1. Pure Abstract Class — The Primary Mechanism
+
+```cpp
+class IDrawable {          // 'I' prefix = interface convention
+public:
+    virtual void draw() const = 0;       // pure virtual — MUST override
+    virtual void resize(double factor) = 0;
+    virtual ~IDrawable() = default;      // ALWAYS virtual destructor
+};
+```
+
+### Rules for a Proper Interface
+
+```
+✅ MUST HAVE:
+  virtual destructor (or protected non-virtual)
+  all methods pure virtual (= 0)
+
+✅ SHOULD HAVE:
+  no data members
+  no implemented methods (except destructor)
+
+❌ SHOULD NOT HAVE:
+  non-virtual methods (breaks substitutability)
+  data members (creates coupling, breaks interface contract)
+  static data (global state via interface = design smell)
+```
+
+```cpp
+// ❌ Bad interface — has data member
+class IShape {
+    std::string color;       // ❌ data in interface
+public:
+    virtual double area() const = 0;
+    virtual ~IShape() = default;
+};
+
+// ✅ Good interface — pure
+class IShape {
+public:
+    virtual double area()      const = 0;
+    virtual double perimeter() const = 0;
+    virtual ~IShape() = default;
+};
+```
+
+---
+
+## 🔷 2. Implementing an Interface
+
+```cpp
+// Interface
+class ILogger {
+public:
+    virtual void log(const std::string& msg)  = 0;
+    virtual void warn(const std::string& msg) = 0;
+    virtual void error(const std::string& msg)= 0;
+    virtual ~ILogger() = default;
+};
+
+// Implementation 1
+class ConsoleLogger : public ILogger {
+public:
+    void log(const std::string& msg) override {
+        std::cout << "[LOG] " << msg << "\n";
+    }
+    void warn(const std::string& msg) override {
+        std::cout << "[WARN] " << msg << "\n";
+    }
+    void error(const std::string& msg) override {
+        std::cerr << "[ERROR] " << msg << "\n";
+    }
+};
+
+// Implementation 2
+class FileLogger : public ILogger {
+    std::ofstream file_;
+public:
+    explicit FileLogger(const std::string& path)
+        : file_(path, std::ios::app) { }
+
+    void log(const std::string& msg) override {
+        file_ << "[LOG] " << msg << "\n";
+    }
+    void warn(const std::string& msg) override {
+        file_ << "[WARN] " << msg << "\n";
+    }
+    void error(const std::string& msg) override {
+        file_ << "[ERROR] " << msg << "\n";
+    }
+};
+
+// Usage — program depends on interface, not implementation
+class Server {
+    ILogger& logger_;              // interface reference
+public:
+    explicit Server(ILogger& l) : logger_(l) { }
+
+    void start() {
+        logger_.log("Server starting");
+        // ...
+    }
+};
+
+ConsoleLogger clog;
+Server s(clog);        // inject console logger
+// swap to file logger without touching Server:
+FileLogger flog("server.log");
+Server s2(flog);
+```
+
+---
+
+## 🔷 3. Multiple Interface Implementation
+
+```cpp
+class ISerializable {
+public:
+    virtual std::string serialize()   const = 0;
+    virtual void deserialize(const std::string&) = 0;
+    virtual ~ISerializable() = default;
+};
+
+class IComparable {
+public:
+    virtual bool equals(const IComparable& other) const = 0;
+    virtual int  compare(const IComparable& other) const = 0;
+    virtual ~IComparable() = default;
+};
+
+class IPrintable {
+public:
+    virtual void print(std::ostream& os) const = 0;
+    virtual ~IPrintable() = default;
+};
+
+// Implement multiple interfaces
+class Product : public ISerializable,
+                public IComparable,
+                public IPrintable {
+    std::string name_;
+    double      price_;
+
+public:
+    Product(std::string name, double price)
+        : name_(std::move(name)), price_(price) { }
+
+    // ISerializable
+    std::string serialize() const override {
+        return name_ + ":" + std::to_string(price_);
+    }
+    void deserialize(const std::string& s) override {
+        auto sep = s.find(':');
+        name_  = s.substr(0, sep);
+        price_ = std::stod(s.substr(sep + 1));
+    }
+
+    // IComparable
+    bool equals(const IComparable& o) const override {
+        const auto& other = static_cast<const Product&>(o);
+        return price_ == other.price_ && name_ == other.name_;
+    }
+    int compare(const IComparable& o) const override {
+        const auto& other = static_cast<const Product&>(o);
+        return price_ < other.price_ ? -1 : price_ > other.price_ ? 1 : 0;
+    }
+
+    // IPrintable
+    void print(std::ostream& os) const override {
+        os << name_ << " ($" << price_ << ")";
+    }
+};
+```
+
+---
+
+## 🔷 4. Interface Segregation — Production Pattern
+
+> Don't force classes to implement methods they don't need. Split large interfaces.
+
+```cpp
+// ❌ Fat interface — violates Interface Segregation Principle
+class IDatabase {
+public:
+    virtual void connect()    = 0;
+    virtual void disconnect() = 0;
+    virtual void query()      = 0;
+    virtual void insert()     = 0;
+    virtual void update()     = 0;
+    virtual void delete_()    = 0;
+    virtual void backup()     = 0;     // not all DBs need backup
+    virtual void restore()    = 0;     // not all DBs need restore
+    virtual ~IDatabase() = default;
+};
+
+// ✅ Segregated interfaces — compose what you need
+class IConnection {
+public:
+    virtual void connect()    = 0;
+    virtual void disconnect() = 0;
+    virtual ~IConnection() = default;
+};
+
+class IReadable {
+public:
+    virtual void query() = 0;
+    virtual ~IReadable() = default;
+};
+
+class IWritable {
+public:
+    virtual void insert() = 0;
+    virtual void update() = 0;
+    virtual void delete_()= 0;
+    virtual ~IWritable() = default;
+};
+
+class IBackupable {
+public:
+    virtual void backup()  = 0;
+    virtual void restore() = 0;
+    virtual ~IBackupable() = default;
+};
+
+// PostgreSQL — supports everything
+class PostgreSQL : public IConnection,
+                   public IReadable,
+                   public IWritable,
+                   public IBackupable { /* ... */ };
+
+// In-memory cache — no backup needed
+class MemoryCache : public IConnection,
+                    public IReadable,
+                    public IWritable { /* ... */ };
+
+// Read-only replica
+class ReadReplica : public IConnection,
+                    public IReadable { /* ... */ };
+```
+
+---
+
+## 🔷 5. Default Implementation in Interface (C++11+)
+
+```cpp
+// Interface with optional default behavior
+class ILogger {
+public:
+    virtual void log(const std::string& msg)  = 0;
+    virtual void warn(const std::string& msg) = 0;
+    virtual void error(const std::string& msg)= 0;
+
+    // Default implementation — can override or use as-is
+    virtual void log_format(const std::string& fmt,
+                            const std::string& arg) {
+        log(fmt + arg);    // default: delegate to log()
+    }
+
+    virtual ~ILogger() = default;
+};
+```
+
+```cpp
+// Pure virtual WITH body — call explicitly in derived
+class IProtocol {
+public:
+    virtual void handshake() = 0;
+    virtual ~IProtocol() = default;
+};
+
+void IProtocol::handshake() {
+    // Base handshake steps — call from derived with IProtocol::handshake()
+    send_syn();
+    wait_ack();
+}
+
+class TLSProtocol : public IProtocol {
+    void handshake() override {
+        IProtocol::handshake();   // base steps first
+        do_tls_negotiation();      // then TLS-specific
+    }
+};
+```
+
+---
+
+## 🔷 6. Concepts (C++20) — Compile-Time Interface
+
+### What Concepts Replace
+
+```cpp
+// ❌ C++17 — template duck typing (implicit interface)
+template<typename T>
+void process(T& obj) {
+    obj.serialize();    // if T doesn't have serialize() — ERROR deep in template
+    obj.validate();     // cryptic error message at instantiation site
+}
+
+// ✅ C++20 — Concept (explicit interface at constraint site)
+template<typename T>
+concept Processable = requires(T obj) {
+    { obj.serialize() } -> std::convertible_to<std::string>;
+    { obj.validate() }  -> std::same_as<bool>;
+};
+
+template<Processable T>
+void process(T& obj) {          // clear error if T doesn't satisfy concept
+    auto s = obj.serialize();
+    if (obj.validate()) { }
+}
+```
+
+### Defining Concepts
+
+```cpp
+#include <concepts>
+
+// Simple concept
+template<typename T>
+concept Drawable = requires(T t) {
+    t.draw();                    // must have draw() callable
+};
+
+// With return type constraint
+template<typename T>
+concept Serializable = requires(T t) {
+    { t.serialize() } -> std::convertible_to<std::string>;
+    { T::deserialize(std::string{}) } -> std::same_as<T>;
+};
+
+// Composite concept
+template<typename T>
+concept Storable = Serializable<T> && requires(T t) {
+    { t.id() } -> std::same_as<uint64_t>;
+};
+
+// Using standard concepts
+template<typename T>
+concept Number = std::integral<T> || std::floating_point<T>;
+
+template<Number T>
+T add(T a, T b) { return a + b; }
+```
+
+### Concept vs Pure Abstract Class
+
+```
+Pure Abstract Class:
+  ✅ runtime polymorphism (vtable)
+  ✅ store in containers (IShape*, vector<unique_ptr<IShape>>)
+  ❌ virtual call overhead
+  ❌ heap allocation typically needed
+  ❌ error at runtime (wrong vtable) if violated
+
+Concept:
+  ✅ compile-time — zero runtime overhead
+  ✅ clear error messages at constraint site
+  ✅ works with value types (no pointer/heap needed)
+  ❌ no runtime polymorphism — type fixed at compile time
+  ❌ can't store mixed types in same container
+  ❌ C++20 only
+```
+
+---
+
+## 🔷 7. Type Erasure — Runtime Interface Without Inheritance
+
+The **most powerful** pattern — interface without requiring inheritance.
+
+```cpp
+// Any type with draw() works — no inheritance needed
+class Drawable {
+    struct Concept {
+        virtual void draw() const = 0;
+        virtual ~Concept() = default;
+    };
+
+    template<typename T>
+    struct Model : Concept {
+        T obj;
+        explicit Model(T o) : obj(std::move(o)) { }
+        void draw() const override { obj.draw(); }
+    };
+
+    std::unique_ptr<Concept> impl_;
+
+public:
+    template<typename T>
+    Drawable(T obj)
+        : impl_(std::make_unique<Model<T>>(std::move(obj))) { }
+
+    void draw() const { impl_->draw(); }
+};
+
+// These types have NO common base class:
+struct Circle {
+    void draw() const { std::cout << "Circle\n"; }
+};
+struct Square {
+    void draw() const { std::cout << "Square\n"; }
+};
+struct Triangle {
+    void draw() const { std::cout << "Triangle\n"; }
+};
+
+// All work through Drawable — type erasure:
+std::vector<Drawable> shapes;
+shapes.emplace_back(Circle{});
+shapes.emplace_back(Square{});
+shapes.emplace_back(Triangle{});
+
+for (auto& s : shapes) s.draw();   // ✅ runtime polymorphism, no inheritance
+```
+
+---
+
+## 🔬 Under the Hood — Interface vtable Layout
+
+```cpp
+class IAnimal {
+public:
+    virtual void speak() = 0;
+    virtual void move()  = 0;
+    virtual ~IAnimal() = default;
+};
+
+class Dog : public IAnimal {
+public:
+    void speak() override { }
+    void move()  override { }
+};
+```
+
+```
+IAnimal vtable:       Dog vtable:
+┌────────────────┐    ┌────────────────┐
+│ type_info*     │    │ type_info*     │  ← RTTI info
+├────────────────┤    ├────────────────┤
+│ ~IAnimal (0)   │    │ ~Dog           │  ← slot 0: destructor
+├────────────────┤    ├────────────────┤
+│ speak = 0 (UB) │    │ Dog::speak     │  ← slot 1
+├────────────────┤    ├────────────────┤
+│ move  = 0 (UB) │    │ Dog::move      │  ← slot 2
+└────────────────┘    └────────────────┘
+
+Pure virtual slot in vtable:
+  → contains address of __cxa_pure_virtual
+  → calling it (instantiating abstract class) = runtime abort
+  → "pure virtual function called" message
+
+Dog object memory:
+┌────────────────────────────┐
+│  vptr ──► Dog vtable       │  +0  (8 bytes)
+│  (Dog data members)        │  +8
+└────────────────────────────┘
+```
+
+```
+Virtual call cost:
+  IAnimal* a = new Dog();
+  a->speak();
+  →  mov rax, [a]        // load vptr from object
+  →  call [rax + 8]      // call slot 1 (speak)
+  ≈  2 extra memory reads vs direct call
+  ≈  prevents inlining
+  ≈  ~2-5ns per call
+```
+
+---
+
+## 📐 Interface Pattern Variations
+
+### Non-Virtual Interface (NVI) Pattern
+
+```cpp
+// Public non-virtual interface — controls HOW derived classes are called
+class IParser {
+public:
+    // Public — non-virtual — stable interface
+    bool parse(const std::string& input) {
+        if (input.empty()) return false;    // common validation
+        pre_parse();                         // hook
+        bool result = do_parse(input);      // derived impl
+        post_parse();                        // hook
+        return result;
+    }
+
+    virtual ~IParser() = default;
+
+private:
+    // Private virtual — derived classes override these only
+    virtual bool do_parse(const std::string& input) = 0;
+    virtual void pre_parse()  { }   // optional hooks
+    virtual void post_parse() { }
+};
+
+class JSONParser : public IParser {
+    bool do_parse(const std::string& input) override {
+        // only JSON parsing logic — validation handled by base
+    }
+};
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Plugin system using interface:**
+
+```cpp
+// plugin_interface.hpp — stable ABI contract
+class IPlugin {
+public:
+    virtual const char* name()    const noexcept = 0;
+    virtual const char* version() const noexcept = 0;
+    virtual bool initialize(const Config& cfg)   = 0;
+    virtual void process(DataFrame& data)        = 0;
+    virtual void shutdown()                      = 0;
+    virtual ~IPlugin() = default;
+};
+
+// Plugin factory — extern "C" for stable ABI across compilers
+extern "C" IPlugin* create_plugin();
+extern "C" void     destroy_plugin(IPlugin*);
+
+// auth_plugin.so:
+class AuthPlugin : public IPlugin {
+    const char* name() const noexcept override { return "AuthPlugin"; }
+    const char* version() const noexcept override { return "2.1.0"; }
+    bool initialize(const Config& cfg) override { /* ... */ }
+    void process(DataFrame& data) override { /* ... */ }
+    void shutdown() override { /* ... */ }
+};
+
+extern "C" IPlugin* create_plugin()       { return new AuthPlugin(); }
+extern "C" void     destroy_plugin(IPlugin* p) { delete p; }
+
+// Main app:
+void* handle = dlopen("auth_plugin.so", RTLD_LAZY);
+auto  create  = (IPlugin*(*)())dlsym(handle, "create_plugin");
+auto  destroy = (void(*)(IPlugin*))dlsym(handle, "destroy_plugin");
+
+IPlugin* plugin = create();
+plugin->initialize(cfg);
+plugin->process(data);
+destroy(plugin);
+// entire plugin swapped without recompiling main app
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+class IFoo {
+public:
+    virtual void bar() = 0;
+};
+
+IFoo f;    // compile error?
+IFoo* p;   // compile error?
+```
+> `IFoo f` → ❌ compile error — abstract class, cannot instantiate. `IFoo* p` → ✅ legal — pointer to abstract class, no object created. `IFoo& r = *p` also legal (pointer/reference to abstract = fine).
+
+**Trap 2:**
+```cpp
+class IBase {
+public:
+    virtual void f() = 0;
+    ~IBase() { }              // non-virtual destructor
+};
+class Derived : public IBase {
+    int* data;
+public:
+    Derived() : data(new int[100]) { }
+    ~Derived() { delete[] data; }
+    void f() override { }
+};
+
+IBase* p = new Derived();
+delete p;   // what happens?
+```
+> **UB / memory leak** — `~IBase` is non-virtual. `delete p` calls `~IBase()` only. `~Derived()` never called. `data` leaked. **Always make interface destructor `virtual`** (or `protected` non-virtual if deletion via base pointer is not intended).
+
+**Trap 3:**
+```cpp
+class IA {
+public:
+    virtual void f() = 0;
+    virtual ~IA() = default;
+};
+class IB {
+public:
+    virtual void f() = 0;
+    virtual ~IB() = default;
+};
+class C : public IA, public IB {
+public:
+    void f() override { }    // which f is overridden?
+};
+```
+> **Both** — `C::f` overrides BOTH `IA::f` and `IB::f` simultaneously. One implementation satisfies both interfaces. If you need different implementations per interface, you need a more complex pattern (virtual base classes or separate wrapper types).
+
+**Trap 4:**
+```cpp
+template<typename T>
+concept HasDraw = requires(T t) { t.draw(); };
+
+template<HasDraw T>
+void render(T t) { t.draw(); }
+
+struct Circle {
+    void draw() { std::cout << "circle\n"; }
+};
+
+render(Circle{});     // works?
+render(42);           // works?
+```
+> `render(Circle{})` → ✅ `Circle` satisfies `HasDraw`. `render(42)` → ❌ compile error: `int` doesn't satisfy `HasDraw` — **clear error at the call site**, not deep inside `render`.
+
+**Trap 5:**
+```cpp
+class IFoo {
+public:
+    virtual void bar() = 0;
+    virtual ~IFoo() = default;
+};
+
+// Can you provide a body for a pure virtual?
+void IFoo::bar() {
+    std::cout << "default\n";
+}
+```
+> ✅ **Valid.** Pure virtual can have a body. But it cannot be called polymorphically — only explicitly: `IFoo::bar()` from derived class. Used for providing optional default behavior that derived classes can opt into.
+
+---
+
+## 📊 Interface Mechanism Comparison
+
+| | Pure Abstract Class | Concepts (C++20) | Type Erasure |
+|---|---|---|---|
+| Polymorphism | Runtime (vtable) | Compile-time | Runtime (vtable internally) |
+| Inheritance required | ✅ | ❌ | ❌ |
+| Storage in containers | ✅ (pointer) | ❌ | ✅ (by value) |
+| Virtual call overhead | ✅ | ❌ zero | ✅ |
+| Error message quality | Poor (runtime) | ✅ Excellent | Runtime |
+| Heap allocation needed | Usually | ❌ | Usually |
+| Works across modules/DLLs | ✅ | ❌ | ✅ |
+
+---

@@ -1,0 +1,959 @@
+---
+title: PostgreSQL Window Functions
+slug: computer-query-languages/postgresql/window-functions/over-partition-by-order-by
+description: Master window functions in PostgreSQL — OVER, PARTITION BY, ORDER BY, frame clauses, performance optimization, and real-world analytical patterns.
+sidebar:
+  label: "Window Functions"
+  badge:
+    text: Advanced Analytics
+    variant: tip
+tags: [postgresql, window-functions, over, partition-by, order-by, analytics, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem, LinkCard, Steps } from '@astrojs/starlight/components';
+
+## 📄 Window Functions — OVER, PARTITION BY, ORDER BY
+
+> **Window functions compute a value for each row using a "window" of related rows. Unlike `GROUP BY`, which collapses rows into one, window functions keep every row intact and attach the aggregate alongside it — the only SQL tool that simultaneously shows individual detail and group-level context.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of a window function as a **sliding calculator**.  
+It slides over a set of rows (the window), computes something for each position, and attaches the result to that row. The original row data never disappears.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← window functions computed HERE ✅
+ORDER BY  ← can reference window function aliases ✅
+LIMIT
+```
+
+<Code lang="sql" title="Window functions run AFTER filtering and grouping" code={`
+-- Window functions run AFTER WHERE, GROUP BY, HAVING
+-- They see only rows that survived those earlier filters
+-- They NEVER collapse rows (unlike GROUP BY)
+
+SELECT
+    name,
+    department,
+    salary,
+    AVG(salary) OVER (PARTITION BY department) AS dept_avg  -- window fn ✅
+FROM employees
+WHERE is_active = true;     -- WHERE runs first, then window fn ✅
+-- Every row kept, dept_avg attached alongside ✅`} />
+
+---
+
+## 1️⃣ The Core Insight — Window vs GROUP BY
+
+<CardGrid>
+  <Card title="GROUP BY (Collapses)" icon="collapse">
+    ```text
+    Same question: "average salary per department"
+    
+    ┌──────────────┬──────────┐
+    │ department   │ avg_sal  │
+    ├──────────────┼──────────┤
+    │ Engineering  │ 115000   │
+    │ Sales        │  80000   │
+    └──────────────┴──────────┘
+    2 rows output (detail rows GONE)
+    ```
+  </Card>
+  
+  <Card title="Window Function (Preserves)" icon="expand">
+    ```text
+    ┌──────────┬────────┬──────────┐
+    │ name     │ salary │ dept_avg │
+    ├──────────┼────────┼──────────┤
+    │ Raj      │ 120000 │ 115000   │ ← row kept!
+    │ Priya    │ 110000 │ 115000   │ ← row kept!
+    │ Sam      │  85000 │  80000   │ ← row kept!
+    │ Ankit    │  75000 │  80000   │ ← row kept!
+    └──────────┴────────┴──────────┘
+    4 rows output (ALL rows preserved) ✅
+    ```
+  </Card>
+</CardGrid>
+
+```
+GROUP BY:         Aggregate → collapse → N group rows
+Window Function:  Aggregate → attach  → same N input rows
+
+The window "slides" over rows without collapsing them.
+Each row sees its own "window" of relevant rows.
+```
+
+<Aside type="note">
+**🎯 DSA Connection**: Window function = sliding window algorithm. `PARTITION BY` defines the window boundary, `ORDER BY` defines scan direction, and the frame clause defines exactly which rows are "in view" at each position — just like two-pointer sliding windows over arrays.
+</Aside>
+
+---
+
+## 2️⃣ The OVER Clause — The Window Definition
+
+<Code lang="sql" title="OVER() anatomy" code={`
+-- OVER() is what makes ANY function a window function
+-- Without OVER → regular aggregate (collapses rows)
+-- With OVER    → window function (keeps rows)
+
+SELECT
+    salary,
+    AVG(salary),                  -- ❌ ERROR without GROUP BY
+    AVG(salary) OVER ()           -- ✅ window fn: avg of ALL rows
+FROM employees;
+
+-- OVER() anatomy:
+function_name() OVER (
+    PARTITION BY col1, col2    -- optional: divide into groups
+    ORDER BY     col3 DESC     -- optional: sort within group
+    ROWS/RANGE   frame_clause  -- optional: which rows are "visible"
+)
+
+-- OVER() variations:
+OVER ()                           → window = ALL rows in result
+OVER (PARTITION BY dept)          → window = rows in same dept
+OVER (ORDER BY salary)            → window = all rows, ordered
+OVER (PARTITION BY dept           → window = rows in same dept,
+      ORDER BY salary)              ordered by salary
+OVER (PARTITION BY dept           → window = same dept, ordered,
+      ORDER BY salary               only rows up to current
+      ROWS UNBOUNDED PRECEDING)`} />
+
+---
+
+## 3️⃣ PARTITION BY — Dividing Into Windows
+
+<Code lang="sql" title="PARTITION BY creates independent calculation groups" code={`
+-- PARTITION BY = GROUP BY for window functions
+-- Defines independent "windows" — one per unique partition value
+-- Each row only sees rows in its own partition
+
+SELECT
+    name,
+    department,
+    salary,
+    -- Each employee compared to their OWN department's average
+    AVG(salary) OVER (PARTITION BY department)    AS dept_avg,
+    -- Compared to company-wide average (no partition = one window)
+    AVG(salary) OVER ()                           AS company_avg,
+    -- Compared to their own team within department
+    AVG(salary) OVER (PARTITION BY department, team) AS team_avg
+FROM employees;`} />
+
+```text
+PARTITION BY department — three separate windows:
+
+Window 1: Engineering          Window 2: Sales
+┌──────────┬────────┐          ┌──────────┬────────┐
+│ Raj      │ 120000 │          │ Sam      │  85000 │
+│ Priya    │ 110000 │          │ Ankit    │  75000 │
+│ Sharma   │ 115000 │          └──────────┴────────┘
+└──────────┴────────┘          AVG = 80000
+AVG = 115000
+
+Each window computes independently.
+Raj sees only Raj, Priya, Sharma in his window.
+Sam sees only Sam, Ankit in his window.
+```
+
+<Aside type="danger">
+**Interview Trap**: `PARTITION BY` and `GROUP BY` look similar but are fundamentally different. `GROUP BY` collapses rows — you lose individual row data. `PARTITION BY` keeps all rows — you get group context alongside individual data. You can't use both for the same column in the same query level (but you can GROUP BY first, then window over the result).
+</Aside>
+
+---
+
+## 4️⃣ ORDER BY Inside OVER — Sorting & Cumulative Behavior
+
+<Code lang="sql" title="ORDER BY inside OVER changes the default frame" code={`
+-- ORDER BY in OVER ≠ ORDER BY at query level
+-- ORDER BY in OVER: defines row order WITHIN the window
+--                   also defines default frame (cumulative)
+-- ORDER BY at query level: sorts the final output
+
+SELECT
+    name, department, salary, hire_date,
+    -- Salary rank within department (1 = highest)
+    RANK() OVER (
+        PARTITION BY department
+        ORDER BY salary DESC         -- ← ORDER BY within window
+    ) AS salary_rank,
+
+    -- Running total of salary by hire date within dept
+    SUM(salary) OVER (
+        PARTITION BY department
+        ORDER BY hire_date           -- ← cumulative by hire date
+    ) AS cumulative_payroll
+
+FROM employees
+ORDER BY department, salary DESC; -- ← query-level sort`} />
+
+<CardGrid>
+  <Card title="Without ORDER BY in OVER" icon="info">
+    ```text
+    Default frame: 
+    RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    → Every row sees ALL partition rows
+    → Correct for static AVG/SUM/COUNT
+    ```
+  </Card>
+  
+  <Card title="With ORDER BY in OVER" icon="warning">
+    ```text
+    Default frame: 
+    RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    → Each row sees rows UP TO current row
+    → Creates CUMULATIVE/RUNNING aggregate ← KEY DIFFERENCE
+    ```
+  </Card>
+</CardGrid>
+
+```
+ORDER BY inside OVER has two effects:
+
+Effect 1: Determines ROW ORDER within partition
+  RANK(), ROW_NUMBER(), LAG(), LEAD() need this to know
+  "which row is first, second, third..."
+
+Effect 2: Changes the DEFAULT FRAME
+  Without ORDER BY in OVER:
+    Default frame = RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+    = ALL rows in partition visible to every row
+
+  With ORDER BY in OVER:
+    Default frame = RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    = only rows UP TO AND INCLUDING current row visible
+    = cumulative behavior ← THIS IS KEY
+
+┌──────────────────────────────────────────────────────────┐
+│  OVER (PARTITION BY dept)                                │
+│  → Every row sees ALL dept rows → correct for AVG/SUM   │
+│                                                          │
+│  OVER (PARTITION BY dept ORDER BY salary)                │
+│  → Each row sees rows UP TO current salary               │
+│  → Creates CUMULATIVE/RUNNING aggregate ← key difference │
+└──────────────────────────────────────────────────────────┘
+```
+
+<Code lang="sql" title="Frame difference in action" code={`
+-- Engineering salaries: 110K, 115K, 120K
+SELECT name, salary,
+    -- No ORDER BY → sees ALL rows → true average
+    AVG(salary) OVER (PARTITION BY department)              AS true_avg,
+    -- With ORDER BY → cumulative → running average
+    AVG(salary) OVER (PARTITION BY department ORDER BY salary) AS running_avg
+FROM employees WHERE department = 'Engineering';
+
+-- Result (Engineering: 110K, 115K, 120K salaries):
+-- name   salary  true_avg  running_avg
+-- Priya  110000  115000    110000      ← only sees herself
+-- Sharma 115000  115000    112500      ← sees 110K + 115K → avg 112.5K
+-- Raj    120000  115000    115000      ← sees all three → avg 115K
+`} />
+
+> 🎯 **Interview trap:** `AVG(col) OVER (ORDER BY col)` ≠ `AVG(col) OVER ()`. The ORDER BY inside OVER creates a cumulative average (running average), NOT a static average. This surprises many developers who forget about the implicit frame change.
+
+---
+
+## 5️⃣ The Frame Clause — Precise Window Control
+
+> **Frame = exactly which rows within the partition are "visible" to the window function for each position.**
+
+<Tabs>
+  <TabItem label="Syntax & Options" icon="code">
+    ```text
+    ROWS BETWEEN start AND end
+    RANGE BETWEEN start AND end
+    GROUPS BETWEEN start AND end (Postgres 11+)
+
+  start/end options:
+    UNBOUNDED PRECEDING → from the very first row in partition
+    N PRECEDING         → N rows before current row
+    CURRENT ROW         → the current row itself
+    N FOLLOWING         → N rows after current row
+    UNBOUNDED FOLLOWING → to the very last row in partition
+    ```
+  </TabItem>
+  
+  <TabItem label="Frame Examples" icon="table">
+    ```sql
+    -- Frame examples
+    SELECT
+      sale_date, amount,
+
+      -- Running total (all rows from start to current)
+      SUM(amount) OVER (
+        ORDER BY sale_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      ) AS running_total,
+
+      -- 7-day moving average (3 before + current + 3 after)
+      AVG(amount) OVER (
+        ORDER BY sale_date
+        ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING
+      ) AS moving_avg_7day,
+
+      -- Rolling 30-day sum (last 30 days only)
+      SUM(amount) OVER (
+        ORDER BY sale_date
+        ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+      ) AS rolling_30_day,
+
+      -- Grand total (all rows always visible)
+      SUM(amount) OVER (
+        ORDER BY sale_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+      ) AS grand_total
+
+    FROM daily_sales
+    ORDER BY sale_date;
+    ```
+  </TabItem>
+</Tabs>
+
+```
+Visual frame for ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING:
+
+sale_date   amount   frame (visible rows for each position)
+Jan 1       1000     [Jan1, Jan2]              ← limited by start
+Jan 2       2000     [Jan1, Jan2, Jan3]
+Jan 3       1500     [Jan1, Jan2, Jan3, Jan4]
+Jan 4       1800     [Jan2, Jan3, Jan4, Jan5]  ← slides forward
+Jan 5       2200     [Jan3, Jan4, Jan5]        ← limited by end
+```
+
+### ⚠️ ROWS vs RANGE — Critical Difference
+
+```sql
+-- ROWS: physical row count (exact positioning)
+-- RANGE: value-based range (all rows with same ORDER BY value)
+
+-- With duplicate salaries: 85000, 85000, 90000, 100000
+SUM(salary) OVER (ORDER BY salary ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+-- Row 1 (85000): 85000
+-- Row 2 (85000): 170000  ← counts separately
+-- Row 3 (90000): 260000
+-- Row 4 (100000): 360000
+
+SUM(salary) OVER (ORDER BY salary RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+-- Row 1 (85000): 170000  ← includes BOTH 85000 rows (same value)
+-- Row 2 (85000): 170000  ← same (RANGE treats them as equal)
+-- Row 3 (90000): 260000
+-- Row 4 (100000): 360000
+```
+
+| Feature | `ROWS` | `RANGE` |
+|---------|--------|---------|
+| **Basis** | Physical row count (exact positioning) | Value-based range (treats equal values as peers) |
+| **With Duplicates** | Counts each row individually | Includes all rows with the same `ORDER BY` value |
+| **Use Case** | Running totals, rankings (deterministic) | Time-based windows, ties handling |
+
+<Code lang="sql" title="ROWS vs RANGE behavior with duplicates" code={`-- Duplicate salaries: 85000, 85000, 90000, 100000
+
+SUM(salary) OVER (ORDER BY salary ROWS UNBOUNDED PRECEDING)
+-- Row 1 (85000): 85000
+-- Row 2 (85000): 170000  ← counts separately
+
+SUM(salary) OVER (ORDER BY salary RANGE UNBOUNDED PRECEDING)
+-- Row 1 (85000): 170000  ← includes BOTH 85000 rows (same value)
+-- Row 2 (85000): 170000  ← same result for ties`} />
+
+> 🎯 **Real-life SDE:** Use `ROWS` for running totals and rankings — it's deterministic with duplicates. Use `RANGE` for time-based windows where you want all same-timestamp rows treated equally (e.g., all orders on the same day).
+---
+
+## 6️⃣ Internals & Performance — How Postgres Executes
+
+PostgreSQL follows a 5-step pipeline: Query → Sort → WindowAgg → Attach → Output.
+
+```
+Window function execution pipeline:
+
+Step 1: Execute query normally (FROM, WHERE, GROUP BY, HAVING)
+        Result: a set of rows
+
+Step 2: Sort rows (if ORDER BY in OVER or required by function)
+        Sort by: PARTITION BY keys first, then ORDER BY keys
+        Cost: O(n log n) if sort needed
+
+Step 3: For each row, compute window function
+        Scan sorted rows, maintain running accumulators
+        Use frame boundaries to include/exclude rows
+
+Step 4: Attach result to each row
+        Original row data + window function result
+
+Step 5: Pass to SELECT for final projection
+        Then ORDER BY (query level), LIMIT
+```
+
+<Code lang="sql" title="EXPLAIN reveals execution strategy" code={`EXPLAIN (ANALYZE)
+SELECT department, salary,
+    AVG(salary) OVER (PARTITION BY department ORDER BY salary)
+FROM employees;
+
+-- Output:
+-- WindowAgg                            ← window function node
+--   -> Sort                            ← sort by PARTITION BY + ORDER BY
+--        Sort Key: department, salary
+--        -> Seq Scan on employees
+
+Memory and spilling:
+
+Window function needs sorted data → sort node
+Sort in memory if data ≤ work_mem ✅
+Sort spills to disk if data > work_mem 💀
+
+Fix: increase work_mem or add index that provides sort order
+
+If ORDER BY in OVER matches an existing index:
+  Postgres can use Index Scan (already sorted) → no Sort node! ✅
+
+EXPLAIN shows:
+  Sort Method: quicksort  Memory: 1500kB  ← in memory ✅
+  Sort Method: external merge  Disk: 24MB ← spilling 💀
+  `} />
+
+### 🚀 Optimization: Index Matching
+If you frequently run window functions, create an index that matches `PARTITION BY` + `ORDER BY`. This eliminates the `Sort` node entirely.
+
+```sql
+CREATE INDEX idx_emp_dept_salary ON employees(department, salary);
+-- Postgres uses Index Scan → already sorted → O(n) instead of O(n log n) ✅
+
+EXPLAIN SELECT salary,
+  RANK() OVER (PARTITION BY department ORDER BY salary DESC)
+FROM employees;
+-- Index Scan on idx_emp_dept_salary ← no Sort node! ✅ O(n) not O(n log n)
+```
+
+---
+
+## 7️⃣ Multiple Windows & WINDOW Clause
+
+```sql
+-- Multiple OVER clauses in one SELECT
+SELECT
+  name, department, salary, hire_date,
+
+  -- Different partitions
+  AVG(salary) OVER (PARTITION BY department)        AS dept_avg,
+  AVG(salary) OVER (PARTITION BY region)            AS region_avg,
+  AVG(salary) OVER ()                               AS company_avg,
+
+  -- Different orderings
+  RANK() OVER (PARTITION BY department
+               ORDER BY salary DESC)                AS dept_rank,
+  RANK() OVER (ORDER BY hire_date)                  AS tenure_rank,
+
+  -- Different frames
+  SUM(salary) OVER (PARTITION BY department
+                    ORDER BY hire_date
+                    ROWS UNBOUNDED PRECEDING)       AS cumulative_payroll
+FROM employees;
+```
+
+```
+Postgres optimization — shared sorts:
+
+If multiple OVER clauses have the same PARTITION BY + ORDER BY:
+  Postgres sorts ONCE and reuses ✅
+
+If OVER clauses differ:
+  Each requires its own sort pass ⚠️
+  Multiple sort nodes in EXPLAIN
+
+Strategy: use WINDOW clause to name and reuse window definitions
+```
+
+```sql
+-- WINDOW clause: name your window, reuse it
+SELECT
+  name, salary,
+  AVG(salary)   OVER dept_window   AS dept_avg,
+  MIN(salary)   OVER dept_window   AS dept_min,
+  MAX(salary)   OVER dept_window   AS dept_max,
+  RANK()        OVER dept_rank     AS dept_rank,
+  DENSE_RANK()  OVER dept_rank     AS dept_dense_rank
+FROM employees
+WINDOW
+  dept_window AS (PARTITION BY department),         -- reused 3× ✅
+  dept_rank   AS (PARTITION BY department
+                  ORDER BY salary DESC);             -- reused 2× ✅
+
+-- Postgres sorts ONCE per named window definition
+-- Without WINDOW clause: might sort multiple times ❌
+```
+
+---
+
+## 8️⃣ Common Window Function Reference
+
+```
+┌─────────────────┬───────────────────────────────────────────────────┐
+│ Function        │ What it does                                      │
+├─────────────────┼───────────────────────────────────────────────────┤
+│ ROW_NUMBER()    │ Unique sequential number (1,2,3,4...) no ties     │
+│ RANK()          │ Rank with gaps for ties (1,1,3,4...)              │
+│ DENSE_RANK()    │ Rank without gaps for ties (1,1,2,3...)           │
+│ NTILE(n)        │ Divide into n equal buckets                       │
+├─────────────────┼───────────────────────────────────────────────────┤
+│ LAG(col, n)     │ Value from n rows BEFORE current row              │
+│ LEAD(col, n)    │ Value from n rows AFTER current row               │
+│ FIRST_VALUE()   │ First value in the window frame                   │
+│ LAST_VALUE()    │ Last value in the window frame                    │
+│ NTH_VALUE(c,n)  │ Nth value in the window frame                     │
+├─────────────────┼───────────────────────────────────────────────────┤
+│ SUM() OVER      │ Running/total sum                                 │
+│ AVG() OVER      │ Running/total average                             │
+│ COUNT() OVER    │ Running/total count                               │
+│ MIN() OVER      │ Running/total minimum                             │
+│ MAX() OVER      │ Running/total maximum                             │
+├─────────────────┼───────────────────────────────────────────────────┤
+│ PERCENT_RANK()  │ Relative rank as 0.0 to 1.0                       │
+│ CUME_DIST()     │ Cumulative distribution (0.0 to 1.0)              │
+└─────────────────┴───────────────────────────────────────────────────┘
+All of these are covered in detail in 07_Window_Functions subtopics.
+This topic covers the OVER/PARTITION BY/ORDER BY foundation they all share.
+```
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Employee Report + Context" icon="user">
+    ```sql
+    SELECT e.name, e.department, e.salary,
+        ROUND(AVG(e.salary) OVER w, 0)              AS dept_avg,
+        e.salary - AVG(e.salary) OVER w             AS vs_dept_avg,
+        COUNT(*) OVER w                             AS dept_headcount
+    FROM employees e
+    WINDOW w AS (PARTITION BY e.department)
+    WHERE e.is_active = true ORDER BY e.salary DESC;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Time Series + Running Total" icon="chart-line">
+    ```sql
+    SELECT sale_date, daily_revenue,
+        SUM(daily_revenue) OVER (ORDER BY sale_date
+            ROWS UNBOUNDED PRECEDING)           AS ytd_revenue,
+        ROUND(AVG(daily_revenue) OVER (ORDER BY sale_date
+            ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 0) AS moving_avg_7d
+    FROM daily_sales WHERE EXTRACT(YEAR FROM sale_date) = 2024;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Session Analysis (LAG)" icon="clock">
+    ```sql
+    SELECT user_id, session_id, started_at,
+        started_at - LAG(started_at) OVER (
+            PARTITION BY user_id ORDER BY started_at
+        ) AS time_since_last_session,
+        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY started_at)
+            AS session_number
+    FROM sessions;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Product Rankings" icon="trophy">
+    ```sql
+    SELECT p.name, total_sold,
+        RANK() OVER (PARTITION BY p.category ORDER BY total_sold DESC)
+            AS category_rank,
+        RANK() OVER (ORDER BY total_sold DESC) AS global_rank,
+        ROUND(PERCENT_RANK() OVER (PARTITION BY p.category
+            ORDER BY total_sold) * 100, 1) AS percentile
+    FROM product_sales JOIN products p USING (product_id);
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern 1 — Employee Report: Individual + Group Context
+
+```sql
+-- Each employee with department benchmarks alongside
+SELECT
+  e.name,
+  e.department,
+  e.salary,
+  ROUND(AVG(e.salary) OVER w, 0)              AS dept_avg,
+  MIN(e.salary)       OVER w                  AS dept_min,
+  MAX(e.salary)       OVER w                  AS dept_max,
+  e.salary - AVG(e.salary) OVER w             AS vs_dept_avg,
+  ROUND(
+    e.salary * 100.0 / SUM(e.salary) OVER w, 1
+  )                                            AS pct_of_dept_payroll,
+  COUNT(*)            OVER w                  AS dept_headcount
+FROM   employees e
+WINDOW w AS (PARTITION BY e.department)
+WHERE  e.is_active = true
+ORDER BY e.department, e.salary DESC;
+```
+
+### Pattern 2 — Time Series: Daily Sales with Running Total
+
+```sql
+-- Daily sales dashboard with cumulative metrics
+SELECT
+  sale_date,
+  daily_revenue,
+  -- Running total from year start
+  SUM(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS UNBOUNDED PRECEDING
+  )                                            AS ytd_revenue,
+  -- 7-day moving average
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  ), 0)                                        AS moving_avg_7d,
+  -- Day-over-day percentage change
+  ROUND(
+    (daily_revenue - LAG(daily_revenue) OVER (ORDER BY sale_date))
+    * 100.0
+    / NULLIF(LAG(daily_revenue) OVER (ORDER BY sale_date), 0),
+  1)                                           AS dod_change_pct,
+  -- Percentage of total year revenue
+  ROUND(
+    daily_revenue * 100.0
+    / NULLIF(SUM(daily_revenue) OVER (), 0),
+  2)                                           AS pct_of_annual
+FROM   daily_sales
+WHERE  EXTRACT(YEAR FROM sale_date) = 2024
+ORDER BY sale_date;
+```
+
+### Pattern 3 — Product Rankings by Category
+
+```sql
+-- Product leaderboard: ranked within category, globally
+SELECT
+  p.name,
+  p.category,
+  p.price,
+  total_sold,
+  -- Rank within category (price-based)
+  RANK() OVER (
+    PARTITION BY p.category
+    ORDER BY total_sold DESC
+  )                                   AS category_rank,
+  -- Global rank across all products
+  RANK() OVER (
+    ORDER BY total_sold DESC
+  )                                   AS global_rank,
+  -- Percentile within category
+  ROUND(PERCENT_RANK() OVER (
+    PARTITION BY p.category
+    ORDER BY total_sold
+  ) * 100, 1)                         AS category_percentile,
+  -- Category total for share calculation
+  SUM(total_sold) OVER (
+    PARTITION BY p.category
+  )                                   AS category_total,
+  -- Market share within category
+  ROUND(total_sold * 100.0 /
+    NULLIF(SUM(total_sold) OVER (PARTITION BY p.category), 0),
+  1)                                  AS category_share_pct
+FROM (
+  SELECT
+    product_id,
+    SUM(quantity) AS total_sold
+  FROM   order_items
+  WHERE  created_at >= DATE_TRUNC('year', NOW())
+  GROUP BY product_id
+) sales
+JOIN products p ON p.id = sales.product_id
+WHERE p.is_active = true
+ORDER BY p.category, category_rank;
+```
+
+### Pattern 4 — Session Analysis (Partition by User)
+
+```sql
+-- Analyze user session patterns
+SELECT
+  user_id,
+  session_id,
+  started_at,
+  duration_seconds,
+  -- Session number for this user (1st visit, 2nd visit...)
+  ROW_NUMBER() OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+  )                                        AS session_number,
+  -- Time since user's previous session
+  started_at - LAG(started_at) OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+  )                                        AS time_since_last_session,
+  -- User's total sessions so far (cumulative)
+  COUNT(*) OVER (
+    PARTITION BY user_id
+    ORDER BY started_at
+    ROWS UNBOUNDED PRECEDING
+  )                                        AS sessions_so_far,
+  -- Is this user's longest session?
+  CASE WHEN duration_seconds = MAX(duration_seconds) OVER (
+    PARTITION BY user_id
+  ) THEN '🏆 longest' ELSE '' END          AS longest_flag
+FROM   sessions
+WHERE  created_at >= NOW() - INTERVAL '30 days'
+ORDER BY user_id, started_at;
+```
+
+### Pattern 5 — Salary Band Analysis
+
+```sql
+-- HR compensation analysis: where does each person stand?
+SELECT
+  e.name,
+  e.department,
+  e.level,
+  e.salary,
+  -- Quartile within department
+  NTILE(4) OVER (
+    PARTITION BY department
+    ORDER BY salary
+  )                                   AS salary_quartile,
+  -- Distance from median (using PERCENTILE_CONT)
+  e.salary - PERCENTILE_CONT(0.5)
+    WITHIN GROUP (ORDER BY e2.salary)  AS dist_from_median,
+  -- Position relative to band min/max
+  ROUND(
+    (e.salary - MIN(salary) OVER (PARTITION BY department, level))
+    * 100.0
+    / NULLIF(
+        MAX(salary) OVER (PARTITION BY department, level)
+        - MIN(salary) OVER (PARTITION BY department, level)
+      , 0)
+  , 1)                                AS position_in_band_pct
+FROM   employees e
+JOIN   employees e2 ON e.department = e2.department  -- for PERCENTILE
+WHERE  e.is_active = true
+GROUP BY e.id, e.name, e.department, e.level, e.salary
+ORDER BY e.department, e.salary DESC;
+```
+
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql to see window behavior" code={`\
+-- Setup
+CREATE TEMP TABLE t_emp (
+  id     INT,
+  name   TEXT,
+  dept   TEXT,
+  salary INT,
+  hire_date DATE
+);
+INSERT INTO t_emp VALUES
+  (1,'Raj',   'Eng',  120000, '2020-01-15'),
+  (2,'Priya', 'Eng',  110000, '2021-03-20'),
+  (3,'Sharma','Eng',  115000, '2019-06-10'),
+  (4,'Sam',   'Sales', 85000, '2020-11-05'),
+  (5,'Ankit', 'Sales', 75000, '2022-02-28'),
+  (6,'Meera', 'Sales', 80000, '2021-08-15');
+
+-- 1. OVER() vs OVER(PARTITION BY)
+SELECT name, dept, salary,
+  AVG(salary) OVER ()                    AS company_avg,   -- all rows
+  AVG(salary) OVER (PARTITION BY dept)   AS dept_avg       -- per dept
+FROM t_emp;
+-- company_avg = same for all (avg of all 6)
+-- dept_avg = different per dept ✅
+
+-- 2. OVER(ORDER BY) = cumulative (default frame change)
+SELECT name, dept, salary,
+  AVG(salary) OVER (PARTITION BY dept)              AS static_avg,
+  AVG(salary) OVER (PARTITION BY dept ORDER BY salary) AS running_avg
+FROM t_emp ORDER BY dept, salary;
+-- static_avg: same for all in dept ✅
+-- running_avg: increases as salary increases ✅ (cumulative effect)
+
+-- 3. Frame: ROWS vs RANGE with duplicates
+-- Add duplicate salary
+INSERT INTO t_emp VALUES (7,'Test','Eng',110000,'2023-01-01');
+
+SELECT name, salary,
+  SUM(salary) OVER (ORDER BY salary
+    ROWS  BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS rows_sum,
+  SUM(salary) OVER (ORDER BY salary
+    RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS range_sum
+FROM t_emp WHERE dept='Eng' ORDER BY salary;
+-- For the two 110000 rows:
+--   ROWS:  different (sequential)
+--   RANGE: same (includes both 110000 rows in each other's frame) ✅
+
+-- 4. ORDER BY inside OVER vs query level ORDER BY
+SELECT name, dept, salary,
+  RANK() OVER (PARTITION BY dept ORDER BY salary DESC) AS dept_rank
+FROM t_emp
+ORDER BY dept, salary DESC;  -- query-level: final output sort ✅
+-- RANK uses ORDER BY salary DESC within each dept ✅
+-- Final output sorted by dept then salary ✅
+
+-- 5. WINDOW clause: name and reuse
+SELECT name, dept, salary,
+  MIN(salary) OVER w AS dept_min,
+  MAX(salary) OVER w AS dept_max,
+  AVG(salary) OVER w AS dept_avg,
+  RANK() OVER (PARTITION BY dept ORDER BY salary DESC) AS rnk
+FROM t_emp
+WINDOW w AS (PARTITION BY dept);   -- reused 3× ✅
+
+-- 6. EXPLAIN: see WindowAgg node and Sort
+EXPLAIN SELECT name, salary,
+  AVG(salary) OVER (PARTITION BY dept ORDER BY salary)
+FROM t_emp;
+-- WindowAgg ← window function node
+-- Sort (dept, salary) ← sort for partition+order ✅
+
+-- 7. Multiple OVER clauses with shared sort
+EXPLAIN SELECT name, salary,
+  AVG(salary) OVER (PARTITION BY dept ORDER BY salary) AS avg1,
+  SUM(salary) OVER (PARTITION BY dept ORDER BY salary) AS sum1
+FROM t_emp;
+-- One Sort node (shared!) ← Postgres reuses sort for same OVER ✅
+
+-- 8. Frame clause proof
+SELECT name, salary,
+  SUM(salary) OVER (
+    PARTITION BY dept ORDER BY salary
+    ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+  ) AS neighbor_sum     -- sum of prev + current + next row
+FROM t_emp WHERE dept='Eng' ORDER BY salary;
+-- Priya(110K): Priya + Sharma = 225K (no preceding in sorted order)
+-- Sharma(115K): Priya + Sharma + Raj = 345K
+-- Raj(120K): Sharma + Raj = 235K (no following) ✅
+
+`} />
+
+<details>
+<summary>✅ Expected Outputs & Insights</summary>
+
+```text
+1. company_avg = 89166 (all 5 rows)
+   dept_avg Eng = 115000, Sales = 80000
+
+2. static_avg stays constant within dept
+   running_avg increases as salary increases (cumulative)
+
+3. For 110000 rows:
+   ROWS: first sees 345K, second sees 455K (sequential addition)
+   RANGE: both see 455K (includes all peers with salary 110000)
+
+4. WINDOW clause reduces redundant sorting.
+   EXPLAIN shows one Sort node reused for MIN/MAX/AVG.
+```
+</details>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="info">
+    ```text
+    Q: Window fn vs GROUP BY?
+    A: GROUP BY collapses rows. Window fn keeps all rows, attaches aggregate.
+    
+    Q: What does OVER() mean?
+    A: Defines the window. Empty OVER() = entire result set as one window.
+    
+    Q: PARTITION BY purpose?
+    A: Divides rows into independent windows — GROUP BY without collapsing.
+    ```
+  </Card>
+  
+  <Card title="Frame & Execution" icon="warning">
+    ```text
+    Q: Default frame without ORDER BY?
+    A: RANGE UNBOUNDED PRECEDING TO UNBOUNDED FOLLOWING (all rows)
+    
+    Q: Default frame WITH ORDER BY?
+    A: RANGE UNBOUNDED PRECEDING TO CURRENT ROW (cumulative!)
+    
+    Q: ROWS vs RANGE?
+    A: ROWS = physical count. RANGE = value-based (ties included together).
+    ```
+  </Card>
+
+  <Card title="Performance & Optimization" icon="rocket">
+    ```text
+    Q: How to optimize window function sort cost?
+    A: Create index matching (PARTITION BY + ORDER BY) → eliminates Sort node.
+    
+    Q: Multiple OVER clauses with same definition?
+    A: Postgres shares the sort. Use WINDOW clause for clarity.
+    
+    Q: When does window fn execute?
+    A: After WHERE, GROUP BY, HAVING. Before ORDER BY, LIMIT.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+WINDOW FUNCTION ANATOMY
+
+function_name() OVER (
+  PARTITION BY col1        → divide result into groups
+  ORDER BY col2 DESC       → sort within each group
+  ROWS BETWEEN             → frame: which rows are "visible"
+    2 PRECEDING
+    AND CURRENT ROW
+)
+
+Execution pipeline:
+  1. Run query (FROM/WHERE/GROUP BY/HAVING)
+  2. Sort rows: PARTITION BY keys, then ORDER BY keys   O(n log n)
+  3. Scan sorted rows, maintain frame, compute function  O(n × frame)
+  4. Attach result to each row                           O(1)
+  5. Continue to SELECT, ORDER BY, LIMIT
+
+Memory:
+  Sort ≤ work_mem → in-memory quicksort ✅
+  Sort > work_mem → disk spill 💀 → increase work_mem or add index
+
+Key behaviors:
+  OVER ()                 → one window: ALL result rows
+  OVER (PARTITION BY x)  → one window per unique value of x
+  OVER (ORDER BY x)       → cumulative (implicit frame change!)
+  OVER (PARTITION BY x
+        ORDER BY y)       → cumulative within each partition
+
+Frame defaults:
+  No ORDER BY → RANGE UNBOUNDED PRECEDING TO UNBOUNDED FOLLOWING
+              → every row sees ALL partition rows (full window)
+  With ORDER BY → RANGE UNBOUNDED PRECEDING TO CURRENT ROW
+               → every row sees rows up to current (cumulative)
+
+Performance optimization:
+  Create index on (PARTITION BY cols, ORDER BY cols)
+  → Index Scan replaces Sort node → O(n) instead of O(n log n) ✅
+  Use WINDOW clause to share sort across multiple functions ✅
+  Filter BEFORE window fn using subquery/CTE when possible ✅
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice `LAG()` and `LEAD()` for time-series delta analysis
+2. ✅ Use `WINDOW` clause to clean up complex analytical queries
+3. ✅ Add composite indexes for frequent partition/order patterns
+4. ✅ Prefer `ROWS` over `RANGE` for running totals unless handling ties is intentional
+5. ✅ Replace self-joins and correlated subqueries with window functions for massive performance gains
+
+Mastering window functions turns slow, complex SQL into elegant, high-performance analytics. 🐘✨
+</Aside>

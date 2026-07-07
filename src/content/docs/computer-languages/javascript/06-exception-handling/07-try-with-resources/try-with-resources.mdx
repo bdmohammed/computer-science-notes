@@ -1,0 +1,283 @@
+---
+title: JavaScript Resource Management & Cleanup
+slug: computer-languages/javascript/runtime/resource-management
+description: Master JS resource cleanup patterns, async disposal, and how to mimic Java's try-with-resources in an asynchronous world.
+sidebar:
+  label: "Resource Management"
+  badge:
+    text: Best Practices
+    variant: tip
+tags: [javascript, try-finally, cleanup, async, dispose, interview]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🔒 Resource Management in JavaScript
+
+> Java has `try-with-resources` to automatically close streams and connections.  
+> **JavaScript does not have a direct equivalent syntax.**  
+> Instead, JS relies on **`finally` blocks**, **Async Disposal** (`Symbol.asyncDispose`), and **Garbage Collection**.
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+In Java, resources are **deterministic** (you close them when done).  
+In JS, memory is **non-deterministic** (GC handles it).  
+However, for **external resources** (DB connections, file handles, network locks), you **must** manually clean up using `finally` or the new `using` keyword (Stage 3).
+</Aside>
+
+---
+
+## 🔬 The Problem: Resource Leaks
+
+If you open a resource (like a database connection) and an error occurs, you must ensure it closes.
+
+<Code lang="js" title="The Risk: Unclosed Resources" code={`
+async function getData() {
+    const conn = await db.connect(); // Opens resource
+    
+    // If this line throws, conn is never closed! 💥
+    const data = await conn.query("SELECT * FROM users");
+    
+    conn.close(); // Never reached if error occurs
+    return data;
+}
+`} />
+
+---
+
+## ✅ Solution 1: The `finally` Block (Standard)
+
+The most common way to ensure cleanup in JS. It works for both sync and async code.
+
+<Code lang="js" title="Using finally for Cleanup" code={`
+async function getData() {
+    const conn = await db.connect();
+    
+    try {
+        const data = await conn.query("SELECT * FROM users");
+        return data;
+    } catch (error) {
+        console.error("Query failed", error);
+        throw error; // Re-throw to let caller handle
+    } finally {
+        // ✅ Guaranteed to run, even if error occurred
+        if (conn) {
+            await conn.close(); 
+        }
+    }
+}
+`} />
+
+<Aside type="caution">
+**Key Difference from Java**:  
+Java's `try-with-resources` suppresses exceptions thrown during `close()` if a primary exception exists.  
+In JS `finally`, if `conn.close()` throws, it **overwrites** the original error unless you handle it carefully.
+</Aside>
+
+---
+
+## 🚀 Solution 2: Explicit Resource Management (Stage 3)
+
+JavaScript is introducing `using` and `await using` (similar to C# or Python's `with`). This is the modern, cleanest way to handle resources.
+
+<Code lang="js" title="Async Disposal (Modern JS)" code={`
+// Define a disposable resource
+class DatabaseConnection {
+    constructor(url) {
+        this.url = url;
+        console.log("Connected");
+    }
+
+    // Symbol.asyncDispose is called automatically at end of block
+    async [Symbol.asyncDispose]() {
+        console.log("Closing connection...");
+        // await closeLogic();
+    }
+}
+
+// Usage
+async function fetchData() {
+    // 'await using' ensures disposal when block exits
+    await using conn = new DatabaseConnection("db://localhost");
+    
+    const data = await conn.query("SELECT * FROM users");
+    return data;
+} 
+// 👋 conn[Symbol.asyncDispose]() runs here automatically
+`} />
+
+<Aside type="note">
+**Status**: This feature is **Stage 3** (very close to standard). It works in latest Node.js (v20+) and modern browsers with flags. For older environments, stick to `finally`.
+</Aside>
+
+---
+
+## 💻 Real-World Code — File Handling
+
+<Code lang="js" title="Node.js File Stream Cleanup" code={`
+const fs = require('fs').promises;
+
+async function writeLog(message) {
+    let fileHandle;
+    try {
+        // Open file
+        fileHandle = await fs.open('app.log', 'a');
+        
+        // Write data
+        await fileHandle.writeFile(message + '\n');
+        
+    } catch (err) {
+        console.error("Write failed", err);
+        throw err;
+    } finally {
+        // ✅ Ensure file handle is closed
+        if (fileHandle) {
+            await fileHandle.close();
+        }
+    }
+}
+`} />
+
+---
+
+## ⚡ Async vs Sync Disposal
+
+| Feature | Sync (`using`) | Async (`await using`) |
+|---------|----------------|-----------------------|
+| **Symbol** | `Symbol.dispose` | `Symbol.asyncDispose` |
+| **Use Case** | Memory locks, simple objects | DB connections, File handles, Network streams |
+| **Keyword** | `using const x = ...` | `await using const x = ...` |
+| **Execution** | Immediate | Waits for promise resolution |
+
+<Code lang="js" title="Sync Disposal Example" code={`
+class Locker {
+    constructor(id) {
+    this.id = id;
+        console.log(\`Lock $\{id\} acquired\`);
+    }
+
+    [Symbol.dispose]() {
+        console.log(\`Lock $\{this.id\} released\`);
+    }
+}
+
+function criticalSection() {
+    using lock = new Locker(1);
+    // Do work...
+} 
+// Lock 1 released automatically
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Swallowing Errors in Finally" icon="error">
+    ```js
+    try {
+        throw new Error("Primary Fail");
+    } finally {
+        closeResource(); // If this throws, it OVERWRITES the primary error!
+    }
+    // Fix: Wrap close() in try-catch inside finally
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Forgetting Await in Finally" icon="caution">
+    ```js
+    finally {
+        conn.close(); // ❌ Returns Promise, but doesn't wait!
+        // Function returns before close finishes.
+    }
+    // Fix: await conn.close();
+    ```
+  </Card>
+
+  <Card title="Trap 3: GC is Not Deterministic" icon="shield">
+    ```js
+    // Don't rely on Finalizers or WeakRefs for critical cleanup.
+    // GC might run seconds later, keeping DB connections open.
+    // Always use explicit cleanup (finally/using).
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: Does JS have try-with-resources?" icon="information">
+    No native syntax like Java. We use `try...finally` or the new `using`/`await using` keywords (Stage 3).
+  </Card>
+  
+  <Card title="Q: How do you ensure a DB connection closes?" icon="approve-check">
+    Use a `finally` block to call `connection.close()`, or use a library that supports `Symbol.asyncDispose`.
+  </Card>
+
+  <Card title="Q: What is Symbol.asyncDispose?" icon="rocket">
+    A standard method that defines how to clean up an object. It's called automatically when an `await using` block exits.
+  </Card>
+
+  <Card title="Q: Why not just rely on Garbage Collection?" icon="caution">
+    GC handles memory, not external resources (like file handles or network sockets). Relying on GC can lead to resource exhaustion.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+JS RESOURCE CLEANUP CHECKLIST
+
+1. Standard Way:
+   try { ... } finally { cleanup() }
+
+2. Modern Way (Stage 3):
+   await using res = new Resource();
+
+3. Key Rules:
+   - Always await async cleanup
+   - Handle errors in cleanup to avoid masking
+   - Don't rely on GC for external resources
+
+⚠️ Key Differences from Java:
+- No compiler enforcement
+- No automatic suppression of secondary errors
+- 'using' is new (check environment support)
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use `finally` for current production code.
+2. ✅ Adopt `await using` when your runtime supports it.
+3. ✅ Implement `Symbol.asyncDispose` in your custom classes.
+4. ✅ Always wrap cleanup calls in try-catch if they might fail.
+
+Mastering resource management prevents memory leaks and connection pool exhaustion. ☕✨
+</Aside>
+```
+
+---
+
+## 🔄 Java try-with-resources → JS Resource Management Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **try-with-resources** | `try...finally` | JS requires manual boilerplate. |
+| **AutoCloseable** | `Symbol.asyncDispose` | New standard, not yet universal. |
+| **Suppressed Exceptions** | ❌ None | JS overwrites errors if not careful. |
+| **Deterministic Close** | `finally` / `using` | JS GC is non-deterministic. |
+| **Multiple Resources** | Nested `finally` | Can get verbose in JS. |
+
+---
+
+🧠 **Interview Power Move**: When asked about resource management, always mention:  
+1. **Finally Blocks**: The standard, reliable way to clean up.  
+2. **Async Disposal**: The future of JS resource management (`await using`).  
+3. **Error Masking**: Why you must catch errors inside `finally`.  
+4. **GC Limitations**: Why Garbage Collection isn't enough for DB/File handles.  
+
+---

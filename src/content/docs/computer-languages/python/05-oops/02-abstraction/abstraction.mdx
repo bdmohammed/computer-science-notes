@@ -1,0 +1,1105 @@
+---
+title: Python Abstraction
+slug: computer-languages/python/oop/abstraction
+description: Master Abstract Base Classes (ABCs) and Structural Typing (Protocols). Understand how Python achieves abstraction without the rigid `abstract` keyword, focusing on "What" vs "How".
+sidebar:
+  label: "Abstraction"
+  badge:
+    text: OOP Pillar
+    variant: tip
+tags: [python, abstraction, abc, protocol, duck-typing, oop, design-patterns, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🎭 Abstraction in Python
+
+> **Abstraction** hides complex implementation details and exposes only essential features.  
+> In Python, this is achieved through:
+> 1. **Duck Typing**: Implicit abstraction ("If it quacks, it's a duck").
+> 2. **Abstract Base Classes (ABCs)**: Explicit contracts using `abc`.
+> 3. **Protocols**: Structural typing using `typing.Protocol`.
+
+```text
+Java Concept      → Python Equivalent
+│
+├── Abstract Class → class Foo(ABC) + @abstractmethod
+├── Interface      → Protocol (Structural) or ABC (Nominal)
+├── Implementation → Standard Inheritance
+└── Polymorphism   → Duck Typing (Dynamic Dispatch)
+```
+
+<Aside type="success">
+🎯 **Key Insight**: Python prefers **implicit** abstraction. You don't always *need* to declare an interface. If your code expects an object with a `.draw()` method, any object with `.draw()` works. Use ABCs/Protocols when you need **explicit contracts** or **static type checking**.
+</Aside>
+
+---
+
+## 🗂️ Mechanisms for Abstraction
+
+### 1. Abstract Base Classes (ABCs)
+Use `abc.ABC` and `@abstractmethod` to enforce a contract. This is closest to Java's `abstract class`.
+
+<Code lang="python" title="Defining an Abstract Base Class" code={`
+from abc import ABC, abstractmethod
+
+class Shape(ABC):  # ✅ Inherits from ABC
+    @abstractmethod
+    def area(self):
+        """Subclasses MUST implement this"""
+        pass
+    
+    @abstractmethod
+    def perimeter(self):
+        pass
+
+    # ✅ Concrete method (Shared behavior)
+    def describe(self):
+        return f"I am a shape with area {self.area()}"
+
+# ❌ Cannot instantiate abstract class
+# s = Shape()  # 💥 TypeError
+
+class Circle(Shape):
+    def __init__(self, radius):
+        self.radius = radius
+    
+    def area(self):
+        return 3.14 * self.radius ** 2
+    
+    def perimeter(self):
+        return 2 * 3.14 * self.radius
+
+# ✅ Concrete subclass works
+c = Circle(5)
+print(c.describe())  # "I am a shape with area 78.5"
+`} />
+
+### 2. Protocols (Structural Typing)
+Introduced in Python 3.8, `Protocol` allows **static duck typing**. It checks if a class *has* the right methods, without requiring inheritance. This is closer to Go interfaces or TypeScript structural types.
+
+<Code lang="python" title="Using Protocol for Static Checks" code={`
+from typing import Protocol
+
+class Flyable(Protocol):
+    def fly(self) -> str: ...
+
+class Bird:
+    def fly(self) -> str:
+        return "Flapping wings"
+
+class Plane:
+    def fly(self) -> str:
+        return "Using engines"
+
+# ✅ Type checker (mypy) validates this:
+def take_off(vehicle: Flyable):
+    print(vehicle.fly())
+
+take_off(Bird())  # ✅ Has .fly()
+take_off(Plane()) # ✅ Has .fly() (No inheritance needed!)
+`} />
+
+<Aside type="tip">
+**ABC vs Protocol**:
+- **ABC**: Nominal typing. Requires explicit inheritance (`class A(B)`). Good for runtime checks (`isinstance`).
+- **Protocol**: Structural typing. No inheritance needed. Good for decoupling libraries. Checked by static analyzers (mypy).
+</Aside>
+
+---
+
+## 🆚 Abstract Class vs Protocol vs Duck Typing
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>Duck Typing</th>
+      <th>ABC (Nominal)</th>
+      <th>Protocol (Structural)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Enforcement</strong></td><td>Runtime (Error if missing)</td><td>Runtime (Instantiation)</td><td>Static (Type Checker)</td></tr>
+    <tr><td><strong>Inheritance</strong></td><td>None</td><td>Required</td><td>Not Required</td></tr>
+    <tr><td><strong>Boilerplate</strong></td><td>Lowest</td><td>Medium</td><td>Low</td></tr>
+    <tr><td><strong>Use Case</strong></td><td>Simple scripts, dynamic apps</td><td>Frameworks, strict hierarchies</td><td>Libraries, decoupled systems</td></tr>
+  </tbody>
+</table>
+
+---
+
+## 🔧 Deep Dive: Abstract Base Classes (ABCs)
+
+### 🎯 When to Use ABCs
+- You need to enforce a **strict hierarchy**.
+- You want to share **common code** (concrete methods) among subclasses.
+- You need **runtime checks** (`isinstance(obj, MyABC)`).
+
+<Code lang="python" title="Template Method Pattern with ABC" code={`
+from abc import ABC, abstractmethod
+
+class DataProcessor(ABC):
+    # Template Method: Defines the algorithm structure
+    def process(self, data: str) -> str:
+        cleaned = self.clean(data)      # Abstract hook
+        transformed = self.transform(cleaned) # Abstract hook
+        return self.save(transformed)   # Concrete method
+
+    @abstractmethod
+    def clean(self, data: str) -> str:
+        pass
+
+    @abstractmethod
+    def transform(self, data: str) -> str:
+        pass
+
+    def save(self, data: str) -> str:
+        print(f"Saving: {data}")
+        return data
+
+class CsvProcessor(DataProcessor):
+    def clean(self, data: str) -> str:
+        return data.strip()
+
+    def transform(self, data: str) -> str:
+        return data.upper()
+
+# Usage
+p = CsvProcessor()
+p.process("  hello world  ") 
+# Output: Saving: HELLO WORLD
+`} />
+
+### ⚠️ ABC Rules & Pitfalls
+1. **Must inherit from `ABC`**.
+2. **Must use `@abstractmethod`**.
+3. **Cannot instantiate** until all abstract methods are implemented.
+4. **Concrete methods** can be overridden but are inherited by default.
+
+---
+
+## 🔌 Deep Dive: Interfaces via Protocols
+
+### 🎯 When to Use Protocols
+- You want **decoupling** (no inheritance dependency).
+- You are writing a **library** and want to accept any object that matches the shape.
+- You want **static type safety** without runtime overhead.
+
+<Code lang="python" title="Protocol for Unrelated Classes" code={`
+from typing import Protocol
+
+class Drawable(Protocol):
+    def draw(self) -> None: ...
+
+class Circle:
+    def draw(self):
+        print("Drawing Circle")
+
+class Square:
+    def draw(self):
+        print("Drawing Square")
+
+# Function accepts ANY object with a .draw() method
+def render(shape: Drawable):
+    shape.draw()
+
+render(Circle())  # ✅
+render(Square())  # ✅
+# render("String") # ❌ mypy error
+`} />
+
+---
+
+## 🎭 Benefits of Abstraction in Python
+
+<CardGrid>
+  <Card title="Benefit 1: Decoupling" icon="rocket">
+    ```python
+    # Client depends on abstraction (Protocol/ABC), not concrete class
+    def process_payment(gateway: PaymentGateway):
+        gateway.charge(100)
+
+    # Can swap Stripe for PayPal without changing process_payment
+    ```
+  </Card>
+  
+  <Card title="Benefit 2: Testability" icon="shield">
+    ```python
+    # Easy to mock!
+    class MockGateway(PaymentGateway):
+        def charge(self, amount): return True
+
+    # Test with MockGateway instead of real API
+    ```
+  </Card>
+
+  <Card title="Benefit 3: Clarity" icon="approve-check">
+    ```python
+    # Protocols/ABCs document expected behavior clearly
+    class Reader(Protocol):
+        def read(self) -> str: ...
+    # Developers know exactly what methods are needed
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Abstraction in Algorithms
+
+<CardGrid>
+  <Card title="Pattern: Graph Algorithm Abstraction" icon="rocket">
+    ```python
+    from abc import ABC, abstractmethod
+
+    class Graph(ABC):
+        @abstractmethod
+        def get_neighbors(self, node):
+            pass
+
+    def bfs(graph: Graph, start):
+        # Algorithm works for ANY graph implementation
+        queue = [start]
+        visited = {start}
+        while queue:
+            node = queue.pop(0)
+            for neighbor in graph.get_neighbors(node):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        return visited
+
+    class AdjacencyListGraph(Graph):
+        def __init__(self):
+            self.adj = {}
+        def get_neighbors(self, node):
+            return self.adj.get(node, [])
+    ```
+  </Card>
+  
+  <Card title="Pattern: Strategy Pattern with Protocols" icon="shield">
+    ```python
+    from typing import Protocol
+
+    class SortStrategy(Protocol):
+        def sort(self, data: list) -> list: ...
+
+    class QuickSort:
+        def sort(self, data: list) -> list:
+            # QuickSort logic
+            return sorted(data) # Placeholder
+
+    class MergeSort:
+        def sort(self, data: list) -> list:
+            # MergeSort logic
+            return sorted(data) # Placeholder
+
+    def process_data(data: list, strategy: SortStrategy):
+        return strategy.sort(data)
+
+    # Swap strategies easily
+    process_data([3,1,2], QuickSort())
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you create an abstract class in Python?" icon="information">
+    Inherit from `abc.ABC` and use the `@abstractmethod` decorator on methods that must be implemented.
+  </Card>
+  
+  <Card title="Q: What is the difference between ABC and Protocol?" icon="approve-check">
+    - **ABC**: Nominal typing. Requires inheritance. Enforced at runtime.
+    - **Protocol**: Structural typing. No inheritance needed. Enforced by static type checkers (mypy).
+  </Card>
+
+  <Card title="Q: Can you instantiate an ABC?" icon="error">
+    **No**. Python raises a `TypeError` if you try to instantiate a class that has unimplemented abstract methods.
+  </Card>
+
+  <Card title="Q: Does Python have interfaces?" icon="backspace">
+    Not as a keyword. We use **ABCs** for nominal interfaces and **Protocols** for structural interfaces.
+  </Card>
+
+  <Card title="Q: Why use abstraction?" icon="shield">
+    To decouple code, enable polymorphism, improve testability (mocking), and clarify contracts between components.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Goal | Python Technique |
+|------|------------------|
+| **Enforce Contract** | `class Foo(ABC)` + `@abstractmethod` |
+| **Structural Typing** | `class Foo(Protocol)` |
+| **Share Code** | Concrete methods in ABC |
+| **Multiple "Interfaces"** | Multiple Inheritance (ABCs) or Union[Protocols] |
+| **Runtime Check** | `isinstance(obj, MyABC)` |
+| **Static Check** | `mypy` with Protocols |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Use ABCs for strict hierarchies and shared code.
+2. ✅ Use Protocols for decoupled, structural contracts.
+3. ✅ Remember: ABCs enforce at runtime; Protocols at static analysis time.
+4. ✅ Don't over-engineer: Simple duck typing is often enough in Python.
+5. ✅ Use `@abstractmethod` to prevent instantiation of incomplete classes.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict the Output/Error" code={`
+from abc import ABC, abstractmethod
+
+# Q1: Abstract Instantiation
+class Animal(ABC):
+    @abstractmethod
+    def speak(self): pass
+
+# a = Animal()  # ?
+
+# Q2: Missing Implementation
+class Dog(Animal):
+    def bark(self): pass
+
+# d = Dog()  # ?
+
+# Q3: Protocol Matching
+from typing import Protocol
+class Quackable(Protocol):
+    def quack(self): ...
+
+class Duck:
+    def quack(self): return "Quack"
+
+def make_noise(bird: Quackable):
+    print(bird.quack())
+
+make_noise(Duck())  # ?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: TypeError: Can't instantiate abstract class Animal with abstract method speak
+Q2: TypeError: Can't instantiate abstract class Dog with abstract method speak (bark != speak)
+Q3: "Quack" (Duck matches the Protocol structurally)
+```
+</details>
+
+> 🚀 **Final Wisdom**: Python gives you the freedom to choose between implicit (Duck Typing) and explicit (ABC/Protocol) abstraction. Use ABCs when you need runtime safety and a clear hierarchy. Use Protocols when you want flexibility and static checking. And remember: **Simple is better than complex!** 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🎭 Python Abstraction
+
+---
+
+## 🧠 Mental Model First
+
+```
+ABSTRACTION = hiding WHAT something does FROM HOW it does it.
+
+The caller sees: WHAT  (interface, method name, contract)
+The caller hides: HOW  (implementation, algorithm, data structure)
+
+Real world analogy:
+  Car.accelerate()  ← you call this
+  You DON'T know:   fuel injection timing, throttle valve angle,
+                    ECU calculations, piston cycles
+
+Software analogy:
+  list.sort()       ← you call this
+  You DON'T know:   Timsort, merge+insertion hybrid, galloping mode
+
+Two types of abstraction in Python:
+┌─────────────────────────────────────────────────────────────────┐
+│  DATA ABSTRACTION      → hide internal state (data hiding)      │
+│  PROCEDURAL ABSTRACTION→ hide implementation behind interface   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+```
+ABSTRACTION vs ENCAPSULATION (commonly confused):
+
+Encapsulation = BUNDLING data + methods + hiding internal state
+                HOW you package things together
+
+Abstraction  = HIDING COMPLEXITY behind a simple interface
+               WHAT you expose to the outside world
+
+Encapsulation is the MECHANISM.
+Abstraction is the GOAL.
+```
+
+---
+
+## 1️⃣ Abstract Class — Partial Implementation
+
+```
+Abstract class = a class that:
+  ├── CANNOT be instantiated directly
+  ├── Defines ABSTRACT methods (must be overridden)
+  ├── CAN have CONCRETE methods (shared implementation)
+  └── Forces subclasses to complete the contract
+
+Interface   = 100% abstract (all methods abstract)
+Abstract class = PARTIALLY abstract (mix of abstract + concrete)
+```
+
+```python
+from abc import ABC, abstractmethod
+from typing import Any
+
+class DataProcessor(ABC):
+    """
+    Abstract base — defines the WHAT.
+    Subclasses define the HOW.
+    """
+
+    # ── ABSTRACT: WHAT must be done ──────────────────────────────
+    @abstractmethod
+    def read(self, source: str) -> list[dict]:
+        """Read data from source. Subclass decides format."""
+        ...
+
+    @abstractmethod
+    def transform(self, data: list[dict]) -> list[dict]:
+        """Transform records. Subclass decides logic."""
+        ...
+
+    @abstractmethod
+    def write(self, data: list[dict], destination: str) -> None:
+        """Write data to destination. Subclass decides sink."""
+        ...
+
+    # ── CONCRETE: HOW the pipeline works ─────────────────────────
+    def process(self, source: str, destination: str) -> int:
+        """Template — orchestrates abstract steps."""
+        raw       = self.read(source)
+        cleaned   = self._clean(raw)           # shared step
+        processed = self.transform(cleaned)
+        self.write(processed, destination)
+        return len(processed)
+
+    def _clean(self, data: list[dict]) -> list[dict]:
+        """Shared cleaning logic — removes None values."""
+        return [{k: v for k, v in row.items() if v is not None}
+                for row in data]
+```
+
+```python
+DataProcessor()     # 💥 TypeError: Can't instantiate abstract class DataProcessor
+
+# Subclass fills in the HOW:
+class CSVProcessor(DataProcessor):
+    def read(self, source: str) -> list[dict]:
+        import csv
+        with open(source) as f:
+            return list(csv.DictReader(f))
+
+    def transform(self, data: list[dict]) -> list[dict]:
+        return [{**row, "processed": True} for row in data]
+
+    def write(self, data: list[dict], destination: str) -> None:
+        import json
+        with open(destination, "w") as f:
+            json.dump(data, f)
+
+proc = CSVProcessor()        # ✅
+proc.process("in.csv", "out.json")   # calls read→_clean→transform→write
+```
+
+---
+
+## 2️⃣ Template Method Pattern — Abstraction's Core Pattern
+
+```
+The most fundamental OOP pattern built on abstraction.
+
+Abstract class defines ALGORITHM SKELETON.
+Subclasses fill in SPECIFIC STEPS.
+The skeleton (order, flow) never changes.
+Only the steps change.
+```
+
+```python
+from abc import ABC, abstractmethod
+import hashlib
+import time
+
+class ReportGenerator(ABC):
+
+    # ── TEMPLATE METHOD — the skeleton ──────────────────────────
+    def generate(self, data: dict) -> str:
+        """
+        Fixed algorithm. Always: validate → format → sign → deliver.
+        Subclasses control each step.
+        """
+        self._validate(data)              # hook — can override
+        body    = self.format(data)       # abstract — MUST override
+        signed  = self._sign(body)        # concrete — shared
+        self.deliver(signed)              # abstract — MUST override
+        return signed
+
+    # ── ABSTRACT STEPS ──────────────────────────────────────────
+    @abstractmethod
+    def format(self, data: dict) -> str:
+        """Subclass decides output format."""
+        ...
+
+    @abstractmethod
+    def deliver(self, content: str) -> None:
+        """Subclass decides delivery channel."""
+        ...
+
+    # ── CONCRETE STEPS (shared) ──────────────────────────────────
+    def _sign(self, content: str) -> str:
+        checksum = hashlib.md5(content.encode()).hexdigest()[:8]
+        return f"{content}\n<!-- sig:{checksum} -->"
+
+    # ── HOOK METHOD — optional override ──────────────────────────
+    def _validate(self, data: dict) -> None:
+        """Default: no validation. Subclass can override."""
+        pass
+
+
+class HTMLEmailReport(ReportGenerator):
+    def format(self, data: dict) -> str:
+        rows = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>"
+                       for k, v in data.items())
+        return f"<table>{rows}</table>"
+
+    def deliver(self, content: str) -> None:
+        send_email(to="reports@company.com", body=content)
+
+    def _validate(self, data: dict) -> None:   # override hook
+        if not data:
+            raise ValueError("Empty report data")
+
+
+class JSONSlackReport(ReportGenerator):
+    def format(self, data: dict) -> str:
+        import json
+        return json.dumps(data, indent=2)
+
+    def deliver(self, content: str) -> None:
+        slack.post(channel="#reports", text=f"```{content}```")
+```
+
+---
+
+## 3️⃣ Abstract Properties
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+
+    @property
+    @abstractmethod             # ← innermost
+    def area(self) -> float:
+        """Every shape must expose area."""
+        ...
+
+    @property
+    @abstractmethod
+    def perimeter(self) -> float:
+        """Every shape must expose perimeter."""
+        ...
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Every shape must have a name."""
+        ...
+
+    # Concrete method using abstract properties:
+    def describe(self) -> str:
+        return (
+            f"{self.name}: "
+            f"area={self.area:.4f}, "
+            f"perimeter={self.perimeter:.4f}"
+        )
+
+    def is_larger_than(self, other: "Shape") -> bool:
+        return self.area > other.area
+```
+
+```python
+class Circle(Shape):
+    def __init__(self, radius: float):
+        self._radius = radius
+
+    @property
+    def area(self) -> float:
+        import math
+        return math.pi * self._radius ** 2
+
+    @property
+    def perimeter(self) -> float:
+        import math
+        return 2 * math.pi * self._radius
+
+    @property
+    def name(self) -> str:
+        return "Circle"
+
+
+class Rectangle(Shape):
+    def __init__(self, w: float, h: float):
+        self._w, self._h = w, h
+
+    @property
+    def area(self) -> float:
+        return self._w * self._h
+
+    @property
+    def perimeter(self) -> float:
+        return 2 * (self._w + self._h)
+
+    @property
+    def name(self) -> str:
+        return "Rectangle"
+
+
+c = Circle(5)
+r = Rectangle(4, 6)
+c.describe()              # "Circle: area=78.5398, perimeter=31.4159"
+c.is_larger_than(r)       # True
+```
+
+---
+
+## 4️⃣ Abstract Classmethod — Factory Abstraction
+
+```python
+from abc import ABC, abstractmethod
+
+class Connection(ABC):
+
+    @classmethod
+    @abstractmethod          # innermost
+    def from_config(cls, config: dict) -> "Connection":
+        """Factory method — subclass decides how to construct from config."""
+        ...
+
+    @classmethod
+    @abstractmethod
+    def from_url(cls, url: str) -> "Connection":
+        """Parse connection URL. Subclass handles its own URL format."""
+        ...
+
+    @abstractmethod
+    def execute(self, query: str) -> list: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+    # Concrete context manager (shared):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+class PostgresConnection(Connection):
+
+    @classmethod
+    def from_config(cls, config: dict) -> "PostgresConnection":
+        import psycopg2
+        conn = psycopg2.connect(**config)
+        return cls(conn)
+
+    @classmethod
+    def from_url(cls, url: str) -> "PostgresConnection":
+        import psycopg2
+        conn = psycopg2.connect(url)
+        return cls(conn)
+
+    def execute(self, query: str) -> list:
+        cur = self._conn.cursor()
+        cur.execute(query)
+        return cur.fetchall()
+
+    def close(self) -> None:
+        self._conn.close()
+```
+
+---
+
+## 5️⃣ Levels of Abstraction — Layered Architecture
+
+```
+Abstraction should be CONSISTENT across a layer.
+Mixing abstraction levels in one class/function = bad design.
+
+HIGH ABSTRACTION:    what happens     ("process the order")
+MEDIUM ABSTRACTION:  how it's done    ("validate → charge → ship")
+LOW ABSTRACTION:     implementation   ("call stripe API with params")
+```
+
+```python
+# BAD — mixed abstraction levels:
+class OrderService:
+    def process_order(self, order):
+        # HIGH level:
+        self.validate(order)
+        # LOW level leaked in:
+        cursor = db.cursor()                    # ← DB detail here
+        cursor.execute(
+            "INSERT INTO orders VALUES (?)",    # ← SQL here
+            (order.id,)
+        )
+        stripe.charges.create(                  # ← Payment detail here
+            amount=order.total,
+            currency="usd",
+            source=order.token,
+        )
+        # HIGH level again:
+        self.notify_customer(order)
+```
+
+```python
+# GOOD — consistent abstraction levels:
+class OrderService:
+    def __init__(self, repo: OrderRepository, payment: PaymentGateway,
+                 notifier: Notifier):
+        self._repo    = repo
+        self._payment = payment
+        self._notifier= notifier
+
+    def process_order(self, order: Order) -> None:
+        """HIGH level — reads like prose, hides HOW."""
+        self._validate(order)
+        self._persist(order)
+        self._charge(order)
+        self._notify(order)
+
+    def _validate(self, order: Order) -> None:
+        if not order.items:
+            raise ValueError("Empty order")
+        if order.total <= 0:
+            raise ValueError("Invalid total")
+
+    def _persist(self, order: Order) -> None:
+        self._repo.save(order)            # ← HOW hidden in repo
+
+    def _charge(self, order: Order) -> None:
+        self._payment.charge(             # ← HOW hidden in gateway
+            amount=order.total,
+            token=order.payment_token,
+        )
+
+    def _notify(self, order: Order) -> None:
+        self._notifier.send(              # ← HOW hidden in notifier
+            recipient=order.customer_email,
+            template="order_confirmation",
+            context={"order": order},
+        )
+```
+
+---
+
+## 6️⃣ Factory Abstraction — Hide Object Creation
+
+```python
+from abc import ABC, abstractmethod
+
+class Serializer(ABC):
+    @abstractmethod
+    def serialize(self, data: dict) -> bytes: ...
+
+    @abstractmethod
+    def deserialize(self, raw: bytes) -> dict: ...
+
+
+class JSONSerializer(Serializer):
+    def serialize(self, data: dict) -> bytes:
+        import json
+        return json.dumps(data).encode()
+
+    def deserialize(self, raw: bytes) -> dict:
+        import json
+        return json.loads(raw.decode())
+
+
+class MsgPackSerializer(Serializer):
+    def serialize(self, data: dict) -> bytes:
+        import msgpack
+        return msgpack.packb(data)
+
+    def deserialize(self, raw: bytes) -> dict:
+        import msgpack
+        return msgpack.unpackb(raw, raw=False)
+
+
+class ProtobufSerializer(Serializer):
+    def serialize(self, data: dict) -> bytes: ...
+    def deserialize(self, raw: bytes) -> dict: ...
+
+
+# Factory — hides which implementation is created:
+class SerializerFactory:
+    _registry: dict[str, type[Serializer]] = {
+        "json":    JSONSerializer,
+        "msgpack": MsgPackSerializer,
+        "proto":   ProtobufSerializer,
+    }
+
+    @classmethod
+    def create(cls, format: str) -> Serializer:
+        if format not in cls._registry:
+            raise ValueError(f"Unknown format: {format}. "
+                             f"Available: {list(cls._registry)}")
+        return cls._registry[format]()
+
+    @classmethod
+    def register(cls, name: str, klass: type[Serializer]) -> None:
+        cls._registry[name] = klass
+
+
+# Consumer knows nothing about JSON vs MsgPack:
+def store_event(event: dict, format: str = "json") -> None:
+    serializer = SerializerFactory.create(format)
+    raw = serializer.serialize(event)
+    storage.write(raw)
+```
+
+---
+
+## 🔬 Abstraction in Python's Own Type System
+
+```python
+# Python's collections.abc demonstrates perfect abstraction:
+from collections.abc import MutableSequence
+
+# MutableSequence abstract interface:
+# ─ abstract: __getitem__, __setitem__, __delitem__, __len__, insert
+# ─ concrete: append, clear, reverse, extend, pop, __contains__,
+#             __iter__, __reversed__, index, count
+
+# By implementing just 5 abstract methods,
+# you GET 11 concrete methods FREE.
+
+class SortedList(MutableSequence):
+    def __init__(self):
+        self._data = []
+
+    def __getitem__(self, i): return self._data[i]
+    def __setitem__(self, i, v):
+        self._data[i] = v
+        self._data.sort()
+
+    def __delitem__(self, i): del self._data[i]
+    def __len__(self): return len(self._data)
+
+    def insert(self, i, v):
+        self._data.insert(i, v)
+        self._data.sort()
+
+sl = SortedList()
+sl.append(3)          # ✅ FREE — from MutableSequence
+sl.append(1)          # ✅
+sl.extend([5, 2])     # ✅ FREE
+sl.count(1)           # ✅ FREE
+1 in sl               # ✅ FREE
+list(reversed(sl))    # ✅ FREE
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Abstract graph traversal — algorithm abstracted from data structure:
+from abc import ABC, abstractmethod
+from collections import deque
+
+class Graph(ABC):
+    @abstractmethod
+    def neighbors(self, node: int) -> list[int]: ...
+
+    @abstractmethod
+    def nodes(self) -> list[int]: ...
+
+    # CONCRETE algorithms — work on any Graph subclass:
+    def bfs(self, start: int) -> list[int]:
+        visited, queue, order = {start}, deque([start]), []
+        while queue:
+            node = queue.popleft()
+            order.append(node)
+            for n in self.neighbors(node):
+                if n not in visited:
+                    visited.add(n)
+                    queue.append(n)
+        return order
+
+    def dfs(self, start: int) -> list[int]:
+        visited, order = set(), []
+        def _dfs(node):
+            visited.add(node)
+            order.append(node)
+            for n in self.neighbors(node):
+                if n not in visited:
+                    _dfs(n)
+        _dfs(start)
+        return order
+
+    def has_path(self, src: int, dst: int) -> bool:
+        return dst in self.bfs(src)
+
+
+class AdjListGraph(Graph):
+    def __init__(self, edges: list[tuple]):
+        from collections import defaultdict
+        self._g = defaultdict(list)
+        for u, v in edges:
+            self._g[u].append(v)
+
+    def neighbors(self, node): return self._g[node]
+    def nodes(self):           return list(self._g)
+
+
+class MatrixGraph(Graph):
+    def __init__(self, matrix: list[list[int]]):
+        self._m = matrix
+
+    def neighbors(self, node):
+        return [j for j, v in enumerate(self._m[node]) if v]
+
+    def nodes(self):
+        return list(range(len(self._m)))
+
+
+# SAME algorithms, DIFFERENT representations:
+g1 = AdjListGraph([(0,1),(0,2),(1,3)])
+g2 = MatrixGraph([[0,1,1,0],[0,0,0,1],[0,0,0,0],[0,0,0,0]])
+
+g1.bfs(0)        # [0, 1, 2, 3]
+g2.bfs(0)        # [0, 1, 2, 3]  ← same result, different internal structure
+g1.has_path(0,3) # True
+```
+
+---
+
+## 💀 Interview Trap 1 — Abstract Class With Concrete `__init__` Skipped
+
+```python
+from abc import ABC, abstractmethod
+
+class Base(ABC):
+    def __init__(self, name: str):
+        self.name = name
+        self._init_common()         # important setup!
+
+    def _init_common(self):
+        self.created_at = time.time()
+
+    @abstractmethod
+    def process(self): ...
+
+
+class Child(Base):
+    def __init__(self, name: str, value: int):
+        # forgot super().__init__(name)!
+        self.value = value
+
+    def process(self):
+        return self.name    # 💥 AttributeError — name never set
+
+
+c = Child("test", 42)   # no error on creation
+c.process()             # AttributeError — super().__init__ not called
+```
+
+---
+
+## 💀 Interview Trap 2 — Partial Implementation Still Abstract
+
+```python
+from abc import ABC, abstractmethod
+
+class Base(ABC):
+    @abstractmethod
+    def read(self): ...
+
+    @abstractmethod
+    def write(self): ...
+
+
+class PartialImpl(Base):
+    def read(self):         # implements read
+        return "data"
+    # forgot write!
+
+PartialImpl()   # 💥 TypeError: Can't instantiate abstract class PartialImpl
+                # with abstract method write
+
+PartialImpl.__abstractmethods__   # frozenset({'write'})
+```
+
+---
+
+## 💀 Interview Trap 3 — Calling Abstract Method via `super()`
+
+```python
+from abc import ABC, abstractmethod
+
+class Base(ABC):
+    @abstractmethod
+    def process(self, data):
+        # Abstract methods CAN have implementations:
+        return f"base_default: {data}"   # ← this is valid!
+
+class Child(Base):
+    def process(self, data):
+        base_result = super().process(data)   # ✅ calling abstract method's body
+        return f"child: {base_result}"
+
+Child().process("x")   # "child: base_default: x"
+```
+
+> Abstract methods **can** have bodies. Subclasses call them via `super()` to access default behavior. Most developers don't know this exists — it's used for providing sensible defaults.
+
+---
+
+## 💀 Interview Trap 4 — `__abstractmethods__` Can Be Bypassed
+
+```python
+from abc import ABC, abstractmethod
+
+class Interface(ABC):
+    @abstractmethod
+    def required(self): ...
+
+Interface()     # 💥 TypeError
+
+# Bypass — clear abstractmethods:
+Interface.__abstractmethods__ = frozenset()
+Interface()     # ✅ now instantiable — bypassed!
+```
+
+```python
+# Also bypassed via object.__new__:
+obj = object.__new__(Interface)   # ✅ skips __init__ and ABC check
+type(obj)                         # Interface
+obj.required()                    # AttributeError — method not implemented
+```
+
+> Both are CPython implementation details. Used in testing/mocking frameworks (like `unittest.mock`). Know that ABC enforcement is NOT bulletproof.
+
+---

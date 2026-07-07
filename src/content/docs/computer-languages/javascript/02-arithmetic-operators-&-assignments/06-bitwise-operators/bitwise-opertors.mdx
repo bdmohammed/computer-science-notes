@@ -1,0 +1,1618 @@
+---
+title: JavaScript Bitwise Operators
+slug: computer-languages/javascript/operators/bitwise
+description: Complete guide to &, |, ^, ~, <<, >>, >>> — 32-bit coercion, BigInt support, shift tricks, and DSA patterns.
+sidebar:
+  label: "Bitwise"
+  badge:
+    text: Operators
+    variant: tip
+tags: [javascript, operators, bitwise, binary, dsa, interview, performance, astro6]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🔢 Bitwise Operators in JavaScript
+
+```text
+Bitwise Operators
+│
+├── Bitwise Logic
+│   ├── &    AND      (both bits 1 → 1)
+│   ├── |    OR       (any bit 1 → 1)
+│   ├── ^    XOR      (bits differ → 1)
+│   └── ~    NOT      (flip all bits)
+│
+├── Shift Operators
+│   ├── <<   Left shift          (multiply by 2ⁿ)
+│   ├── >>   Signed right shift  (divide by 2ⁿ, preserve sign)
+│   └── >>>  Unsigned right shift (divide by 2ⁿ, fill with 0)
+│
+└── Compound Assignment
+    ├── &=  |=  ^=  <<=  >>=  >>>=
+```
+
+<Aside type="tip" title="🎯 MUST KNOW">
+**JS Superpowers vs Java**:  
+✅ **All bitwise ops coerce to 32-bit signed integers** — predictable behavior  
+✅ **BigInt support** (ES2020+) — arbitrary precision bitwise with `n` suffix  
+✅ **No boolean bitwise ops** — `true & false` coerces to `1 & 0` first  
+✅ **Same shift modulo rules** — `<< 32` on 32-bit value = no shift  
+✅ **Two's complement identical** — `~x = -(x + 1)` works the same!  
+</Aside>
+
+---
+
+## 🔬 Critical Foundation: 32-Bit Coercion
+
+> **All JavaScript bitwise operators**:
+> 1. Convert operands to **32-bit signed integers** (via `ToInt32` abstract operation)
+> 2. Perform the operation on 32-bit values
+> 3. Return result as a **32-bit signed integer** (still a JS `Number`)
+
+```mermaid
+flowchart LR
+    Start[Bitwise Op: a & b] --> Coerce1[ToInt32(a)]
+    Start --> Coerce2[ToInt32(b)]
+    Coerce1 --> Op[32-bit AND operation]
+    Coerce2 --> Op
+    Op --> Result[Return as Number (32-bit signed)]
+    
+    style Coerce1 fill:#f59e0b,color:#fff
+    style Coerce2 fill:#f59e0b,color:#fff
+```
+
+<Code lang="js" title="Coercion examples — watch out!" code={`
+// Large numbers get truncated to 32 bits:
+console.log(0xFFFFFFFF & 0xFFFFFFFF);  // -1 (32-bit signed: all 1s = -1)
+console.log(0x100000000 & 0xFFFFFFFF); // 0 (0x100000000 = 2³², truncated to 0)
+
+// Floats get truncated (not rounded):
+console.log(5.9 & 3.1);  // 5 & 3 = 1 (decimal parts discarded)
+
+// Strings/booleans coerce to numbers first:
+console.log("5" & "3");      // 5 & 3 = 1 ("5" → 5, "3" → 3)
+console.log(true & false);   // 1 & 0 = 0 (true → 1, false → 0)
+console.log(null & 5);       // 0 & 5 = 0 (null → 0)
+
+// ⚠️ BigInt does NOT auto-coerce:
+// 5n & 3n  // ✅ Works with BigInt
+// 5 & 3n   // ❌ TypeError: can't mix Number and BigInt
+`} />
+
+<Aside type="caution">
+**32-Bit Range**: After coercion, values are in range `−2³¹` to `2³¹ − 1` (−2,147,483,648 to 2,147,483,647).  
+Values outside this range wrap via two's complement — test boundaries carefully!
+</Aside>
+
+---
+
+## 🔢 Integral Bitwise Operations — Binary Examples
+
+```
+a  = 0000 1010   (10)
+b  = 0000 1100   (12)
+─────────────────────
+&  = 0000 1000   (8)
+|  = 0000 1110   (14)
+^  = 0000 0110   (6)
+~a = 1111 0101   (-11)  ← two's complement
+```
+> 🔑 `~n = -(n+1)` **still works in JS!** `~0 = -1`, `~5 = -6`, `~(-1) = 0`.
+
+<Code lang="js" title="Bitwise AND, OR, XOR, NOT" code={`
+let a = 5;  // binary: 0101
+let b = 3;  // binary: 0011
+
+// AND (&): 1 only if both bits are 1
+console.log(a & b);  // 0101 & 0011 = 0001 → 1
+
+// OR (|): 1 if any bit is 1
+console.log(a | b);  // 0101 | 0011 = 0111 → 7
+
+// XOR (^): 1 if bits differ
+console.log(a ^ b);  // 0101 ^ 0011 = 0110 → 6
+
+// NOT (~): flip all bits (two's complement)
+console.log(~a);     // ~0101 = ...11111010 → -6
+
+// ✅ Formula: ~x = -(x + 1)
+console.log(~5 === -(5 + 1));  // true ✅
+console.log(~0);   // -1
+console.log(~10);  // -11
+console.log(~(-1)); // 0
+`} />
+
+### 🧠 Visual Bitwise Table
+
+| a (5) | b (3) | a & b | a \| b | a ^ b |
+|-------|-------|-------|--------|-------|
+| 0101  | 0011  | 0001 (1) | 0111 (7) | 0110 (6) |
+
+---
+
+## 🔁 Bitwise Complement (`~`) & Two's Complement
+
+### How `~` Works in JS
+
+The `~` operator flips **every bit** of the 32-bit representation: `0 → 1`, `1 → 0`.
+
+<Code lang="js" title="Why ~5 = -6 in JavaScript" code={`// ~5 calculation (32-bit):
+// 5 in binary:     00000000 00000000 00000000 00000101
+// Flip bits:       11111111 11111111 11111111 11111010  (1's complement)
+// Add 1:           11111111 11111111 11111111 11111011  (2's complement)
+
+// To read as decimal:
+// MSB = 1 → negative number
+// Invert bits: 00000000 00000000 00000000 00000100 = 4
+// Add 1: 4 + 1 = 5 → result is -5 - 1 = -6 ✅
+
+console.log(~5);  // -6
+
+// General formula still holds:
+console.log(~x === -(x + 1));  // true for all 32-bit integers ✅
+`} />
+
+<Aside type="tip">
+**Memory Trick**: `~x = -(x + 1)`  
+Use this to compute complement results instantly in interviews — works identically in Java and JS!
+</Aside>
+
+---
+
+## 🔄 Shift Operators — Fast Multiply/Divide by Powers of 2
+
+### Left Shift (`<<`)
+
+```text
+a << n  →  a × 2ⁿ  (fast!)
+```
+
+<Code lang="js" title="Left shift examples" code={`
+let a = 5;  // 0101
+
+console.log(a << 1);  // 1010 = 10  (5 × 2¹)
+console.log(a << 2);  // 010100 = 20 (5 × 2²)
+console.log(a << 3);  // 0101000 = 40 (5 × 2³)
+
+// Practical: Fast power of 2
+let pow2 = 1 << 10;  // 1024 (2¹⁰) ✅
+
+// Visualization:
+console.log(1 << 1);  // 2
+console.log(1 << 2);  // 4
+console.log(1 << 4);  // 16
+
+// ⚠️ Bits shifted out are LOST (32-bit wrap):
+let y = 0x80000000;  // MIN_VALUE: -2147483648
+console.log(y << 1);  // 0 (sign bit shifted out)
+`} />
+
+### Signed Right Shift (`>>`)
+
+```text
+a >> n  →  divide a by 2ⁿ (rounds toward −∞ for negatives)
+```
+
+<Code lang="js" title="Signed right shift — preserves sign" code={`
+let pos = 20;
+console.log(pos >> 1);  // 10  (20 ÷ 2)
+console.log(pos >> 2);  // 5   (20 ÷ 4)
+
+// >> n = floor division by 2ⁿ for negatives:
+console.log(16 >> 1);   // 8
+console.log(-16 >> 1);  // -8
+console.log(-7 >> 1);   // -4  (floor(-3.5) = -4, NOT truncation like /)
+
+let neg = -8;
+console.log(neg >> 1);  // -4  (sign bit 1 is preserved!)
+console.log(neg >> 2);  // -2
+
+// Visual: -8 >> 1 (32-bit two's complement)
+// Before: 11111111 11111111 11111111 11111000
+// After:  11111111 11111111 11111111 11111100  → -4 ✅
+`} />
+
+### Unsigned Right Shift (`>>>`)
+
+```text
+a >>> n  →  shift right, always fill left with 0 (ignores sign)
+```
+
+<Code lang="js" title="Unsigned right shift — fills with 0" code={`
+let pos = 20;
+console.log(pos >>> 1);  // 10  (same as >> for positive)
+
+let neg = -8;
+console.log(neg >> 1);    // -4  (signed: preserves sign bit)
+console.log(neg >>> 1);   // 2147483644  (unsigned: fills with 0!)
+
+// Visual: -8 >>> 1
+// Before: 11111111 11111111 11111111 11111000
+// After:  01111111 11111111 11111111 11111100  → large positive!
+// = 2³¹ − 4 = 2147483644 ✅
+
+// Always fills left with 0 — ignores sign
+console.log(16 >>> 1);   // 8   (same as >> for positive)
+console.log(-1 >>> 1);   // 2147483647  (0x7FFFFFFF = MAX_VALUE)
+
+// Use case: treat value as unsigned 32-bit for hashing
+let hash = -123456789;
+let bucket = (hash >>> 0) % 100;  // Make positive for array index
+console.log(bucket);  // Safe unsigned modulo
+`} />
+
+<Aside type="danger">
+**Critical Difference**:  
+- `>>` preserves sign → safe for signed arithmetic  
+- `>>>` always fills with 0 → use for **bit masks**, **hashing**, or **unsigned logic**  
+Never use `>>>` for signed division — it produces wrong results for negatives!
+</Aside>
+
+---
+
+## 🔬 Shift Amount Rules — Same as Java!
+
+```js
+// Shift amount is masked to lower 5 bits for 32-bit ops (0-31)
+// Same as Java int behavior!
+
+let x = 1;
+console.log(x << 32);  // 1    (32 & 31 = 0 → shift by 0)
+console.log(x << 33);  // 2    (33 & 31 = 1 → shift by 1)
+console.log(x << -1);  // x << 31  (-1 & 31 = 31)
+
+// For BigInt, no masking — shift by any amount:
+let big = 1n;
+console.log(big << 64n);  // 18446744073709551616n ✅ (no masking)
+```
+
+> 🔑 Shifting a 32-bit value by 32 does **NOT** zero it out — shift amount is masked to 5 bits. `x << 32 == x << 0 == x`. Most devs assume `x << 32 = 0` — classic interview trap!
+
+---
+
+## 🔬 Compound Assignment Operators
+
+```js
+let flags = 0b1010;
+
+flags &= 0b1100;    // flags = flags & 0b1100  = 0b1000
+flags |= 0b0011;    // flags = flags | 0b0011  = 0b1011
+flags ^= 0b0001;    // flags = flags ^ 0b0001  = 0b1010
+flags <<= 2;        // flags = flags << 2      = 0b101000
+flags >>= 1;        // flags = flags >> 1      = 0b10100
+flags >>>= 1;       // flags = flags >>> 1     = 0b1010
+```
+
+<Aside type="note">
+**Implicit Coercion**: Compound assignments also coerce to 32-bit first:
+```js
+let num = 5.9;
+num &= 3.1;  // Coerces: ToInt32(5.9)=5, ToInt32(3.1)=3, then 5&3=1
+console.log(num);  // 1 ✅
+```
+</Aside>
+
+---
+
+## ⚠️ Rules & Restrictions (JS Edition)
+
+<CardGrid>
+  <Card title="Rule 1: Operands Coerced to 32-Bit Signed Int" icon="information">
+  ```js
+    // ✅ All these work — coercion happens automatically:
+    console.log(10.9 & 3.1);      // 10 & 3 = 2
+    console.log("10" | "3");      // 10 | 3 = 11
+    console.log(true ^ false);    // 1 ^ 0 = 1
+    
+    // ⚠️ But large numbers wrap:
+    console.log(0x100000000 | 0);  // 0 (2³² truncated to 0 in 32-bit)
+  ```
+  </Card>
+  
+  <Card title="Rule 2: No Boolean Bitwise Ops — Coercion First!" icon="caution">
+  ```js
+    // Java: true & false → false (boolean AND)
+    // JS: true & false → 1 & 0 → 0 (number result!)
+    
+    console.log(true & false);   // 0 (number, not boolean!)
+    console.log(typeof (true & false));  // "number"
+    
+    // ✅ For boolean logic, ALWAYS use && / ||:
+    console.log(true && false);  // false (boolean, short-circuit)
+    console.log(typeof (true && false));  // "boolean"
+  ```
+    **Interview Trap**: `&` on booleans returns a **number**, not boolean!
+  </Card>
+
+  <Card title="Rule 3: BigInt Requires Explicit Suffix" icon="rocket">
+  ```js
+    // Standard bitwise: 32-bit only
+    console.log(5 & 3);      // 1 (32-bit Number)
+    
+    // BigInt bitwise: arbitrary precision (ES2020+)
+    console.log(5n & 3n);    // 1n (BigInt)
+    console.log(1n << 100n); // 1267650600228229401496703205376n ✅
+    
+    // ❌ Cannot mix Number and BigInt:
+    // 5 & 3n  // TypeError: can't mix Number and BigInt
+    
+    // ✅ Convert explicitly:
+    console.log(BigInt(5) & 3n);  // 1n
+  ```
+  </Card>
+
+  <Card title="Rule 4: Shift Amount Masked to 5 Bits (32-bit ops)" icon="backspace">
+  ```js
+    let x = 1;
+    console.log(x << 32);  // 1, NOT 0!
+    // Shift distance masked: 32 & 31 = 0 → x << 0 = x
+    
+    // BigInt shifts have NO masking:
+    console.log(1n << 64n);  // 18446744073709551616n ✅
+  ```
+    **Interview Trap**: `x << 32` does **not** zero out a 32-bit value — it's equivalent to `x << 0`.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA — Essential Bitwise Tricks (JS Edition)
+
+<CardGrid>
+  <Card title="Trick 1: Even/Odd Check" icon="rocket">
+```js
+    // Check if n is even (last bit = 0)
+    if ((n & 1) === 0) { /* even */ }
+    
+    // Check if n is odd (last bit = 1)
+    if ((n & 1) === 1) { /* odd */ }
+    
+    // Faster than n % 2 — single CPU instruction!
+```
+  </Card>
+  
+  <Card title="Trick 2: Power of Two Check" icon="shield">
+```js
+    // n is power of 2 if: n > 0 AND (n & (n-1)) === 0
+    const isPowerOfTwo = (n) => n > 0 && (n & (n - 1)) === 0;
+    
+    // Why? Powers of 2 have single 1-bit:
+    // 8 = 1000, 7 = 0111 → 1000 & 0111 = 0000 ✅
+    // 6 = 0110, 5 = 0101 → 0110 & 0101 = 0100 ≠ 0 ❌
+```
+  </Card>
+
+  <Card title="Trick 3: XOR Swap (Educational Only)" icon="backspace">
+```js
+    // XOR swap (works for integers)
+    a = a ^ b;
+    b = a ^ b;  // (a^b)^b = a
+    a = a ^ b;  // (a^b)^a = b
+    
+    // ⚠️ Warning: Don't use in production — less readable, 
+    // and fails if a and b reference same value.
+    // Prefer: [a, b] = [b, a];  (ES6 destructuring)
+```
+  </Card>
+
+  <Card title="Trick 4: Bit Manipulation Utilities" icon="information">
+```js
+    // Get i-th bit (0 = LSB)
+    const getBit = (n, i) => (n >> i) & 1;
+    
+    // Set i-th bit to 1
+    const setBit = (n, i) => n | (1 << i);
+    
+    // Clear i-th bit to 0
+    const clearBit = (n, i) => n & ~(1 << i);
+    
+    // Toggle i-th bit
+    const toggleBit = (n, i) => n ^ (1 << i);
+    
+    // Check if i-th bit is set
+    const isBitSet = (n, i) => ((n >> i) & 1) === 1;
+```
+  </Card>
+
+  <Card title="Trick 5: Advanced Bit Patterns" icon="rocket">
+```js
+    // Get lowest set bit (isolate rightmost 1)
+    const lowestSetBit = (n) => n & -n;
+    // n    = 0110 1100
+    // -n   = 1001 0100  (two's complement)
+    // n&-n = 0000 0100  (lowest set bit isolated)
+
+    // Clear lowest set bit
+    const clearLowest = (n) => n & (n - 1);
+    // n     = 0110 1100
+    // n-1   = 0110 1011
+    // n&n-1 = 0110 1000
+
+    // Create mask with p low bits set
+    const lowBitsMask = (p) => (1 << p) - 1;
+    // p=4: (1<<4)-1 = 16-1 = 15 = 0000 1111
+
+    // Count set bits (population count)
+    const countBits = (n) => {
+        let count = 0;
+        while (n) {
+            n &= n - 1;  // Clear lowest set bit
+            count++;
+        }
+        return count;
+    };
+    // Or use browser API if available:
+    // const count = Math.clz32(~n); // Not standard, but some engines
+```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**DSA Pro Tip**: Bitwise operations are **O(1)** and extremely fast — ideal for:
+- Frequency counting with bit masks (`number` for 32 flags)
+- Subset generation (`1 << n` subsets for n elements)
+- XOR-based problems (find unique element, swap, encryption)
+- Low-level optimization in competitive programming
+- **BigInt** for >32-bit problems (cryptography, big integer algorithms)
+</Aside>
+
+---
+
+## 🔬 BigInt Bitwise Operators <Badge text="ES2020+" variant="success" />
+
+For arbitrary precision bitwise operations, use `BigInt`.
+
+<Code lang="js" title="BigInt bitwise examples" code={`
+// BigInt literal syntax: append 'n'
+let big = 0xFFFFFFFFFFFFFFFFn;  // 64-bit all 1s
+
+// All bitwise operators work on BigInt:
+console.log(big & 0xFFn);        // 0xFFn (mask low 8 bits)
+console.log(big | 0x100n);       // Set bit 8
+console.log(big ^ 0x1n);         // Toggle LSB
+console.log(~big);               // Flip all bits (BigInt has infinite precision!)
+
+// Shift operators work with BigInt shifts (no 5-bit masking!):
+console.log(1n << 100n);         // 2¹⁰⁰ as BigInt ✅
+console.log(big >> 32n);         // Shift right 32 bits
+console.log(big >>> 32n);        // Same as >> for BigInt (no sign concept)
+
+// ⚠️ Cannot mix BigInt and Number:
+// big & 0xFF  // ❌ TypeError
+
+// ✅ Convert explicitly:
+console.log(big & BigInt(0xFF));  // ✅
+`} />
+
+<Aside type="caution">
+**BigInt Limitations**:  
+1. ❌ Cannot use with `Math` methods: `Math.clz32(4n)` → TypeError  
+2. ❌ Cannot use with JSON: `JSON.stringify({val: 1n})` → TypeError  
+3. ❌ Cannot compare with `==`/`===` to Number: `1n === 1` → false  
+4. ✅ Use `typeof x === "bigint"` to check type  
+5. ✅ BigInt bitwise ops have **no 32-bit truncation** — true arbitrary precision
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is ~5 in JavaScript?" icon="information">
+    **`-6`** — formula `~x = -(x + 1)` works identically to Java!  
+    `~5 = -(5 + 1) = -6` ✅
+
+    ```js
+      console.log(~0);     // -1  (all 32 bits set = -1)
+      console.log(~1);     // -2
+      console.log(~(-1));  //  0
+
+      // Common use: ~0 as "all bits set" mask (32-bit)
+      const ALL_BITS = ~0;          // 0xFFFFFFFF = -1 (as Number)
+    ```
+  </Card>
+  
+  <Card title="Q: Difference between >> and >>>?" icon="error">
+    - `>>` (signed): Preserves sign bit (fills with 1 for negatives)  
+    - `>>>` (unsigned): Always fills with 0, ignoring sign  
+    Example: `-8 >> 1 = -4`, but `-8 >>> 1 = 2147483644`
+  </Card>
+
+  <Card title="Q: What does `n & (n-1)` do?" icon="rocket">
+    **Clears the lowest set bit** in `n`.  
+    - If result is `0` and `n > 0` → `n` is a power of 2  
+    - Used to count set bits: `while (n) { count++; n &= (n-1); }`
+  </Card>
+
+  <Card title="Q: Can bitwise operators be used on boolean?" icon="caution">
+    **Yes, but coerces to number first!**  
+    `true & false` → `1 & 0` → `0` (number, not boolean!)  
+    ✅ For boolean logic, **always use `&&`/`||`** — they return booleans and short-circuit.
+  </Card>
+
+  <Card title="Q: What is `1 << 32` for a 32-bit value?" icon="error">
+    **`1`** — shift distance is taken **modulo 32** for 32-bit ops.  
+    `32 & 31 = 0` → `1 << 0 = 1`. Common interview trap!
+  </Card>
+
+  <Card title="Q: How to do 64-bit bitwise ops in JS?" icon="approve-check">
+    **Use BigInt** (ES2020+):  
+    ```js
+    let val = 0x1234567890ABCDEFn;
+    console.log(val >> 32n);  // 0x12345678n ✅
+    // Standard Number bitwise ops are limited to 32 bits
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Name</th>
+      <th>Effect</th>
+      <th>Example</th>
+      <th>Result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>&</code></td><td>AND</td><td>1 if both bits 1</td><td><code>5 & 3</code></td><td><code>1</code></td></tr>
+    <tr><td><code>|</code></td><td>OR</td><td>1 if any bit 1</td><td><code>5 | 3</code></td><td><code>7</code></td></tr>
+    <tr><td><code>^</code></td><td>XOR</td><td>1 if bits differ</td><td><code>5 ^ 3</code></td><td><code>6</code></td></tr>
+    <tr><td><code>~</code></td><td>NOT</td><td>Flip all bits</td><td><code>~5</code></td><td><code>-6</code></td></tr>
+    <tr><td><code>&lt;&lt;</code></td><td>Left Shift</td><td>Multiply by 2ⁿ</td><td><code>5 &lt;&lt; 2</code></td><td><code>20</code></td></tr>
+    <tr><td><code>&gt;&gt;</code></td><td>Signed Right Shift</td><td>Divide by 2ⁿ (preserve sign)</td><td><code>-8 &gt;&gt; 1</code></td><td><code>-4</code></td></tr>
+    <tr><td><code>&gt;&gt;&gt;</code></td><td>Unsigned Right Shift</td><td>Divide by 2ⁿ (fill with 0)</td><td><code>-8 &gt;&gt;&gt; 1</code></td><td><code>2147483644</code></td></tr>
+  </tbody>
+</table>
+
+### 🧮 Formulas to Memorize
+
+| Expression | Equivalent | Use Case |
+|------------|------------|----------|
+| `~x` | `-(x + 1)` | Compute complement instantly |
+| `x << n` | `x × 2ⁿ` | Fast multiplication |
+| `x >> n` | `floor(x ÷ 2ⁿ)` | Fast signed division |
+| `x & 1` | `x % 2` | Even/odd check |
+| `x & (x-1)` | Clears lowest set bit | Power-of-2 check, bit counting |
+| `x ^ x` | `0` | Cancel out duplicates (XOR trick) |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Bitwise ops coerce operands to **32-bit signed integers** first
+2. ✅ `&`, `|`, `^` on booleans return **numbers**, not booleans — use `&&`/`||` for logic
+3. ✅ `~x = -(x + 1)` — memorize this formula! Works in JS and Java
+4. ✅ Shift distance **modulo 32** for 32-bit ops (`<< 32` = `<< 0`)
+5. ✅ `>>` preserves sign; `>>>` always fills with 0
+6. ✅ Use `(n & (n-1)) === 0 && n > 0` to check power of 2
+7. ✅ Use **BigInt** (`1n << 100n`) for >32-bit bitwise operations
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="js" title="Predict the output" code={`// Q1: Basic bitwise
+let a = 6;  // 0110
+let b = 3;  // 0011
+console.log(a & b);  // ?
+console.log(a | b);  // ?
+console.log(a ^ b);  // ?
+
+// Q2: Complement
+console.log(~0);     // ?
+console.log(~10);    // ?
+
+// Q3: Shift operators
+console.log(8 << 2);   // ?
+console.log(20 >> 2);  // ?
+console.log(-8 >> 1);  // ?
+console.log(-8 >>> 1); // ?
+
+// Q4: Bit tricks
+let n = 16;
+console.log((n & 1) === 0);        // ? (even?)
+console.log((n & (n-1)) === 0);    // ? (power of 2?)
+
+// Q5: Shift modulo trap
+let x = 1;
+console.log(x << 32);  // ? (not 0!)
+
+// Q6: Boolean coercion
+console.log(true ^ true);   // ? (number!)
+console.log(false & true);  // ? (number!)
+console.log(typeof (true & false));  // ?
+
+// Q7: BigInt
+console.log(5n & 3n);       // ?
+console.log(1n << 64n);     // ?`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 2, 7, 5
+    ← 0110 & 0011 = 0010(2); 0110 | 0011 = 0111(7); 0110 ^ 0011 = 0101(5)
+
+Q2: -1, -11
+    ← ~0 = -(0+1) = -1; ~10 = -(10+1) = -11
+
+Q3: 32, 5, -4, 2147483644
+    ← 8×4=32; 20÷4=5; signed shift preserves sign; unsigned fills with 0
+
+Q4: true, true
+    ← 16 is even (LSB=0); 16 is power of 2 (single 1-bit)
+
+Q5: 1
+    ← 32 & 31 = 0, so 1 << 0 = 1 (shift modulo trap!)
+
+Q6: 0, 0, "number"
+    ← Boolean bitwise ops coerce to numbers first — returns number, not boolean!
+
+Q7: 1n, 18446744073709551616n
+    ← BigInt bitwise: 5n&3n=1n; 1n<<64n = 2⁶⁴ as BigInt
+```
+</details>
+
+---
+
+## 📌 Quick Revision Cheat Sheet <Badge text="MUST KNOW" variant="tip" />
+
+```js
+// 🎯 BITWISE BASICS (32-bit coercion!)
+5 & 3        → 1      // AND: both bits 1
+5 | 3        → 7      // OR: any bit 1
+5 ^ 3        → 6      // XOR: bits differ
+~5           → -6     // NOT: ~x = -(x+1)
+
+// 🎯 SHIFT OPERATORS
+5 << 2       → 20     // Left shift: × 2ⁿ
+20 >> 2      → 5      // Signed right: ÷ 2ⁿ (floor for negative)
+-8 >>> 1     → 2147483644  // Unsigned right: fill with 0
+
+// 🎯 COERCION TRAPS
+"5" & "3"    → 1      // Strings coerce to numbers first
+true & false → 0      // Booleans coerce: true→1, false→0 (returns number!)
+10.9 & 3.1   → 2      // Floats truncate: 10 & 3 = 2
+
+// 🎯 SHIFT MODULO RULE
+1 << 32      → 1      // 32 & 31 = 0 → shift by 0 (NOT 0!)
+1n << 64n    → 2⁶⁴n   // BigInt: no modulo masking ✅
+
+// 🎯 DSA TRICKS
+n & 1        → even/odd check (0=even, 1=odd)
+n & (n-1)    → clears lowest set bit
+(n & (n-1)) === 0 && n > 0  → power of 2 check
+n ^ n        → 0 (XOR cancel trick)
+
+// 🎯 BIGINT (ES2020+)
+5n & 3n      → 1n     // Arbitrary precision bitwise
+1n << 100n   → 2¹⁰⁰n  // No 32-bit limit!
+
+// 🎯 SAFE PATTERNS
+// Boolean logic: use && / || (not & / |)
+if (a && b) { }  // ✅ Returns boolean, short-circuits
+
+// Unsigned conversion for hashing:
+let unsigned = value >>> 0;  // Force 32-bit unsigned view
+
+// BigInt conversion:
+let bigResult = BigInt(num) & mask;  // Explicit conversion
+
+// 🎯 INTERVIEW GOLD
+// "JS bitwise ops coerce to 32-bit signed integers first"
+// "~x = -(x+1) works identically in JS and Java"
+// "true & false returns 0 (number), not false (boolean)"
+// "Shift amount masked to 5 bits: x << 32 = x << 0"
+// "Use BigInt (1n << 100n) for >32-bit bitwise operations"
+// ">>> fills with 0; >> preserves sign — critical for negatives"
+```
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="JavaScript Type Coercion"
+    href="/computer-languages/javascript/topics/type-coercion"
+    description="ToInt32, ToNumber, coercion table, bitwise operand conversion"
+  />
+  <LinkCard
+    title="JavaScript BigInt"
+    href="/computer-languages/javascript/topics/bigint"
+    description="Arbitrary precision integers, bitwise ops, mixing with Number"
+  />
+  <LinkCard
+    title="JavaScript Bitwise DSA Patterns"
+    href="/computer-languages/javascript/guides/bitwise-dsa"
+    description="XOR tricks, bit masks, population count, competitive programming"
+  />
+  <LinkCard
+    title="JavaScript Numbers & IEEE 754"
+    href="/computer-languages/javascript/topics/numbers"
+    description="64-bit floats, 32-bit bitwise coercion, precision limits"
+  />
+</CardGrid>
+
+<Aside type="note">
+🎯 **Production Pro Tips**  
+1. Use `>>> 0` to convert signed to unsigned 32-bit for hashing/array indices  
+2. Prefer `&&`/`||` over `&`/`|` for boolean logic — clearer intent, short-circuit  
+3. Use `Number.isInteger()` to validate inputs before bitwise ops  
+4. For >32-bit needs: use BigInt with `n` suffix consistently  
+5. Use ESLint rule `no-bitwise` if bitwise ops are disallowed in your codebase  
+6. Document when you rely on 32-bit coercion — team members may expect 64-bit behavior 🛡️
+</Aside>
+
+> 💡 **Final Wisdom**: JavaScript bitwise operators are **powerful but nuanced** — 32-bit coercion, boolean-to-number conversion, and BigInt support create a unique model. Master the coercion rules, memorize `~x = -(x+1)`, and use BigInt for large values — you'll write efficient, interview-ready bit manipulation code! 🚀✨
+
+*Converted for Astro 6 + Starlight • Optimized for interview prep + production use • Quality >>>> Quantity* 🎯
+```
+
+---
+
+## 🔄 Java Bitwise → JS Bitwise Conversion Summary
+
+| Java Feature | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| `byte/short/char` bitwise ops | All ops coerce to 32-bit `Number` | ✅ JS simpler — no promotion hierarchy, but watch truncation |
+| `boolean & | ^` (logical) | `boolean & | ^` → coerces to number first | ⚠️ JS returns **number**, not boolean — use `&&`/`||` for logic |
+| `int` bitwise (32-bit) | All `Number` bitwise ops are 32-bit | ✅ Same behavior — `<< 32` trap identical |
+| `long` bitwise (64-bit) | Use `BigInt` with `n` suffix | ⚠️ JS: explicit `1n << 64n` syntax; can't mix with `Number` |
+| `~x = -(x+1)` formula | `~x = -(x+1)` identical | ✅ Same two's complement behavior |
+| `>>` signed / `>>>` unsigned | Same operators, same behavior | ✅ Identical — `-8 >>> 1 = 2147483644` in both |
+| Shift amount modulo 32/64 | Modulo 32 for 32-bit; BigInt has no masking | ✅ Same for 32-bit; BigInt more flexible |
+| Compile-time type errors | Runtime coercion (silent truncation) | ⚠️ JS errors appear later — test edge cases |
+| `Integer.bitCount(n)` intrinsic | `Math.clz32()` or manual loop | ⚠️ JS has no direct popcount — implement or use library |
+| Boolean short-circuit `&&`/`||` | Same `&&`/`||` behavior | ✅ Identical — prefer for boolean logic |
+| No BigInt in Java (pre-Java 19) | BigInt built-in (ES2020+) | ✅ JS has arbitrary precision bitwise via `BigInt` |
+
+---
+
+🧠 **Interview Power Move**: When asked about bitwise operators, always mention:  
+1. **32-bit coercion** — all JS bitwise ops convert operands to signed 32-bit integers first  
+2. **`~x = -(x+1)`** — memorize this formula; works identically in Java and JS  
+3. **Boolean trap** — `true & false` returns `0` (number), not `false` (boolean)  
+4. **Shift modulo** — `x << 32` equals `x << 0` for 32-bit values (classic trap!)  
+5. **BigInt for large values** — use `1n << 100n` for >32-bit bitwise operations  
+
+---
+
+# 🔢 Bitwise Operators in JavaScript
+
+---
+
+## 🔰 What Are Bitwise Operators?
+
+Operators that work directly on the **binary representation** of numbers — bit by bit. JS converts operands to **32-bit signed integers** before operating, then converts back to standard JS number.
+
+```js
+5 & 3    // 1  — AND
+5 | 3    // 7  — OR
+5 ^ 3    // 6  — XOR
+~5       // -6 — NOT
+5 << 1   // 10 — Left Shift
+5 >> 1   // 2  — Sign-propagating Right Shift
+5 >>> 1  // 2  — Zero-fill Right Shift
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Bitwise Operators in JS
+│
+├── 🔬 Binary Operations
+│   ├── &    AND
+│   ├── |    OR
+│   ├── ^    XOR
+│   └── ~    NOT (unary)
+│
+├── ↔️  Shift Operations
+│   ├── <<   Left shift
+│   ├── >>   Sign-propagating right shift
+│   └── >>>  Zero-fill right shift
+│
+├── ⚙️  Compound Assignment
+│   ├── &=  |=  ^=
+│   └── <<= >>= >>>=
+│
+├── 🧠 DSA Patterns
+│   ├── check even/odd
+│   ├── power of 2
+│   ├── get/set/clear/toggle bit
+│   ├── swap without temp
+│   ├── fast multiply/divide by 2
+│   └── bitmask / flags
+│
+└── ⚡ JS-Specific Behavior
+    ├── 32-bit conversion (ToInt32)
+    ├── float truncation trick
+    └── negative number representation (two's complement)
+```
+
+---
+
+## ⚙️ Deep Dive — How JS Converts to 32-bit
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         BEFORE EVERY BITWISE OPERATION                   │
+│                                                          │
+│  Step 1: ToNumber(operand)                               │
+│          "5" → 5,  true → 1,  null → 0                  │
+│          undefined → NaN → 0 (NaN treated as 0)          │
+│                                                          │
+│  Step 2: ToInt32(number)                                 │
+│          → truncate decimal part (toward 0)              │
+│          → take lowest 32 bits                           │
+│          → interpret as signed 32-bit integer            │
+│                                                          │
+│  Step 3: Apply bitwise operation on 32-bit integers      │
+│                                                          │
+│  Step 4: Convert result back to JS number (float64)      │
+│          (ToUint32 for >>> specifically)                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// Float truncation — ToInt32 cuts the decimal:
+3.9  | 0   // 3  — 3.9 → 3 (truncated, not rounded)
+-3.9 | 0   // -3 — toward 0, not -4
+3.1  | 0   // 3
+
+// NaN, Infinity → 0:
+NaN      | 0   // 0
+Infinity | 0   // 0
+-Infinity| 0   // 0
+
+// Large numbers — only lowest 32 bits kept:
+2**32    | 0   // 0    — 2^32 in binary = 1 followed by 32 zeros
+                        // keep 32 bits → all zeros
+2**32 + 1| 0   // 1    — lowest 32 bits of (2^32 + 1) = 1
+2**31    | 0   // -2147483648 — bit 31 is sign bit in signed 32-bit
+```
+
+### Two's Complement — How Negative Numbers Work
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              TWO'S COMPLEMENT                            │
+│                                                          │
+│  Positive 5:                                             │
+│  00000000 00000000 00000000 00000101                     │
+│                                                          │
+│  Negative -5 (flip bits + add 1):                        │
+│  Step 1 flip:  11111111 11111111 11111111 11111010        │
+│  Step 2 +1:    11111111 11111111 11111111 11111011        │
+│                                                          │
+│  MSB (leftmost bit) = 1 → negative number               │
+│  MSB = 0 → positive number                              │
+│                                                          │
+│  Range: -2147483648 (-2^31) to 2147483647 (2^31 - 1)    │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// Verify in JS:
+(5).toString(2)   // "101"
+(-5).toString(2)  // "-101" — JS shows sign separately for display
+                  // internal storage: 11111111111111111111111111111011
+
+// See actual 32-bit:
+function toBin32(n) {
+  return (n >>> 0).toString(2).padStart(32, "0");
+}
+toBin32(5)    // "00000000000000000000000000000101"
+toBin32(-5)   // "11111111111111111111111111111011"
+toBin32(-1)   // "11111111111111111111111111111111" — all ones
+```
+
+---
+
+## 1️⃣ AND `&` — Both Bits Must Be 1
+
+```
+Truth table:
+  0 & 0 = 0
+  0 & 1 = 0
+  1 & 0 = 0
+  1 & 1 = 1   ← only case that produces 1
+```
+
+```
+  5 = 00000000 00000000 00000000 00000101
+  3 = 00000000 00000000 00000000 00000011
+      ───────────────────────────────────
+5&3 = 00000000 00000000 00000000 00000001  = 1
+```
+
+```js
+5 & 3    // 1
+12 & 10  // 8
+0xFF & 0x0F  // 15 — mask lower 4 bits
+
+// DSA — check even/odd (FASTEST method):
+n & 1 === 0   // even — last bit is 0
+n & 1 === 1   // odd  — last bit is 1
+
+// vs:
+n % 2 === 0   // also works but slower and breaks for negative (sign)
+n & 1         // works correctly for ALL integers including negative
+
+// Masking — extract specific bits:
+const byte = 0b11001010;
+const lowNibble  = byte & 0x0F; // 0b00001010 = 10
+const highNibble = (byte >> 4) & 0x0F; // 0b00001100 = 12
+```
+
+---
+
+## 2️⃣ OR `|` — Either Bit Must Be 1
+
+```
+Truth table:
+  0 | 0 = 0
+  0 | 1 = 1
+  1 | 0 = 1
+  1 | 1 = 1   ← both 1 still gives 1
+```
+
+```
+  5 = 00000000 00000000 00000000 00000101
+  3 = 00000000 00000000 00000000 00000011
+      ───────────────────────────────────
+5|3 = 00000000 00000000 00000000 00000111  = 7
+```
+
+```js
+5 | 3    // 7
+12 | 10  // 14
+0 | 0    // 0
+
+// MOST COMMON JS use — fast float → integer:
+3.9  | 0   // 3  — truncate decimal ✅
+-3.9 | 0   // -3 — toward zero
+99.99| 0   // 99
+
+// Setting a specific bit:
+let flags = 0b0000;
+flags = flags | 0b0100;  // set bit 2
+// flags = 0b0100
+```
+
+---
+
+## 3️⃣ XOR `^` — Bits Must Be DIFFERENT
+
+```
+Truth table:
+  0 ^ 0 = 0   ← same → 0
+  0 ^ 1 = 1   ← different → 1
+  1 ^ 0 = 1   ← different → 1
+  1 ^ 1 = 0   ← same → 0
+```
+
+```
+  5 = 00000000 00000000 00000000 00000101
+  3 = 00000000 00000000 00000000 00000011
+      ───────────────────────────────────
+5^3 = 00000000 00000000 00000000 00000110  = 6
+```
+
+```js
+5 ^ 3    // 6
+12 ^ 10  // 6
+n ^ 0    // n    — XOR with 0 = identity
+n ^ n    // 0    — XOR with self = 0 (key property)
+
+// DSA — swap without temp variable:
+let a = 5, b = 3;
+a = a ^ b;  // a = 6 (5^3)
+b = a ^ b;  // b = 5 (6^3 = 5)
+a = a ^ b;  // a = 3 (6^5 = 3)
+// ✅ a=3, b=5 — swapped with zero extra memory
+
+// DSA — find single non-duplicate in array:
+// Every pair cancels out (n^n=0), lone element remains
+function findUnique(arr) {
+  return arr.reduce((acc, n) => acc ^ n, 0);
+}
+findUnique([2, 3, 2, 4, 4])  // 3 ✅ — classic interview question
+
+// Toggle bit:
+let flag = 0b1010;
+flag ^= 0b0010;  // toggle bit 1 → 0b1000
+
+// Simple encryption (XOR cipher):
+const key = 42;
+const encrypted = "A".charCodeAt(0) ^ key;  // 107
+const decrypted = encrypted ^ key;           // 65 = "A" ✅
+```
+
+---
+
+## 4️⃣ NOT `~` — Flip All Bits (Unary)
+
+```
+~n = -(n + 1)   ← the formula to remember
+
+  5 = 00000000 00000000 00000000 00000101
+ ~5 = 11111111 11111111 11111111 11111010  = -6
+```
+
+```js
+~5    // -6   → -(5+1)
+~0    // -1   → -(0+1)
+~-1   // 0    → -(-1+1)
+~-6   // 5    → -(-6+1)
+
+// Formula: ~n = -(n+1)  ALWAYS
+
+// Classic use — indexOf check (-1 means not found):
+const arr = [1, 2, 3];
+arr.indexOf(2)  // 1  → truthy
+arr.indexOf(9)  // -1 → ~(-1) = 0 → falsy
+
+if (~arr.indexOf(2)) { ... }  // ✅ truthy if found
+if (~arr.indexOf(9)) { ... }  // ❌ falsy if not found
+
+// But use includes() in modern code — clearer:
+if (arr.includes(2)) { ... }  // ✅ preferred
+
+// Double NOT — fast floor toward zero (same as | 0):
+~~3.9    // 3
+~~-3.9   // -3
+~~NaN    // 0
+~~Infinity // 0
+```
+
+---
+
+## 5️⃣ Left Shift `<<` — Shift Bits Left, Fill With 0s
+
+```
+n << k  =  n × 2^k  (for values within 32-bit range)
+
+  5 = 00000000 00000000 00000000 00000101
+5<<1= 00000000 00000000 00000000 00001010  = 10  (×2)
+5<<2= 00000000 00000000 00000000 00010100  = 20  (×4)
+5<<3= 00000000 00000000 00000000 00101000  = 40  (×8)
+```
+
+```js
+5 << 1   // 10   = 5 × 2
+5 << 2   // 20   = 5 × 4
+5 << 3   // 40   = 5 × 8
+1 << 0   // 1    = 2^0
+1 << 1   // 2    = 2^1
+1 << 4   // 16   = 2^4
+1 << 10  // 1024 = 2^10
+1 << 31  // -2147483648 😱 — bit 31 is sign bit
+1 << 32  // 1 😱 — shift wraps: 32 % 32 = 0 → no shift
+
+// Building bitmask — set bit at position n:
+const bit = (n) => 1 << n;
+bit(0)  // 0001 = 1
+bit(1)  // 0010 = 2
+bit(2)  // 0100 = 4
+bit(3)  // 1000 = 8
+
+// Fast multiply by power of 2:
+n << 1  // n * 2
+n << 2  // n * 4
+n << 3  // n * 8
+// Faster than * in tight loops (single CPU instruction)
+```
+
+---
+
+## 6️⃣ Sign-Propagating Right Shift `>>` — Keeps Sign Bit
+
+```
+n >> k  =  Math.floor(n / 2^k)  for positive n
+           copies sign bit into vacated positions
+
+  20 = 00000000 00000000 00000000 00010100
+20>>1= 00000000 00000000 00000000 00001010  = 10
+20>>2= 00000000 00000000 00000000 00000101  = 5
+
+  -20 = 11111111 11111111 11111111 11101100
+-20>>1= 11111111 11111111 11111111 11110110  = -10  (sign preserved)
+-20>>2= 11111111 11111111 11111111 11111011  = -5
+```
+
+```js
+20 >> 1   // 10   = 20 / 2
+20 >> 2   // 5    = 20 / 4
+-20 >> 1  // -10  — sign bit copied ✅
+
+// Fast divide by power of 2 (integers only):
+n >> 1   // Math.floor(n / 2)
+n >> 2   // Math.floor(n / 4)
+
+// Extracting high bits:
+const color = 0xFF8844;
+const red   = (color >> 16) & 0xFF;  // 0xFF = 255
+const green = (color >> 8)  & 0xFF;  // 0x88 = 136
+const blue  =  color        & 0xFF;  // 0x44 = 68
+```
+
+---
+
+## 7️⃣ Zero-Fill Right Shift `>>>` — Always Fills With 0
+
+```
+>>> always fills vacated bits with 0 regardless of sign
+→ result is ALWAYS non-negative (unsigned 32-bit)
+
+  -1  = 11111111 11111111 11111111 11111111
+-1>>>1= 01111111 11111111 11111111 11111111  = 2147483647 😱
+```
+
+```js
+20  >>> 1   // 10   — same as >> for positive
+-20 >>> 1   // 2147483638 😱 — VERY different from >>
+
+-1  >>> 0   // 4294967295  — converts to unsigned 32-bit max
+0   >>> 0   // 0
+
+// Primary use — convert to unsigned 32-bit integer:
+n >>> 0    // treats n as unsigned 32-bit
+
+// Used in length checks — safe unsigned:
+array.length >>> 0   // always non-negative integer
+
+// V8 internally uses >>> 0 to validate array lengths
+```
+
+---
+
+## 🧠 DSA Bit Manipulation Patterns — Real Interview Patterns
+
+### Bit Operations Toolkit
+
+```js
+const n = 13; // 0b1101
+
+// ── Read ────────────────────────────────────
+// Get bit at position i:
+const getBit = (n, i) => (n >> i) & 1;
+getBit(13, 0)  // 1  (LSB)
+getBit(13, 1)  // 0
+getBit(13, 2)  // 1
+getBit(13, 3)  // 1
+
+// ── Write ────────────────────────────────────
+// Set bit i to 1:
+const setBit = (n, i) => n | (1 << i);
+setBit(13, 1)   // 15 = 0b1111
+
+// Clear bit i to 0:
+const clearBit = (n, i) => n & ~(1 << i);
+clearBit(13, 3)  // 5 = 0b0101
+
+// Toggle bit i:
+const toggleBit = (n, i) => n ^ (1 << i);
+toggleBit(13, 1)  // 15 = 0b1111
+toggleBit(15, 1)  // 13 = 0b1101
+
+// ── Check ────────────────────────────────────
+// Is power of 2?
+const isPow2 = n => n > 0 && (n & (n - 1)) === 0;
+isPow2(4)   // true  — 0100 & 0011 = 0
+isPow2(6)   // false — 0110 & 0101 = 0100 ≠ 0
+
+// Count set bits (popcount / Hamming weight):
+function countBits(n) {
+  let count = 0;
+  while (n) {
+    count += n & 1;
+    n >>>= 1;
+  }
+  return count;
+}
+countBits(13)  // 3 — 0b1101 has three 1s
+
+// Brian Kernighan's algorithm (faster):
+function countBitsFast(n) {
+  let count = 0;
+  while (n) {
+    n &= n - 1;  // clears lowest set bit each iteration
+    count++;
+  }
+  return count;
+}
+
+// Lowest set bit:
+const lowestBit = n => n & (-n);
+lowestBit(12)  // 4 — 0b1100 & 0b0100 = 0b0100
+```
+
+### Bitmask — Storing Multiple Flags in One Integer
+
+```js
+// Permission system — each bit = one permission:
+const PERMISSIONS = {
+  READ:    1 << 0,  // 0001 = 1
+  WRITE:   1 << 1,  // 0010 = 2
+  DELETE:  1 << 2,  // 0100 = 4
+  ADMIN:   1 << 3,  // 1000 = 8
+};
+
+// Assign permissions:
+let userPerms = PERMISSIONS.READ | PERMISSIONS.WRITE;
+// userPerms = 0011 = 3
+
+// Check permission:
+const canRead   = (userPerms & PERMISSIONS.READ)   !== 0; // true
+const canDelete = (userPerms & PERMISSIONS.DELETE) !== 0; // false
+
+// Grant permission:
+userPerms |= PERMISSIONS.DELETE;  // userPerms = 0111 = 7
+
+// Revoke permission:
+userPerms &= ~PERMISSIONS.WRITE;  // userPerms = 0101 = 5
+
+// Toggle permission:
+userPerms ^= PERMISSIONS.READ;    // userPerms = 0100 = 4
+```
+
+---
+
+## 📊 Compound Assignment Operators
+
+```js
+let x = 0b1010; // 10
+
+x &= 0b1100;    // x = x & 0b1100 = 0b1000 = 8
+x |= 0b0011;    // x = x | 0b0011 = 0b1011 = 11
+x ^= 0b0101;    // x = x ^ 0b0101 = 0b1110 = 14
+x <<= 1;        // x = x << 1 = 0b11100 = 28
+x >>= 2;        // x = x >> 2 = 0b111 = 7
+x >>>= 1;       // x = x >>> 1 = 0b11 = 3
+```
+
+---
+
+## ⚙️ Deep Dive — V8 Bitwise Internals
+
+```
+┌──────────────────────────────────────────────────────────┐
+│           V8 BITWISE OPERATION PIPELINE                  │
+│                                                          │
+│  JS: a & b                                               │
+│       │                                                  │
+│       ▼                                                  │
+│  Ignition bytecode:                                      │
+│    LdaNamedProperty  <a>   → accumulator                 │
+│    BitwiseAnd        <b>   → result                      │
+│       │                                                  │
+│       ▼                                                  │
+│  Both Smi (small integers)?                              │
+│    YES → single AND instruction on raw integer bits      │
+│           zero overhead — no heap allocation             │
+│    NO  → ToInt32 conversion first                        │
+│           then AND → convert back to JS number           │
+│       │                                                  │
+│       ▼                                                  │
+│  TurboFan (hot code):                                    │
+│    Compiles to single x86 AND/OR/XOR/SHR/SHL instruction │
+│    Identical speed to C bitwise operations               │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+// Bitwise on Smi — zero overhead:
+const a = 5 | 0;  // already Smi
+const b = 3 | 0;  // already Smi
+a & b;            // single CPU AND — no boxing, no heap 🚀
+
+// Bitwise on float — involves conversion:
+3.7 & 1.2;
+// 3.7 → ToInt32 → 3
+// 1.2 → ToInt32 → 1
+// 3 & 1 → 1
+// 1 → ToNumber → 1
+// Involves heap reads/writes — slower
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Feature Flags with Bitmask
+
+```js
+// Store multiple boolean flags in one DB column (integer):
+const Features = {
+  DARK_MODE:        1 << 0,  // 1
+  BETA_FEATURES:    1 << 1,  // 2
+  EMAIL_DIGEST:     1 << 2,  // 4
+  TWO_FACTOR_AUTH:  1 << 3,  // 8
+  ADVANCED_EDITOR:  1 << 4,  // 16
+};
+
+class UserPreferences {
+  #flags;
+
+  constructor(flagsFromDB = 0) {
+    this.#flags = flagsFromDB;
+  }
+
+  enable(feature)   { this.#flags |= feature; }
+  disable(feature)  { this.#flags &= ~feature; }
+  toggle(feature)   { this.#flags ^= feature; }
+  has(feature)      { return (this.#flags & feature) !== 0; }
+  toInt()           { return this.#flags; } // save to DB
+
+}
+
+const prefs = new UserPreferences(7); // 0b0111 from DB
+prefs.has(Features.DARK_MODE);       // true
+prefs.has(Features.TWO_FACTOR_AUTH); // false
+prefs.enable(Features.TWO_FACTOR_AUTH);
+prefs.toInt();                        // 15 — save back to DB
+```
+
+### Pattern 2 — Fast Color Channel Extraction
+
+```js
+// Parse hex color → RGB components:
+function hexToRgb(hex) {
+  const color = parseInt(hex.replace("#", ""), 16);
+
+  return {
+    r: (color >> 16) & 0xFF,  // bits 16-23
+    g: (color >> 8)  & 0xFF,  // bits 8-15
+    b:  color        & 0xFF   // bits 0-7
+  };
+}
+
+hexToRgb("#FF8844");
+// { r: 255, g: 136, b: 68 }
+
+// Pack RGB back to hex integer:
+function rgbToHex(r, g, b) {
+  return ((r << 16) | (g << 8) | b)
+    .toString(16)
+    .padStart(6, "0");
+}
+rgbToHex(255, 136, 68); // "ff8844"
+```
+
+### Pattern 3 — Fast Modulo for Power of 2
+
+```js
+// If n is power of 2:
+// x % n === x & (n - 1)
+// Bitwise AND is faster than modulo
+
+const BUFFER_SIZE = 1024; // must be power of 2
+
+class RingBuffer {
+  #buf = new Array(BUFFER_SIZE).fill(0);
+  #head = 0;
+  #tail = 0;
+
+  push(val) {
+    this.#buf[this.#tail] = val;
+    this.#tail = (this.#tail + 1) & (BUFFER_SIZE - 1); // fast wrap
+  }
+
+  pop() {
+    const val = this.#buf[this.#head];
+    this.#head = (this.#head + 1) & (BUFFER_SIZE - 1); // fast wrap
+    return val;
+  }
+}
+
+// (this.#tail + 1) & 1023  is faster than  (this.#tail + 1) % 1024
+// Single AND instruction vs DIV instruction on CPU
+```
+
+### Pattern 4 — TypedArray + Bitwise for Binary Protocol
+
+```js
+// Parse binary network packet:
+function parsePacket(buffer) {
+  const view = new DataView(buffer);
+  const header = view.getUint8(0);
+
+  // Extract fields from header byte:
+  const version  = (header >> 6) & 0b11;  // bits 7-6
+  const type     = (header >> 4) & 0b11;  // bits 5-4
+  const priority = (header >> 2) & 0b11;  // bits 3-2
+  const flags    =  header       & 0b11;  // bits 1-0
+
+  return { version, type, priority, flags };
+}
+
+// Build packet header:
+function buildHeader(version, type, priority, flags) {
+  return ((version  & 0b11) << 6) |
+         ((type     & 0b11) << 4) |
+         ((priority & 0b11) << 2) |
+          (flags    & 0b11);
+}
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: `~` on `-1` — the `indexOf` pattern
+
+```js
+// Classic pattern — ~ converts -1 (not found) to 0 (falsy):
+const arr = [1, 2, 3];
+
+if (~arr.indexOf(99)) {
+  console.log("found");    // never runs — ~(-1) = 0 = falsy ✅
+}
+
+if (~arr.indexOf(2)) {
+  console.log("found");    // runs — ~(1) = -2 = truthy ✅
+}
+
+// TRAP — ~0 is also truthy:
+arr.indexOf(1) // 0 — found at index 0
+~0             // -1 — truthy ✅ works correctly
+
+// But confusing to read — prefer includes():
+if (arr.includes(2)) { ... }   // ✅ clear intent
+```
+
+---
+
+### Trap 2: Shift amount wraps at 32
+
+```js
+1 << 32   // 1 😱 — not 0, not 2^32
+           // shift amount = 32 % 32 = 0 → no shift
+
+1 << 31   // -2147483648 — bit 31 is sign bit
+1 << 33   // 2 — 33 % 32 = 1 → same as 1 << 1
+
+// Real prod trap — generating bitmasks beyond 31:
+const PERMISSION_32 = 1 << 32;  // 😱 = 1 — NOT 2^32
+// Fix — use BigInt for more than 31 flags:
+const PERMISSION_32 = 1n << 32n; // ✅ 4294967296n
+```
+
+---
+
+### Trap 3: `>>>` makes negative numbers huge positive
+
+```js
+function badArrayLength(n) {
+  return n >>> 0; // "convert to unsigned"
+}
+
+badArrayLength(-1)  // 4294967295 😱 — creates huge array length
+badArrayLength(-5)  // 4294967291 😱
+
+// Real prod trap:
+new Array(-1 >>> 0)  // RangeError: Invalid array length
+                     // because 4294967295 is too large
+
+// OR silently makes giant sparse array:
+// Some engines allow it → out of memory
+```
+
+---
+
+### Trap 4: Bitwise NOT `~` doubles the precision loss
+
+```js
+// ~~ truncates toward 0 — same as Math.trunc NOT Math.floor:
+~~3.9    // 3  — same as Math.trunc
+~~-3.9   // -3 — toward 0 (NOT -4)
+
+Math.floor(-3.9)  // -4 ← toward -Infinity
+Math.trunc(-3.9)  // -3 ← toward 0
+
+// Real prod trap — using ~~ instead of Math.floor for negatives:
+function getPage(offset, pageSize) {
+  return ~~(offset / pageSize); // 😱 wrong for negative offsets
+}
+getPage(-5, 3)           // ~~(-1.666) = -1
+Math.floor(-5 / 3)       // -2 ← correct page index
+
+// Also breaks beyond 32-bit:
+~~(2**31 + 0.5)  // -2147483648 😱 — overflow
+Math.floor(2**31 + 0.5)  // 2147483648 ✅
+```
+
+---
+
+### Trap 5: XOR swap breaks when `a === b` address
+
+```js
+// XOR swap with same variable reference:
+let a = 5;
+a = a ^ a;  // 0 — destroyed itself 😱
+a = a ^ a;  // 0
+a = a ^ a;  // 0
+// a = 0 — not 5
+
+// This also breaks in arrays when i === j:
+function xorSwap(arr, i, j) {
+  arr[i] ^= arr[j]; // if i === j: arr[i] ^= arr[i] = 0
+  arr[j] ^= arr[i]; // 0 ^= 0 = 0
+  arr[i] ^= arr[j]; // 0 ^= 0 = 0
+  // element destroyed 😱
+}
+
+// Fix:
+function safeSwap(arr, i, j) {
+  if (i === j) return; // guard
+  arr[i] ^= arr[j];
+  arr[j] ^= arr[i];
+  arr[i] ^= arr[j];
+}
+```
+
+---
+
+### Trap 6: `|0` truncates beyond 32-bit signed range
+
+```js
+// Works for values in 32-bit range:
+3.7 | 0    // 3  ✅
+99.9 | 0   // 99 ✅
+
+// Breaks outside 32-bit signed range:
+(2**31) | 0      // -2147483648 😱 — overflow
+(2**32) | 0      // 0 😱 — wraps completely
+(2**53) | 0      // 0 😱
+
+// Real prod trap — using |0 on large timestamps:
+Date.now() | 0   // 😱 — Date.now() > 2^31 → wrong value
+// Fix:
+Math.trunc(Date.now())  // ✅ safe for any size
+```
+
+---
+
+## 📊 Quick Reference — All Operators
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              BITWISE TRUTH TABLE                        │
+│                                                         │
+│  A  B │  A&B  A|B  A^B  ~A                             │
+│  ─────┼──────────────────────                           │
+│  0  0 │   0    0    0    1                              │
+│  0  1 │   0    1    1    1                              │
+│  1  0 │   0    1    1    0                              │
+│  1  1 │   1    1    0    0                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+| Operator | Name | Formula | Use Case |
+|---|---|---|---|
+| `&` | AND | both 1 | masking, even/odd |
+| `\|` | OR | either 1 | set flag, `\|0` truncation |
+| `^` | XOR | different | toggle, swap, find unique |
+| `~` | NOT | flip all | `~indexOf`, `~~` truncate |
+| `<<` | Left shift | `n × 2^k` | fast multiply, build mask |
+| `>>` | Right shift | `floor(n / 2^k)` | fast divide, extract bits |
+| `>>>` | Unsigned right | always `≥ 0` | unsigned conversion |
+
+---
+
+## 📊 DSA / Internals Connection
+
+> Every bitwise operator maps to a **single CPU instruction** — `AND`, `OR`, `XOR`, `NOT`, `SHL`, `SHR`, `SAR` on x86-64. This is the **lowest level of computation** — no function call, no memory access, one clock cycle. V8 TurboFan compiles bitwise ops directly to these instructions when operands are Smi integers.
+>
+> Bitmasks are the foundation of **set operations** in CS — AND = set intersection, OR = set union, XOR = symmetric difference, NOT = set complement. A 32-bit integer is a **set of 32 boolean flags** — the most compact data structure possible (32 values in one register). This is why OS permission systems (Unix `chmod 755`), network protocol headers, and graphics systems all use bitwise operations at their core.
+
+---

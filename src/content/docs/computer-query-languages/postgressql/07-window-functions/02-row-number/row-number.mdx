@@ -1,0 +1,978 @@
+---
+title: PostgreSQL ROW_NUMBER()
+slug: computer-query-languages/postgresql/window-functions/row-number
+description: Master the ROW_NUMBER() window function in PostgreSQL — top-N per group, deduplication, deterministic tie-breaking, and performance optimization.
+sidebar:
+  label: "ROW_NUMBER"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, row-number, ranking, deduplication, top-n, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 ROW_NUMBER() — Complete Guide
+
+> **`ROW_NUMBER()` assigns a unique sequential integer to every row within a partition. No ties, no gaps—always 1, 2, 3, 4... It is the go-to tool for deduplication, pagination, and "Top-N per group" queries.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `ROW_NUMBER()` as a **counter that resets**.  
+It counts rows in a specific order. When it hits a new "partition" (group), it resets back to 1. Unlike `RANK()`, it never gives two rows the same number.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Syntax
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← ROW_NUMBER computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+<Code lang="sql" title="Basic Syntax" code={`
+-- ROW_NUMBER() is a window function — needs OVER clause
+-- Cannot appear in WHERE directly → wrap in subquery/CTE
+
+SELECT
+  name,
+  department,
+  salary,
+  ROW_NUMBER() OVER (
+    PARTITION BY department    -- Restart numbering per dept
+    ORDER BY salary DESC       -- 1 = highest salary
+  ) AS rn
+FROM employees;`} />
+
+<CardGrid>
+  <Card title="Key Properties" icon="check">
+    - ✅ **Unique**: No two rows in the same partition have the same number.
+    - ✅ **Sequential**: No gaps (1, 2, 3...).
+    - ✅ **Resets**: Starts at 1 for each new partition.
+    - ⚠️ **Non-Deterministic with Ties**: If two rows have the same `ORDER BY` value, their order is arbitrary unless you add a tiebreaker.
+  </Card>
+  
+  <Card title="Comparison: RN vs RANK vs DENSE_RANK" icon="info">
+    | Salary | ROW_NUMBER | RANK | DENSE_RANK |
+    |--------|------------|------|------------|
+    | 120k   | 1          | 1    | 1          |
+    | 110k   | 2          | 2    | 2          |
+    | 110k   | **3**      | **2**| **2**      |
+    | 90k    | **4**      | **4**| **3**      |
+    
+    *RN breaks ties arbitrarily. RANK skips numbers. Dense Rank does not.*
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣ What ROW_NUMBER Actually Does
+
+```
+employees table:
+┌──────────┬──────────────┬────────┐
+│ name     │ department   │ salary │
+├──────────┼──────────────┼────────┤
+│ Raj      │ Engineering  │ 120000 │
+│ Priya    │ Engineering  │ 110000 │
+│ Sharma   │ Engineering  │ 110000 │  ← same salary as Priya!
+│ Sam      │ Sales        │  85000 │
+│ Ankit    │ Sales        │  75000 │
+│ Meera    │ Sales        │  75000 │  ← same salary as Ankit!
+└──────────┴──────────────┴────────┘
+
+ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC):
+
+┌──────────┬──────────────┬────────┬────┐
+│ name     │ department   │ salary │ rn │
+├──────────┼──────────────┼────────┼────┤
+│ Raj      │ Engineering  │ 120000 │  1 │ ← highest in Eng
+│ Priya    │ Engineering  │ 110000 │  2 │ ← tie: gets 2
+│ Sharma   │ Engineering  │ 110000 │  3 │ ← tie: gets 3 (not 2!)
+│ Sam      │ Sales        │  85000 │  1 │ ← restarts for Sales
+│ Ankit    │ Sales        │  75000 │  2 │ ← tie: gets 2
+│ Meera    │ Sales        │  75000 │  3 │ ← tie: gets 3 (not 2!)
+└──────────┴──────────────┴────────┴────┘
+
+Key properties:
+  ✅ Always unique within partition (no ties ever)
+  ✅ Always sequential (no gaps ever: 1,2,3,4...)
+  ✅ Restarts at 1 for each new partition
+  ⚠️ Tie-breaking is ARBITRARY (Priya vs Sharma order = undefined)
+```
+
+```
+Compare ROW_NUMBER vs RANK vs DENSE_RANK for ties:
+
+salary    ROW_NUMBER    RANK    DENSE_RANK
+120000        1           1         1
+110000        2           2         2    ← tie starts
+110000        3           2         2    ← tie (same rank)
+ 90000        4           4         3    ← ROW_NUMBER: no gap
+                                         ← RANK: gap (skips 3)
+                                         ← DENSE_RANK: no gap
+
+ROW_NUMBER:  1, 2, 3, 4  (unique always, tie order arbitrary)
+RANK:        1, 2, 2, 4  (ties same rank, gap after tie)
+DENSE_RANK:  1, 2, 2, 3  (ties same rank, no gap)
+```
+
+> 🎯 **Interview trap:** With tied values, ROW_NUMBER assigns different numbers — which one gets 2 and which gets 3 is **non-deterministic** unless you add a tiebreaker to ORDER BY. Always add a unique column (like `id`) as the final ORDER BY key to make ROW_NUMBER deterministic.
+
+---
+
+## 2️⃣ Basic Syntax — All Forms
+
+```sql
+-- Form 1: No PARTITION BY — numbers all rows globally
+SELECT
+  name, salary,
+  ROW_NUMBER() OVER (ORDER BY salary DESC) AS global_rank
+FROM employees;
+-- 1 through N across entire table
+
+-- Form 2: With PARTITION BY — restarts per group
+SELECT
+  name, department, salary,
+  ROW_NUMBER() OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) AS dept_rank
+FROM employees;
+-- 1,2,3 within Engineering; 1,2,3 within Sales separately
+
+-- Form 3: Deterministic tie-breaking
+SELECT
+  name, salary,
+  ROW_NUMBER() OVER (
+    ORDER BY salary DESC, id ASC   -- id breaks ties deterministically ✅
+  ) AS rn
+FROM employees;
+
+-- Form 4: Multiple ROW_NUMBERs in one query
+SELECT
+  name, department, salary, hire_date,
+  ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC)   AS salary_rank,
+  ROW_NUMBER() OVER (PARTITION BY department ORDER BY hire_date ASC) AS tenure_rank,
+  ROW_NUMBER() OVER (ORDER BY salary DESC)                           AS global_rank
+FROM employees;
+```
+
+---
+
+## 1️⃣ The #1 Pattern: Top-N Per Group
+
+This is the most common interview question and production use case.
+
+```sql
+-- Get top 3 highest-paid employees per department
+-- Step 1: number rows within each dept by salary desc
+-- Step 2: filter to rn <= 3
+
+-- ❌ Can't filter ROW_NUMBER directly in WHERE (window fn runs after WHERE)
+SELECT name, department, salary
+FROM   employees
+WHERE  ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) <= 3;
+-- ERROR: window functions not allowed in WHERE ❌
+
+-- ✅ Wrap in subquery
+SELECT name, department, salary
+FROM (
+  SELECT
+    name, department, salary,
+    ROW_NUMBER() OVER (
+      PARTITION BY department
+      ORDER BY salary DESC, id ASC   -- tiebreaker ✅
+    ) AS rn
+  FROM employees
+  WHERE is_active = true
+) ranked
+WHERE rn <= 3
+ORDER BY department, rn;
+
+-- ✅ Or use CTE (cleaner)
+WITH ranked_employees AS (
+  SELECT
+    name, department, salary,
+    ROW_NUMBER() OVER (
+      PARTITION BY department
+      ORDER BY salary DESC, id ASC
+    ) AS rn
+  FROM employees
+  WHERE is_active = true
+)
+SELECT name, department, salary, rn
+FROM   ranked_employees
+WHERE  rn <= 3
+ORDER BY department, rn;
+```
+
+```
+Result:
+┌──────────┬──────────────┬────────┬────┐
+│ name     │ department   │ salary │ rn │
+├──────────┼──────────────┼────────┼────┤
+│ Raj      │ Engineering  │ 120000 │  1 │
+│ Sharma   │ Engineering  │ 115000 │  2 │
+│ Priya    │ Engineering  │ 110000 │  3 │
+│ Sam      │ Sales        │  85000 │  1 │
+│ Meera    │ Sales        │  80000 │  2 │
+│ Ankit    │ Sales        │  75000 │  3 │
+└──────────┴──────────────┴────────┴────┘
+Exactly 3 per department. No more, no less. ✅
+```
+
+
+<Aside type="note">
+**Why `id ASC` in ORDER BY?**  
+If Priya and Sharma both earn 110k, `ROW_NUMBER()` might assign them 2 and 3 randomly on different runs. Adding `id ASC` ensures Priya (lower ID) always gets 2. This makes your query **deterministic**.
+</Aside>
+
+
+> 🎯 **DSA connection:** Top-N per group = partial sort + selection. ROW_NUMBER implementation in Postgres maintains a priority queue (heap) per partition of size N — O(n log k) where k=N. Same as "find top-k elements" interview problem. Much cheaper than full sort when k \<\< n.
+
+
+---
+
+## 2️⃣ Deduplication — Keep One Row Per Group
+
+**The most production-critical use of ROW_NUMBER.**
+
+```sql
+-- Problem: users table has duplicate emails
+-- Keep only the OLDEST record (min id) per email
+
+-- Step 1: find duplicates
+SELECT email, COUNT(*) FROM users GROUP BY email HAVING COUNT(*) > 1;
+
+-- Step 2: number duplicates, keep rn=1
+WITH deduplicated AS (
+  SELECT
+    id, name, email, created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY email           -- group by the duplicate key
+      ORDER BY created_at ASC,     -- keep oldest (first created)
+               id ASC              -- tiebreaker on timestamp ✅
+    ) AS rn
+  FROM users
+  WHERE deleted_at IS NULL
+)
+SELECT id, name, email, created_at
+FROM   deduplicated
+WHERE  rn = 1;    -- only the "winner" per email group ✅
+
+-- Step 3: delete losers (keep only rn=1)
+DELETE FROM users
+WHERE id NOT IN (
+  SELECT id FROM (
+    SELECT id,
+      ROW_NUMBER() OVER (
+        PARTITION BY email
+        ORDER BY created_at ASC, id ASC
+      ) AS rn
+    FROM users
+  ) ranked
+  WHERE rn = 1
+);
+```
+
+```
+Before deduplication:          After (keep rn=1):
+┌────┬───────┬───────────────┐  ┌────┬───────┬───────────────┐
+│ id │ name  │ email         │  │ id │ name  │ email         │
+├────┼───────┼───────────────┤  ├────┼───────┼───────────────┤
+│  1 │ Raj   │ raj@gmail.com │  │  1 │ Raj   │ raj@gmail.com │ ← kept (oldest)
+│  3 │ Rajan │ raj@gmail.com │  │  2 │ Priya │ p@gmail.com   │
+│  2 │ Priya │ p@gmail.com   │  └────┴───────┴───────────────┘
+└────┴───────┴───────────────┘  id=3 deleted ✅
+```
+
+> 🎯 **Real-life SDE:** Deduplication with ROW_NUMBER is a daily task in data engineering. Much cleaner than self-join approaches. The PARTITION BY defines what "duplicate" means, ORDER BY defines which duplicate to keep.
+
+---
+
+## 3️⃣ Deterministic Tie-Breaking
+
+Without a unique column in `ORDER BY`, `ROW_NUMBER()` is unstable.
+
+<Code lang="sql" title="Stable vs Unstable Ordering" code={`-- ⚠️ Unstable: If salaries are equal, order is random
+ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC)
+
+-- ✅ Stable: ID breaks ties consistently
+ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC, id ASC)`} />
+
+---
+
+## 4️⃣ Pagination & Batch Processing
+
+While `OFFSET` is common, `ROW_NUMBER()` can help with stable batching, though cursor-based pagination is often faster for deep pages.
+
+<Code lang="sql" title="Assigning batches for parallel processing" code={`-- Divide pending jobs into 4 worker buckets
+SELECT
+  id, payload,
+  ((ROW_NUMBER() OVER (ORDER BY id) - 1) % 4) + 1 AS worker_id
+FROM queue_items
+WHERE status = 'pending';
+
+-- Result:
+-- ID 1 → Worker 1
+-- ID 2 → Worker 2
+-- ID 3 → Worker 3
+-- ID 4 → Worker 4
+-- ID 5 → Worker 1 ...`} />
+
+```sql
+-- Stable pagination using ROW_NUMBER as cursor
+-- (avoids OFFSET's O(n) cost at deep pages)
+
+-- Step 1: assign stable row numbers ordered by criteria
+WITH numbered_products AS (
+  SELECT
+    id, name, price, category, created_at,
+    ROW_NUMBER() OVER (
+      ORDER BY created_at DESC, id DESC   -- stable + deterministic ✅
+    ) AS rn
+  FROM   products
+  WHERE  is_active = true
+    AND  deleted_at IS NULL
+)
+-- Step 2: fetch page (rows 21-40 = page 2 with page_size=20)
+SELECT id, name, price, category
+FROM   numbered_products
+WHERE  rn BETWEEN 21 AND 40
+ORDER BY rn;
+
+-- Alternative: cursor-based (faster — uses index)
+SELECT id, name, price, category, created_at
+FROM   products
+WHERE  is_active = true
+  AND  deleted_at IS NULL
+  AND  (created_at, id) < (:last_created_at, :last_id)  -- cursor ✅
+ORDER BY created_at DESC, id DESC
+LIMIT  20;
+```
+
+```
+ROW_NUMBER pagination vs OFFSET:
+
+OFFSET 1000 LIMIT 20:
+  Fetch 1020 rows, discard 1000, return 20 → O(offset) ❌
+
+ROW_NUMBER BETWEEN 1001 AND 1020:
+  Still needs to number all rows → O(n) ❌
+  Not better than OFFSET for deep pages!
+
+Best: cursor-based (no ROW_NUMBER, no OFFSET):
+  WHERE (created_at, id) < (cursor_values)
+  LIMIT 20
+  → O(log n) with index ✅
+```
+
+> 🎯 **Real-life SDE:** Don't use ROW_NUMBER for pagination thinking it's faster than OFFSET — it still scans all rows to assign numbers. True cursor-based pagination (tuple comparison) is what you want for deep pages.
+
+
+---
+
+## 6️⃣ Finding Latest Record Per Group
+
+```sql
+-- Most recent order per user — the classic "latest N per group"
+
+-- Method 1: ROW_NUMBER (most flexible)
+WITH latest_orders AS (
+  SELECT
+    user_id, id AS order_id, amount, status, created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id
+      ORDER BY created_at DESC, id DESC   -- latest first, id as tiebreaker
+    ) AS rn
+  FROM orders
+  WHERE deleted_at IS NULL
+)
+SELECT user_id, order_id, amount, status, created_at
+FROM   latest_orders
+WHERE  rn = 1;   -- only most recent per user ✅
+
+-- Method 2: DISTINCT ON (Postgres-specific, cleaner for rn=1)
+SELECT DISTINCT ON (user_id)
+  user_id, id AS order_id, amount, status, created_at
+FROM   orders
+WHERE  deleted_at IS NULL
+ORDER BY user_id, created_at DESC, id DESC;
+-- Faster for rn=1 specifically ✅
+
+-- Method 3: LATERAL (fastest with index)
+SELECT u.id, o.order_id, o.amount, o.status, o.created_at
+FROM   users u
+LEFT JOIN LATERAL (
+  SELECT id AS order_id, amount, status, created_at
+  FROM   orders
+  WHERE  user_id   = u.id
+    AND  deleted_at IS NULL
+  ORDER BY created_at DESC, id DESC
+  LIMIT  1
+) o ON true;
+-- Index on (user_id, created_at DESC, id DESC) → O(log n) per user ✅
+```
+
+```
+Performance comparison for "latest 1 per group":
+
+ROW_NUMBER approach:
+  Scan all orders → sort by (user_id, created_at DESC) → filter rn=1
+  O(n log n) — sorts entire table ⚠️
+
+DISTINCT ON:
+  Same execution plan as ROW_NUMBER in most cases
+  Marginally cleaner syntax for rn=1 ✅
+
+LATERAL + LIMIT 1:
+  Per-user index lookup → O(1) per user with good index
+  Best for large orders table ✅
+
+Rule: ROW_NUMBER for top-N (N>1). LATERAL for top-1.
+```
+
+---
+
+## 7️⃣ Assigning Batches / Buckets
+
+```sql
+-- Divide rows into batches for parallel processing
+SELECT
+  id, payload, status,
+  ROW_NUMBER() OVER (ORDER BY id) AS rn,
+  -- Assign to one of 4 worker buckets
+  ((ROW_NUMBER() OVER (ORDER BY id) - 1) % 4) + 1  AS worker_bucket
+FROM queue_items
+WHERE status = 'pending'
+ORDER BY worker_bucket, id;
+
+-- Batch processing: process 10K rows at a time
+WITH batched AS (
+  SELECT
+    id, data,
+    ROW_NUMBER() OVER (ORDER BY id)          AS rn,
+    CEIL(ROW_NUMBER() OVER (ORDER BY id)
+         / 10000.0)::INT                     AS batch_number
+  FROM large_table
+)
+SELECT batch_number, COUNT(*) AS rows_in_batch,
+       MIN(id) AS batch_start_id, MAX(id) AS batch_end_id
+FROM   batched
+GROUP BY batch_number
+ORDER BY batch_number;
+```
+
+---
+
+
+## 5️⃣ Internals & Performance
+
+Postgres executes `ROW_NUMBER()` in two steps:
+1. **Sort**: Orders data by `PARTITION BY` and `ORDER BY` keys.
+2. **Scan**: Iterates through sorted rows, incrementing a counter. Resetting it when the partition key changes.
+
+### 🚀 Optimization: Eliminate the Sort
+If you create an index that matches your `PARTITION BY` and `ORDER BY` columns, Postgres can skip the expensive sort step.
+
+<Code lang="sql" title="Indexing for Window Functions" code={`-- Query:
+SELECT name,
+  ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) AS rn
+FROM employees;
+
+-- Create matching index:
+CREATE INDEX idx_emp_dept_sal ON employees(department, salary DESC);
+
+-- EXPLAIN will now show:
+-- WindowAgg
+--   -> Index Scan using idx_emp_dept_sal  <-- No Sort node! ✅
+-- Instead of:
+-- WindowAgg
+--   -> Sort (department, salary DESC)     <-- Expensive O(N log N) ⚠️`} />
+
+```
+ROW_NUMBER() is implemented as a running counter.
+No need to see all rows before emitting — streams naturally.
+
+Algorithm:
+  Sort rows by (PARTITION BY keys, ORDER BY keys)
+  Scan sorted rows:
+    if partition_key changed → reset counter to 1
+    else → counter++
+    emit (row, counter)
+
+Cost: O(n log n) for sort + O(n) for scan = O(n log n)
+Memory: O(n) for sort if data > work_mem → disk spill
+
+EXPLAIN output:
+  WindowAgg           ← ROW_NUMBER computed here
+    -> Sort           ← sort by PARTITION BY + ORDER BY keys
+         Sort Key: department, salary DESC, id
+         -> Seq Scan on employees
+```
+
+```sql
+-- Optimize: index eliminates sort
+CREATE INDEX idx_emp_dept_salary ON employees(department, salary DESC, id ASC);
+
+EXPLAIN SELECT
+  name,
+  ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC, id ASC) AS rn
+FROM employees;
+
+-- With index:
+-- WindowAgg
+--   -> Index Scan on idx_emp_dept_salary ← no Sort node! ✅
+--        (index already in correct order)
+
+-- Without index:
+-- WindowAgg
+--   -> Sort (department, salary DESC, id)  ← extra sort step ⚠️
+--        -> Seq Scan on employees
+```
+
+```
+Key optimization rule:
+  CREATE INDEX ON table(partition_cols, order_cols)
+  matching exactly the PARTITION BY and ORDER BY inside OVER
+
+  This eliminates the Sort node → O(n) instead of O(n log n)
+  Massive gain for large tables ✅
+```
+
+---
+
+## 6️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Latest Record Per User" icon="clock">
+    ```sql
+    -- Get the most recent order for each user
+    WITH latest_orders AS (
+      SELECT *,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id 
+          ORDER BY created_at DESC
+        ) AS rn
+      FROM orders
+    )
+    SELECT * FROM latest_orders WHERE rn = 1;
+    
+    -- 💡 Tip: For top-1 only, DISTINCT ON or LATERAL JOIN may be faster.
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Cohort Analysis (First Purchase)" icon="chart">
+    ```sql
+    -- Identify each customer's first purchase date
+    WITH first_purchases AS (
+      SELECT user_id, created_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY user_id 
+          ORDER BY created_at ASC
+        ) AS rn
+      FROM orders
+    )
+    SELECT DATE_TRUNC('month', created_at) AS cohort,
+           COUNT(*) AS new_customers
+    FROM first_purchases
+    WHERE rn = 1
+    GROUP BY 1;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: ETL Upsert with Dedup" icon="database">
+    ```sql
+    -- Incoming staging table has duplicates. 
+    -- Keep only the latest version before upserting.
+    WITH clean_source AS (
+      SELECT *,
+        ROW_NUMBER() OVER (
+          PARTITION BY business_key 
+          ORDER BY updated_at DESC
+        ) AS rn
+      FROM staging_table
+    )
+    INSERT INTO main_table (...)
+    SELECT ... FROM clean_source WHERE rn = 1
+    ON CONFLICT (business_key) DO UPDATE ...;
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern 1 — Data Quality: Find and Preview Duplicates
+
+```sql
+-- Find ALL duplicate groups and show which row would be kept
+WITH ranked AS (
+  SELECT
+    id, email, name, phone, created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY email
+      ORDER BY
+        CASE WHEN phone IS NOT NULL THEN 0 ELSE 1 END ASC,  -- prefer rows with phone
+        created_at ASC,                                       -- then oldest
+        id ASC                                                -- then by id ✅
+    ) AS rn,
+    COUNT(*) OVER (PARTITION BY email) AS group_size
+  FROM users
+  WHERE deleted_at IS NULL
+)
+SELECT
+  email,
+  id,
+  name,
+  phone,
+  created_at,
+  rn,
+  group_size,
+  CASE rn WHEN 1 THEN '✅ KEEP' ELSE '❌ DELETE' END AS action
+FROM   ranked
+WHERE  group_size > 1      -- only show groups with duplicates
+ORDER BY email, rn;
+```
+
+### Pattern 2 — Report: First Purchase Per Customer (Cohort Analysis)
+
+```sql
+-- Identify each customer's first purchase for cohort tracking
+WITH first_purchase AS (
+  SELECT
+    user_id,
+    id          AS order_id,
+    amount      AS first_order_value,
+    created_at  AS first_purchase_date,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id
+      ORDER BY created_at ASC, id ASC
+    ) AS purchase_number
+  FROM orders
+  WHERE status = 'delivered'
+)
+SELECT
+  DATE_TRUNC('month', first_purchase_date)::DATE  AS cohort_month,
+  COUNT(DISTINCT user_id)                          AS new_customers,
+  ROUND(AVG(first_order_value), 0)                 AS avg_first_order_value,
+  SUM(first_order_value)                           AS cohort_revenue
+FROM   first_purchase
+WHERE  purchase_number = 1    -- only first purchase per user ✅
+GROUP BY cohort_month
+ORDER BY cohort_month;
+```
+
+### Pattern 3 — Upsert with Dedup (ETL Pipeline)
+
+```sql
+-- ETL: incoming data has duplicates by business key
+-- Keep only latest version of each record
+
+WITH source_ranked AS (
+  SELECT
+    business_key,
+    name, amount, status, event_timestamp,
+    ROW_NUMBER() OVER (
+      PARTITION BY business_key
+      ORDER BY event_timestamp DESC    -- latest version wins
+    ) AS rn
+  FROM staging_events
+)
+INSERT INTO events (business_key, name, amount, status, event_timestamp)
+SELECT business_key, name, amount, status, event_timestamp
+FROM   source_ranked
+WHERE  rn = 1                          -- deduplicated ✅
+ON CONFLICT (business_key)
+DO UPDATE SET
+  name            = EXCLUDED.name,
+  amount          = EXCLUDED.amount,
+  status          = EXCLUDED.status,
+  event_timestamp = EXCLUDED.event_timestamp
+WHERE events.event_timestamp < EXCLUDED.event_timestamp; -- only update if newer
+```
+
+### Pattern 4 — Running Balance with Reset Per Account
+
+```sql
+-- Ledger: running balance per account, reset per account
+SELECT
+  account_id,
+  transaction_date,
+  description,
+  amount,
+  ROW_NUMBER() OVER (
+    PARTITION BY account_id
+    ORDER BY transaction_date, id
+  )                                          AS txn_number,
+  SUM(amount) OVER (
+    PARTITION BY account_id
+    ORDER BY transaction_date, id
+    ROWS UNBOUNDED PRECEDING
+  )                                          AS running_balance
+FROM transactions
+WHERE account_id = :account_id
+ORDER BY transaction_date, id;
+```
+
+### Pattern 5 — Assign Sequential IDs After Bulk Insert
+
+```sql
+-- After bulk inserting rows without sequential IDs,
+-- assign clean sequential codes
+
+UPDATE products
+SET    product_code = 'PROD-' || LPAD(
+  (ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC))::TEXT,
+  6, '0'
+)
+-- ❌ Can't use window fn in UPDATE directly
+
+-- ✅ Use CTE
+WITH numbered AS (
+  SELECT
+    id,
+    'PROD-' || LPAD(
+      ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC)::TEXT,
+      6, '0'
+    ) AS new_code
+  FROM products
+  WHERE product_code IS NULL
+)
+UPDATE products p
+SET    product_code = n.new_code
+FROM   numbered n
+WHERE  p.id = n.id;
+-- Result: PROD-000001, PROD-000002, ... ✅
+```
+
+### Pattern 6 — Multi-Level Top-N (Nested)
+
+```sql
+-- Top 2 products per category per region
+WITH product_sales AS (
+  SELECT
+    p.region,
+    p.category,
+    p.id          AS product_id,
+    p.name        AS product_name,
+    SUM(oi.amount) AS total_revenue
+  FROM   products    p
+  JOIN   order_items oi ON p.id = oi.product_id
+  JOIN   orders      o  ON oi.order_id = o.id
+  WHERE  o.status     = 'delivered'
+    AND  o.created_at >= DATE_TRUNC('year', NOW())
+  GROUP BY p.region, p.category, p.id, p.name
+),
+ranked AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY region, category         -- per region+category combo
+      ORDER BY total_revenue DESC, product_id ASC
+    ) AS rn
+  FROM product_sales
+)
+SELECT region, category, product_name, total_revenue, rn
+FROM   ranked
+WHERE  rn <= 2          -- top 2 per region+category ✅
+ORDER BY region, category, rn;
+```
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Test your understanding" code={`
+-- Setup
+CREATE TEMP TABLE t_emp (
+  id       INT,
+  name     TEXT,
+  dept     TEXT,
+  salary   INT,
+  hire_dt  DATE
+);
+INSERT INTO t_emp VALUES
+  (1, 'Raj',   'Eng',   120000, '2020-01-15'),
+  (2, 'Priya', 'Eng',   110000, '2021-03-20'),
+  (3, 'Sharma','Eng',   110000, '2019-06-10'),  -- same salary as Priya
+  (4, 'Sam',   'Sales',  85000, '2020-11-05'),
+  (5, 'Ankit', 'Sales',  75000, '2022-02-28'),
+  (6, 'Meera', 'Sales',  75000, '2021-08-15');  -- same salary as Ankit
+
+-- 1. Basic ROW_NUMBER per dept
+SELECT name, dept, salary,
+  ROW_NUMBER() OVER (
+    PARTITION BY dept ORDER BY salary DESC
+  ) AS rn
+FROM t_emp ORDER BY dept, rn;
+-- Eng: Raj=1, one of Priya/Sharma=2, other=3 (tie order undefined!)
+-- Sales: Sam=1, one of Ankit/Meera=2, other=3
+
+-- 2. Deterministic tiebreaker
+SELECT name, dept, salary,
+  ROW_NUMBER() OVER (
+    PARTITION BY dept
+    ORDER BY salary DESC, id ASC    -- id breaks ties deterministically
+  ) AS rn
+FROM t_emp ORDER BY dept, rn;
+-- Eng: Raj=1, Priya=2 (id=2 < 3), Sharma=3 ✅ always consistent
+
+-- 3. ROW_NUMBER vs RANK vs DENSE_RANK (ties visible)
+SELECT name, dept, salary,
+  ROW_NUMBER()  OVER (PARTITION BY dept ORDER BY salary DESC) AS rn,
+  RANK()        OVER (PARTITION BY dept ORDER BY salary DESC) AS rnk,
+  DENSE_RANK()  OVER (PARTITION BY dept ORDER BY salary DESC) AS dense_rnk
+FROM t_emp ORDER BY dept, salary DESC;
+-- Priya/Sharma: rn=2,3  rnk=2,2  dense_rnk=2,2
+-- Next row:     rn=4     rnk=4     dense_rnk=3   ← gap vs no gap ✅
+
+-- 4. Top-N per group (rn <= 2)
+SELECT name, dept, salary
+FROM (
+  SELECT name, dept, salary,
+    ROW_NUMBER() OVER (
+      PARTITION BY dept ORDER BY salary DESC, id ASC
+    ) AS rn
+  FROM t_emp
+) r
+WHERE rn <= 2
+ORDER BY dept, rn;
+-- Eng:   Raj, Priya ✅
+-- Sales: Sam, Meera ✅ (Meera id=6, Ankit id=5 → Ankit actually!)
+-- Wait: Ankit id=5 < Meera id=6 → Ankit gets rn=2 ✅
+
+-- 5. Deduplication (keep lowest id per dept)
+WITH ranked AS (
+  SELECT id, name, dept, salary,
+    ROW_NUMBER() OVER (
+      PARTITION BY dept ORDER BY id ASC   -- keep oldest (lowest id)
+    ) AS rn
+  FROM t_emp
+)
+SELECT id, name, dept, salary
+FROM   ranked WHERE rn = 1;
+-- Raj (Eng), Sam (Sales) ✅
+
+-- 6. Global numbering (no partition)
+SELECT name, salary,
+  ROW_NUMBER() OVER (ORDER BY salary DESC, id ASC) AS global_rn
+FROM t_emp;
+-- 1=Raj(120K), 2=Sharma(115K... wait Sharma=110K)
+-- Let's check: Raj=120K, then 110Ks: Priya(id=2), Sharma(id=3)
+-- 1=Raj, 2=Priya, 3=Sharma, 4=Sam, 5=Ankit, 6=Meera ✅
+
+-- 7. EXPLAIN: see Sort node
+EXPLAIN SELECT name,
+  ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC, id ASC)
+FROM t_emp;
+-- WindowAgg → Sort(dept, salary DESC, id ASC) → Seq Scan ✅
+
+-- 8. Add index to eliminate sort
+CREATE INDEX idx_t_emp_dept_sal ON t_emp(dept, salary DESC, id ASC);
+EXPLAIN SELECT name,
+  ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC, id ASC)
+FROM t_emp;
+-- WindowAgg → Index Scan on idx_t_emp_dept_sal ← no Sort! ✅
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 
+Alice, Math, 90, rn=1
+Alice, Math, 90, rn=2  <-- Arbitrary! Could be swapped.
+Bob,   Math, 85, rn=3
+
+Q2: 
+ROW_NUMBER() OVER (
+  PARTITION BY subject 
+  ORDER BY score DESC, student ASC
+)
+```
+</details>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| ROW_NUMBER vs RANK vs DENSE_RANK for ties? | ROW_NUMBER: always unique (tie-order arbitrary). RANK: ties same, gap after. DENSE_RANK: ties same, no gap |
+| ROW_NUMBER deterministic with ties? | No — add unique column (id) as final ORDER BY tiebreaker |
+| Can ROW_NUMBER appear in WHERE? | No — window fns run after WHERE. Wrap in subquery or CTE, then filter |
+| Top-N per group pattern? | `ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY rank_col)` → filter `WHERE rn <= N` |
+| Best for top-1 per group? | DISTINCT ON (cleaner) or LATERAL + LIMIT 1 (fastest with index) |
+| ROW_NUMBER for pagination? | Don't — still O(n). Use cursor-based pagination (tuple comparison) instead |
+| ROW_NUMBER for deduplication? | `PARTITION BY duplicate_key ORDER BY keep_criteria` → `WHERE rn = 1` |
+| What does PARTITION BY do? | Restarts counter at 1 for each new partition value |
+| No PARTITION BY? | Numbers all rows globally 1 through N |
+| Index for ROW_NUMBER? | `CREATE INDEX ON table(partition_cols, order_cols)` → eliminates Sort node |
+| EXPLAIN signal? | `WindowAgg → Sort → Seq Scan`. With index: `WindowAgg → Index Scan` (no Sort!) |
+| ROW_NUMBER without ORDER BY? | Valid but non-deterministic — order is arbitrary without ORDER BY |
+| Counter mechanism? | Running counter reset per partition, increments per row — O(n) after sort |
+| Multiple ROW_NUMBERs in one query? | Valid — each OVER defines independent numbering. Same PARTITION+ORDER → shared sort |
+
+---
+
+## 🧠 Full Mental Model
+
+```text
+ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)
+
+Properties (always true):
+  ✅ Always unique within partition — no ties ever
+  ✅ Always sequential — no gaps ever (1,2,3,4...)
+  ✅ Restarts at 1 per partition
+  ⚠️ Tie order = arbitrary unless you add a tiebreaker to ORDER BY
+
+Algorithm:
+  1. Sort rows by (PARTITION BY cols, ORDER BY cols)  O(n log n)
+  2. Scan sorted rows:                                O(n)
+     partition changed? → reset counter = 1
+     else              → counter++
+     emit (row, counter)
+
+vs RANK/DENSE_RANK with ties:
+  values: 100, 90, 90, 80
+  ROW_NUMBER:  1,  2,  3,  4  ← always unique, tie-order arbitrary
+  RANK:        1,  2,  2,  4  ← ties same rank, gap after tie
+  DENSE_RANK:  1,  2,  2,  3  ← ties same rank, no gap
+
+Top-3 use cases:
+  1. Top-N per group:
+     PARTITION BY group, ORDER BY metric → WHERE rn <= N
+
+  2. Deduplication:
+     PARTITION BY dup_key, ORDER BY keep_criteria → WHERE rn = 1
+
+  3. Assign sequential positions:
+     PARTITION BY group, ORDER BY sequence → use rn value directly
+
+Performance:
+  Create index on (partition_cols, order_cols)
+  → Eliminates Sort node
+  → O(n) scan instead of O(n log n) sort ✅
+
+WHERE restriction:
+  Window fns execute after WHERE
+  Filter on rn → must wrap in subquery or CTE:
+
+  WITH ranked AS (
+    SELECT *, ROW_NUMBER() OVER (...) AS rn
+    FROM table
+  )
+  SELECT * FROM ranked WHERE rn <= N;
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always add a tiebreaker (`id ASC`) to `ORDER BY` for stability.
+2. ✅ Use CTEs to filter on `ROW_NUMBER` results.
+3. ✅ Create composite indexes to speed up large window operations.
+4. ✅ Prefer `DISTINCT ON` or `LATERAL` joins for simple "Top-1" lookups if performance is critical.
+</Aside>

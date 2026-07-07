@@ -1,0 +1,1346 @@
+---
+title: React VS ReactDOM
+slug: react/fundamental/react-vs-reactdom
+tags: ["react", "javascript", "frontend", "components", "react-architecture"]
+---
+
+# 📦 React vs ReactDOM — Why Two Packages?
+
+---
+
+## The Surprising Truth
+
+Most beginners think:
+
+```
+React = the thing that renders to the browser
+```
+
+That's wrong. React has **no idea what a browser is.**
+
+```
+React     = knows how to THINK about UI (Understands components, state, hooks, reconciliation, Fiber,schedule) = Brain 🧠
+ReactDOM  = knows how to TALK to the browser DOM = Hands 🖐️
+```
+
+They are separated by design. Deliberately. For a very good reason.
+
+---
+
+## The Problem React Solves
+
+Imagine React looked like this:
+
+```text
+React
+ ├── DOM
+ ├── Mobile
+ ├── Desktop
+ ├── VR
+ ├── Smart TV
+ └── Game Console
+```
+
+React would become huge.
+
+Instead React uses a separation:
+
+```text
+React
+     ↓
+Renderer
+     ↓
+Platform
+
+Architecture:
+            React
+               │
+     ┌─────────┼─────────┐
+     │         │         │
+     ▼         ▼         ▼
+ ReactDOM   ReactNative  ReactThreeFiber
+     │
+ Browser DOM
+```
+
+This architecture allows React to work everywhere.
+
+---
+
+## 📦 The Two Packages — Exactly What Each Does
+
+### `react` — The Core
+
+```
+npm install react
+```
+
+```
+What react contains:
+  ├── Component model        → what a component IS
+  ├── Element creation       → React.createElement / JSX runtime
+  ├── Hooks engine           → useState, useEffect, useMemo...
+  ├── Reconciler             → diffing algorithm, fiber tree
+  ├── Scheduler              → priority queue, work loop
+  ├── Context API            → createContext
+  └── Suspense / Transitions → concurrent features
+
+What react does NOT contain:
+  ├── No DOM APIs
+  ├── No window / document
+  ├── No browser events
+  ├── No CSS
+  └── No platform-specific anything
+```
+
+`react` is **100% platform-agnostic.**  
+You could run it in Node.js, a game engine, a PDF renderer — it doesn't care.
+
+---
+
+### `react-dom` — The Browser Renderer
+
+```
+npm install react-dom
+```
+
+```
+What react-dom contains:
+  ├── createRoot             → mounts React into a real DOM node
+  ├── render (legacy)        → React 16/17 mounting API
+  ├── hydrateRoot            → SSR hydration
+  ├── flushSync              → force synchronous render
+  ├── findDOMNode (legacy)   → escape hatch to real DOM node
+  ├── createPortal           → render outside component tree
+  └── react-dom/server       → SSR (renderToString, renderToPipe)
+
+What react-dom knows:
+  ├── Real DOM API calls     → document.createElement
+  ├── Event delegation       → attaches listeners to root
+  ├── Style application      → el.style.color = 'red'
+  ├── Attribute diffing      → el.setAttribute / removeAttribute
+  └── Text node updates      → textNode.data = 'new value'
+```
+
+`react-dom` is the **bridge** between React's abstract description and the browser's concrete DOM.
+
+---
+
+## 🏗️ The Architecture — Visualized
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        YOUR CODE                             │
+│           function App() { return <div>...</div> }           │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ JSX → React Elements
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│                    react (core)                              │
+│                                                              │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│   │  Reconciler  │  │  Scheduler   │  │   Hooks Engine   │   │
+│   │              │  │              │  │                  │   │
+│   │  Fiber tree  │  │  Work queue  │  │  useState        │   │
+│   │  Diffing     │  │  Priorities  │  │  useEffect       │   │
+│   │  Work units  │  │  Time slice  │  │  useMemo...      │   │
+│   └──────┬───────┘  └──────────────┘  └──────────────────┘   │
+│          │                                                   │
+│          │ "here are the changes needed"                     │
+│          │ (abstract mutation instructions)                  │
+└──────────┼───────────────────────────────────────────────────┘
+           │
+     React hands off
+     to renderer
+           │
+    ┌──────┴───────────────────────────────────────┐
+    │                                              │
+    ↓                ↓                  ↓          ↓
+┌────────┐    ┌─────────────┐   ┌────────────┐  ┌──────┐
+│react-  │    │react-native │   │react-three │  │react │
+│dom     │    │             │   │-fiber      │  │-pdf  │
+│        │    │             │   │            │  │      │
+│Browser │    │iOS/Android  │   │WebGL/Three │  │PDF   │
+│DOM API │    │Native Views │   │.js canvas  │  │Docs  │
+└────────┘    └─────────────┘   └────────────┘  └──────┘
+```
+
+**One reconciler. Many renderers.**  
+The reconciler computes *what changed.*  
+The renderer *applies* those changes to a specific output target.
+
+---
+
+## 🔌 The Renderer Contract — How They Connect
+
+React core communicates with renderers through a **host config interface.**  
+Every renderer implements the same set of methods:
+
+```js
+// What every renderer must implement (simplified):
+const HostConfig = {
+
+  // Create a new element
+  createInstance(type, props) {
+    // react-dom:      document.createElement(type)
+    // react-native:   new View() / new Text()
+    // react-pdf:      new PDFElement(type)
+  },
+
+  // Create a text node
+  createTextInstance(text) {
+    // react-dom:      document.createTextNode(text)
+    // react-native:   new RawText(text)
+  },
+
+  // Add child to parent
+  appendChild(parent, child) {
+    // react-dom:      parent.appendChild(child)
+    // react-native:   parent.addChild(child)
+  },
+
+  // Update element properties
+  commitUpdate(instance, oldProps, newProps) {
+    // react-dom:      instance.setAttribute / style update
+    // react-native:   bridge message to native thread
+  },
+
+  // Remove element
+  removeChild(parent, child) {
+    // react-dom:      parent.removeChild(child)
+    // react-native:   parent.removeChild(child)
+  }
+};
+```
+
+React core calls these methods. It doesn't care what they do internally.  
+`react-dom` implements them with browser DOM APIs.  
+`react-native` implements them with native UI bridge calls.
+
+This is the **strategy pattern** in software architecture applied at framework scale.
+
+---
+
+## 🌍 All Major Renderers — The Full Picture
+
+```
+┌─────────────────┬────────────────────────┬───────────────────┐
+│ Renderer        │ Output Target          │ Created By        │
+├─────────────────┼────────────────────────┼───────────────────┤
+│ react-dom       │ Browser DOM            │ Meta (official)   │
+│ react-native    │ iOS / Android native   │ Meta (official)   │
+│ react-dom/server│ HTML string (SSR)      │ Meta (official)   │
+│ react-three-    │ WebGL / Three.js scene │ Community         │
+│ fiber           │                        │                   │
+│ react-pdf       │ PDF document           │ Community         │
+│ react-ink       │ Terminal (CLI)         │ Community         │
+│ react-figma     │ Figma design tool      │ Community         │
+│ react-canvas    │ Canvas 2D              │ Community         │
+│ react-blessed   │ Terminal UI (blessed)  │ Community         │
+│ react-email     │ HTML Email             │ Community         │
+└─────────────────┴────────────────────────┴───────────────────┘
+```
+
+Your `useState`, `useEffect`, `useContext` — same API, same behavior, across **all** of these.  
+Because they're in `react`, not in the renderer.
+
+---
+
+## 📍 react-dom Specifically — Entry Points
+
+`react-dom` is not one thing. It has multiple entry points:
+
+```
+react-dom
+  ├── react-dom          → client-side APIs (createRoot, createPortal)
+  ├── react-dom/client   → explicit client entry (React 18+)
+  ├── react-dom/server   → server-side rendering APIs
+  └── react-dom/test-utils → testing utilities (being deprecated)
+```
+
+### Client Entry — React 18
+
+```jsx
+// react-dom/client — React 18 standard
+import { createRoot } from 'react-dom/client';
+import App from './App';
+
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
+
+// What createRoot does:
+// 1. Creates a FiberRoot — the top of the fiber tree
+// 2. Attaches React's event delegation to this DOM node
+// 3. Returns a root object with .render() and .unmount()
+// 4. Opts into concurrent mode automatically
+```
+
+### Server Entry — SSR
+
+```jsx
+// react-dom/server — renders to HTML string (no browser needed)
+import { renderToString } from 'react-dom/server';
+import App from './App';
+
+const html = renderToString(<App />);
+// Returns: '<div class="app"><h1>Hello</h1></div>'
+// No real DOM involved. No browser. Pure string generation.
+// Used in Next.js, Remix, Express SSR setups
+```
+
+```jsx
+// React 18 streaming SSR
+import { renderToPipeableStream } from 'react-dom/server';
+
+const { pipe } = renderToPipeableStream(<App />, {
+  onShellReady() {
+    pipe(res); // streams HTML chunks as they're ready
+  }
+});
+// Enables progressive hydration — page loads faster
+```
+
+---
+
+## 🆚 React 16/17 vs React 18 — The Mounting API Changed
+
+```jsx
+// ❌ React 16/17 — legacy render (still works, but deprecated)
+import ReactDOM from 'react-dom';
+
+ReactDOM.render(<App />, document.getElementById('root'));
+// Problems:
+// 1. Synchronous — blocks the browser
+// 2. No concurrent mode
+// 3. Single root, no .unmount() API
+// 4. Shows deprecation warning in React 18
+
+// ✅ React 18 — createRoot
+import { createRoot } from 'react-dom/client';
+
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
+// Benefits:
+// 1. Concurrent mode enabled automatically
+// 2. Automatic batching active
+// 3. Supports useTransition, useDeferredValue
+// 4. .unmount() API for cleanup
+// 5. Async rendering — doesn't block browser
+```
+
+---
+
+## 🪟 createPortal — Rendering Outside the Tree
+
+This is one of the most useful `react-dom` features:
+
+```jsx
+import { createPortal } from 'react-dom';
+
+function Modal({ children, isOpen }) {
+  if (!isOpen) return null;
+
+  // Renders children into document.body
+  // NOT into the component's DOM parent
+  return createPortal(
+    <div className="modal-overlay">
+      <div className="modal-content">
+        {children}
+      </div>
+    </div>,
+    document.body  // ← target DOM node
+  );
+}
+```
+
+```
+Component tree:                    Real DOM:
+
+<App>                              <body>
+  <Header />                         <div id="root">
+  <ProductPage>                        <header>...</header>
+    <Modal />  ← defined here          <main>...</main>
+  </ProductPage>                     </div>
+  <Footer />                         <div class="modal-overlay">
+</App>                                 ← rendered HERE by portal
+                                     </div>
+                                   </body>
+
+Event bubbling follows REACT TREE not DOM tree.
+Clicking inside modal → events bubble up through React component tree.
+This is critical for click-outside-to-close patterns.
+```
+
+**Why this exists:**  
+Modals, tooltips, dropdowns need to escape CSS `overflow: hidden` or `z-index` stacking contexts. Portal lets the component live in the React tree (for state/context access) while rendering anywhere in the real DOM.
+
+---
+
+## ⚡ flushSync — Force Synchronous Rendering
+
+```jsx
+import { flushSync } from 'react-dom';
+
+function handlePrint() {
+  // React 18 batches state updates asynchronously by default
+  // flushSync forces immediate synchronous DOM update
+
+  flushSync(() => {
+    setPrintMode(true); // DOM updated synchronously before next line
+  });
+
+  window.print(); // DOM is guaranteed updated here
+  // Without flushSync → print might capture old DOM
+}
+```
+
+**When you actually need this:**
+- Third-party libraries that need DOM to be updated immediately
+- Measuring DOM after a state change in the same event
+- Integration with non-React animation libraries
+
+> ⚠️ Use sparingly. It opts out of concurrent mode benefits for that update.
+
+---
+
+## 🔗 DSA / Internals Connection
+
+The react / react-dom split is the **Facade + Strategy pattern** applied at architecture level:
+
+```
+react (core) = the ALGORITHM
+  - Fiber = linked list work units
+  - Reconciler = tree diffing algorithm
+  - Scheduler = priority queue / work-stealing
+
+react-dom = the EXECUTION ENVIRONMENT
+  - Implements the host config interface
+  - Translates abstract "create node" → real DOM API call
+  - Manages the actual memory of DOM nodes
+
+This split = dependency inversion principle
+  High-level policy (reconciliation) doesn't depend on low-level details (DOM)
+  Low-level details (DOM) depend on the abstraction (host config)
+```
+
+Same architecture as:
+
+```
+Java's JDBC = react (core interface)
+MySQL Driver = react-dom (concrete implementation)
+
+Write SQL once → swap database → same query works
+Write React once → swap renderer → same components work
+```
+
+---
+
+## 🏭 Production Relevance — MUST KNOW
+
+### Why this split matters at your job:
+
+**Scenario 1: SSR (Server-Side Rendering)**
+
+```jsx
+// Server (Node.js) — only react + react-dom/server
+// No browser, no window, no document
+import { renderToPipeableStream } from 'react-dom/server';
+
+// ❌ This crashes on server — window doesn't exist
+useEffect(() => {
+  window.addEventListener('scroll', handler); // window = undefined on server
+});
+
+// ✅ useEffect never runs on server — safe
+// react-dom/server skips useEffect entirely
+```
+
+**Scenario 2: React Native Codebase**
+
+```jsx
+// react-native app — react installed, react-dom NOT installed
+// But all your hooks work identically:
+import { useState, useEffect, useContext } from 'react'; // ✅ same package
+import { View, Text } from 'react-native'; // ← renderer-specific components
+
+function UserCard({ name }) {
+  const [expanded, setExpanded] = useState(false); // ✅ works
+  return (
+    <View>
+      <Text>{name}</Text>  {/* not <div> and <p> — renderer-specific */}
+    </View>
+  );
+}
+```
+
+**Scenario 3: Testing**
+
+```jsx
+// Tests use react + @testing-library/react (which wraps react-dom)
+// @testing-library/react uses jsdom — a fake DOM
+// Same react core, different "renderer" (jsdom vs real browser DOM)
+// Your component code doesn't change at all
+```
+
+**Scenario 4: Upgrading React**
+
+```
+You might need to upgrade react + react-dom together
+They must always be the same version — mismatching causes subtle errors
+
+// package.json
+"react": "^18.3.1",
+"react-dom": "^18.3.1"  // must match react version
+```
+
+---
+
+## ⚠️ Silent Bugs & Failure Cases
+
+### Bug 1: Version mismatch
+
+```
+// ❌ Mismatched versions
+"react": "^18.3.1",
+"react-dom": "^17.0.2"
+
+// Result: cryptic runtime errors
+// "Invalid hook call" errors
+// Multiple React instances warning
+```
+
+### Bug 2: Multiple React instances
+
+```
+// Happens in monorepos or when a library bundles its own React
+
+Your app: node_modules/react (18.3.1)
+Your lib:  node_modules/some-lib/node_modules/react (18.2.0)
+
+// Two separate React instances = two separate hook storages
+// Hooks called in some-lib's components fail
+// Error: "Invalid hook call. Hooks can only be called inside a function component"
+// Fix: deduplicate React via webpack alias or peerDependencies
+```
+
+### Bug 3: Using window in SSR without guard
+
+```jsx
+// ❌ Crashes during SSR — window not defined
+function Analytics() {
+  useEffect(() => {
+    // this is fine — useEffect doesn't run on server
+    window.gtag('event', 'page_view');
+  }, []);
+
+  // ❌ But this runs during server render:
+  const width = window.innerWidth; // ReferenceError: window is not defined
+
+  // ✅ Guard it
+  const width = typeof window !== 'undefined' ? window.innerWidth : 0;
+}
+```
+
+### Bug 4: Calling ReactDOM.render in React 18
+
+```jsx
+// ❌ React 18 with legacy render
+ReactDOM.render(<App />, document.getElementById('root'));
+// Warning: ReactDOM.render is no longer supported in React 18
+// Concurrent features silently disabled
+// Automatic batching does NOT activate
+// App works but you lose all React 18 benefits
+
+// ✅ Always use createRoot in React 18
+createRoot(document.getElementById('root')).render(<App />);
+```
+
+---
+
+## 🎤 Interview Section
+
+### Common Questions
+
+**Q: Why are `react` and `react-dom` separate packages?**
+> *"To separate concerns at the architecture level. `react` contains the reconciler, scheduler, and hooks engine — platform-agnostic logic that computes what changed. `react-dom` is a renderer that takes those changes and applies them to the browser DOM. This split means the same React reconciler powers React Native, react-pdf, react-three-fiber — just with different renderers implementing the same host config interface."*
+
+---
+
+**Q: What does `createRoot` do?**
+> *"It creates a React root — a FiberRoot that sits at the top of the fiber tree. It attaches React's synthetic event delegation to the container DOM node, opts the entire tree into concurrent mode, and returns an object with `.render()` and `.unmount()`. It replaces the legacy `ReactDOM.render()` which was synchronous and didn't support concurrent features."*
+
+---
+
+**Q: What is `createPortal`?**
+> *"It renders children into a different DOM node than the component's parent, while keeping the component in its logical position in the React tree. Event bubbling follows the React tree — not the DOM tree. Used for modals, tooltips, and dropdowns that need to escape CSS stacking contexts or `overflow: hidden`."*
+
+---
+
+### Senior-Level Questions
+
+**Q: How does React Native use the same hooks as react-dom?**
+> *"Because hooks live in the `react` package — not in `react-dom`. The hooks engine is part of the reconciler, which is renderer-agnostic. React Native installs `react` (same package) and its own renderer that implements the host config interface with native bridge calls instead of DOM APIs. Your `useState` call in a React Native component goes through the exact same hook storage mechanism as in a browser app."*
+
+---
+
+**Q: What breaks when you have two React instances in one app?**
+> *"Each React instance has its own hook storage. When a component rendered by instance A calls a hook, React looks up the hook in instance A's fiber tree. But if the component was rendered by instance B, the lookup fails — React can't find the hook in the expected position. This causes the 'Invalid hook call' error. It happens in monorepos where a library ships its own bundled React instead of declaring it as a peer dependency."*
+
+---
+
+**Q: Why does `useEffect` not run during SSR with `react-dom/server`?**
+> *"Because effects are a browser concept — they run after paint, access DOM, set up event listeners. None of that is meaningful on a server generating an HTML string. `react-dom/server`'s renderer simply skips the effect scheduling phase. The reconciler runs the component functions to get the UI description, the server renderer turns that into HTML strings, and effects are never queued. This is why any browser-only code (window, document) must be inside `useEffect` or guarded with `typeof window !== 'undefined'`."*
+
+---
+
+### ⚠️ Interview Traps
+
+**Trap 1:** *"Does React render to the DOM?"*
+
+Wrong: *"Yes, React renders to the DOM."*  
+Correct: *"React core doesn't render to anything. `react-dom` renders to the browser DOM. React itself only computes what the UI should be — the renderer decides what to do with that computation."*
+
+---
+
+**Trap 2:** *"If I use `createRoot`, does my app automatically get all React 18 features?"*
+
+Wrong: *"Yes, just use createRoot."*  
+Correct: *"createRoot is the prerequisite. But individual concurrent features require explicit opt-in. `useTransition` and `useDeferredValue` must be used where you want concurrent behavior. Automatic batching activates globally with createRoot. But Suspense for data fetching requires integration with a data fetching library that supports it."*
+
+---
+
+**Trap 3:** *"Can I use `react-dom` APIs inside a React Native app?"*
+
+Wrong: *"Yes, they're both React."*  
+Correct: *"No. `react-dom` is specifically the browser renderer — it calls `document.createElement` and other browser APIs that don't exist in React Native. React Native has its own renderer. You can only use APIs from the `react` package (hooks, context, createElement) in cross-platform code."*
+
+---
+
+
+# React vs ReactDOM ⚛️
+
+One of the most important beginner questions:
+
+> Why do we install both `react` and `react-dom`?
+
+```bash
+npm install react react-dom
+```
+
+Why not just one package?
+
+---
+
+# Short Answer
+
+React and ReactDOM have different responsibilities.
+
+| Package  | Responsibility                                              |
+| -------- | ----------------------------------------------------------- |
+| React    | Understands components, state, hooks, reconciliation, Fiber |
+| ReactDOM | Talks to the browser DOM                                    |
+
+Think of it as:
+
+```text
+React     = Brain 🧠
+ReactDOM  = Hands 🖐️
+```
+
+React decides **what should happen**.
+
+ReactDOM performs **the actual DOM updates**.
+
+---
+
+# The Problem React Solves
+
+Imagine React looked like this:
+
+```text
+React
+ ├── DOM
+ ├── Mobile
+ ├── Desktop
+ ├── VR
+ ├── Smart TV
+ └── Game Console
+```
+
+React would become huge.
+
+Instead React uses a separation:
+
+```text
+React
+     ↓
+Renderer
+     ↓
+Platform
+```
+
+---
+
+# Architecture
+
+```text
+            React
+               │
+     ┌─────────┼─────────┐
+     │         │         │
+     ▼         ▼         ▼
+ ReactDOM   ReactNative  ReactThreeFiber
+     │
+ Browser DOM
+```
+
+This architecture allows React to work everywhere.
+
+---
+
+# What Is React?
+
+Package:
+
+```bash
+npm install react
+```
+
+React contains:
+
+* JSX runtime
+* Hooks
+* State management
+* Context
+* Reconciliation
+* Fiber
+* Scheduler
+* Element creation
+
+Example:
+
+```jsx
+function Counter() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <button onClick={() => setCount(c => c + 1)}>
+      {count}
+    </button>
+  );
+}
+```
+
+Everything here comes from React.
+
+---
+
+## React Does NOT Touch The DOM
+
+Many developers think:
+
+```text
+setState()
+ ↓
+DOM updates
+```
+
+Actually:
+
+```text
+setState()
+ ↓
+React computes next UI
+ ↓
+ReactDOM updates DOM
+```
+
+React itself never calls:
+
+```js
+document.createElement()
+```
+
+or
+
+```js
+element.appendChild()
+```
+
+ReactDOM does.
+
+---
+
+# What Is ReactDOM?
+
+Package:
+
+```bash
+npm install react-dom
+```
+
+ReactDOM is the renderer for browsers.
+
+Its job:
+
+```text
+React Elements
+      ↓
+Browser DOM
+```
+
+---
+
+Example:
+
+```jsx
+import { createRoot } from "react-dom/client";
+
+createRoot(
+  document.getElementById("root")
+);
+```
+
+Notice:
+
+```jsx
+import { useState } from "react";
+```
+
+and
+
+```jsx
+import { createRoot } from "react-dom/client";
+```
+
+Different packages.
+
+Different responsibilities.
+
+---
+
+# Real Flow
+
+Suppose:
+
+```jsx
+function App() {
+  return <h1>Hello</h1>;
+}
+```
+
+---
+
+### Step 1
+
+JSX becomes:
+
+```js
+jsx("h1", {
+  children: "Hello"
+});
+```
+
+React creates:
+
+```js
+{
+  type: "h1",
+  props: {
+    children: "Hello"
+  }
+}
+```
+
+---
+
+### Step 2
+
+React builds Fiber tree.
+
+```text
+React
+  ↓
+Fiber Nodes
+```
+
+---
+
+### Step 3
+
+ReactDOM receives changes.
+
+```text
+Fiber Changes
+      ↓
+ReactDOM
+```
+
+---
+
+### Step 4
+
+ReactDOM executes DOM operations.
+
+```js
+document.createElement("h1");
+```
+
+```js
+parent.appendChild(child);
+```
+
+```js
+node.textContent = "Hello";
+```
+
+Browser finally updates.
+
+---
+
+# Complete Architecture
+
+```text
+Your Component
+       │
+       ▼
+      JSX
+       │
+       ▼
+ React Elements
+       │
+       ▼
+    Fiber Tree
+       │
+       ▼
+ Reconciliation
+       │
+       ▼
+    ReactDOM
+       │
+       ▼
+ Browser DOM
+       │
+       ▼
+      Paint
+```
+
+---
+
+# Why Split Them?
+
+Because React is platform-agnostic.
+
+React doesn't care whether it renders:
+
+* Browser
+* Android
+* iOS
+* VR
+* Canvas
+* CLI
+
+It only produces UI descriptions.
+
+Renderer decides how to display them.
+
+---
+
+# Example: React Native
+
+React Native uses:
+
+```bash
+npm install react
+```
+
+but NOT:
+
+```bash
+npm install react-dom
+```
+
+Instead:
+
+```text
+React
+   ↓
+React Native Renderer
+   ↓
+Native UI Components
+```
+
+---
+
+Architecture:
+
+```text
+React
+   ↓
+React Native
+   ↓
+UIView (iOS)
+TextView (Android)
+Button
+ScrollView
+```
+
+No browser DOM exists.
+
+---
+
+# ReactDOM Responsibilities
+
+ReactDOM handles:
+
+| Feature           | ReactDOM     |
+| ----------------- | ------------ |
+| DOM creation      | ✅            |
+| DOM updates       | ✅            |
+| Event delegation  | ✅            |
+| Hydration         | ✅            |
+| SSR mounting      | ✅            |
+| Browser rendering | ✅            |
+| Hooks             | ❌            |
+| State             | ❌            |
+| Context           | ❌            |
+| Reconciliation    | Mostly React |
+
+---
+
+# React Responsibilities
+
+| Feature        | React |
+| -------------- | ----- |
+| Hooks          | ✅     |
+| Fiber          | ✅     |
+| Scheduler      | ✅     |
+| Context        | ✅     |
+| State          | ✅     |
+| Reconciliation | ✅     |
+| JSX runtime    | ✅     |
+| DOM operations | ❌     |
+
+---
+
+# Deep Dive: Event System
+
+When you write:
+
+```jsx
+<button onClick={handleClick}>
+```
+
+Many think:
+
+```text
+Button
+ ↓
+Direct DOM Listener
+```
+
+Not exactly.
+
+ReactDOM manages a centralized event system.
+
+---
+
+Architecture:
+
+```text
+Document
+   │
+   ▼
+React Event System
+   │
+   ▼
+Synthetic Events
+   │
+   ▼
+Component Handler
+```
+
+This is why React events work consistently across browsers.
+
+---
+
+# Deep Dive: SSR
+
+Server-Side Rendering involves both packages.
+
+---
+
+Server:
+
+```jsx
+import { renderToString }
+from "react-dom/server";
+```
+
+Produces:
+
+```html
+<div>Hello</div>
+```
+
+---
+
+Client:
+
+```jsx
+hydrateRoot(...)
+```
+
+Attaches React to existing HTML.
+
+---
+
+Architecture:
+
+```text
+Server
+  ↓
+HTML
+  ↓
+Browser
+  ↓
+hydrateRoot()
+  ↓
+Interactive App
+```
+
+ReactDOM handles hydration.
+
+---
+
+# React 18 Change
+
+Before:
+
+```jsx
+ReactDOM.render(
+  <App />,
+  root
+);
+```
+
+Legacy API.
+
+---
+
+Now:
+
+```jsx
+import { createRoot }
+from "react-dom/client";
+
+createRoot(root).render(
+  <App />
+);
+```
+
+Why?
+
+Because Concurrent Features require a new root architecture.
+
+We'll cover that later.
+
+---
+
+# DSA / Internals Connection
+
+## React
+
+Underlying structures:
+
+| DSA Concept       | Usage               |
+| ----------------- | ------------------- |
+| Tree              | Component hierarchy |
+| Linked List       | Fiber nodes         |
+| Queue             | State updates       |
+| Priority Queue    | Scheduling          |
+| Diffing Algorithm | Reconciliation      |
+
+---
+
+## ReactDOM
+
+Underlying structures:
+
+| DSA Concept         | Usage          |
+| ------------------- | -------------- |
+| Tree Traversal      | DOM updates    |
+| Event Queue         | Browser events |
+| Mutation Operations | DOM patching   |
+
+---
+
+# Production Relevance 🏭
+
+## MUST KNOW
+
+Many production issues happen because engineers confuse React and ReactDOM.
+
+---
+
+### Bug Example
+
+Wrong import:
+
+```jsx
+import { createRoot } from "react";
+```
+
+Fails.
+
+Correct:
+
+```jsx
+import { createRoot }
+from "react-dom/client";
+```
+
+---
+
+### Bundle Optimization
+
+Understanding separation helps when:
+
+* SSR
+* React Native
+* Microfrontends
+* Custom renderers
+* React Server Components
+
+---
+
+# Custom Renderer (Advanced)
+
+React can render to things other than DOM.
+
+Examples:
+
+| Renderer          | Target   |
+| ----------------- | -------- |
+| ReactDOM          | Browser  |
+| React Native      | Mobile   |
+| React Three Fiber | WebGL    |
+| Ink               | Terminal |
+| React PDF         | PDF      |
+
+---
+
+Architecture:
+
+```text
+React
+  │
+  ├── ReactDOM
+  ├── React Native
+  ├── Ink
+  ├── React PDF
+  └── React Three Fiber
+```
+
+Same React.
+
+Different renderer.
+
+---
+
+# Interview Questions 🎯
+
+### Easy
+
+Why are React and ReactDOM separate packages?
+
+---
+
+### Medium
+
+What does ReactDOM actually do?
+
+---
+
+### Medium
+
+Can React work without ReactDOM?
+
+Answer:
+
+```text
+Yes.
+React Native proves it.
+```
+
+---
+
+### Senior
+
+Why is React called platform-agnostic?
+
+---
+
+### Senior
+
+How would you build a custom renderer?
+
+---
+
+### Senior
+
+What part owns Fiber?
+
+Answer:
+
+```text
+React
+```
+
+Not ReactDOM.
+
+---
+
+# Interview Trap 🚨
+
+Question:
+
+> Does React manipulate the DOM?
+
+Most developers answer:
+
+```text
+Yes
+```
+
+Technically incorrect.
+
+More accurate answer:
+
+> React computes UI changes. ReactDOM performs the actual DOM mutations.
+
+---
+
+# Memory Hook 🧠
+
+```text
+React
+  =
+  Thinking
+
+ReactDOM
+  =
+  Doing
+```
+
+Or:
+
+```text
+React
+   ↓ decides
+ReactDOM
+   ↓ executes
+Browser DOM
+```
+
+**React knows what the UI should look like. ReactDOM knows how to make the browser look that way.**

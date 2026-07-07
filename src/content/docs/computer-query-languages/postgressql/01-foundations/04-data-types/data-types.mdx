@@ -1,0 +1,685 @@
+---
+title: PostgreSQL Data Types & Storage Architecture
+slug: computer-query-languages/postgresql/foundations/data-types
+description: Complete guide to PostgreSQL data types, internal storage layout, MVCC, TOAST, alignment, and performance-critical design decisions.
+sidebar:
+  label: "Types & Storage"
+  badge:
+    text: Internals
+    variant: tip
+tags: [postgresql, data-types, storage, mvcc, toast, performance, interview, internals]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 PostgreSQL Data Types — Complete Guide
+
+> **Choosing the right**
+- data type = less storage + faster queries + fewer bugs.
+- Wrong type = wasted disk + slow indexes + prod disasters.
+
+---
+
+## 🗺️ All Data Types — Quick Reference
+
+```text
+📁 PostgreSQL Data Types
+│
+├── 📁 Numeric
+│   ├── SMALLINT, INTEGER, BIGINT     ← whole numbers
+│   ├── DECIMAL / NUMERIC             ← exact decimals (money)
+│   ├── REAL, DOUBLE PRECISION        ← floating point (science)
+│   └── SERIAL, BIGSERIAL             ← auto-increment IDs
+│
+├── 📁 Text / String
+│   ├── CHAR(n)                       ← fixed length
+│   ├── VARCHAR(n)                    ← variable, max n
+│   └── TEXT                          ← unlimited length
+│
+├── 📁 Boolean
+│   └── BOOLEAN                       ← true / false / null
+│
+├── 📁 Date & Time
+│   ├── DATE, TIME, INTERVAL          ← date, time, duration
+│   ├── TIMESTAMP                     ← date + time (no timezone)
+│   └── TIMESTAMPTZ                   ← date + time + timezone ✅ use this
+│
+├── 📁 Unique Identifier
+│   └── UUID                          ← globally unique ID
+│
+├── 📁 JSON
+│   ├── JSON                          ← stored as text
+│   └── JSONB                         ← stored as binary ✅ use this
+│
+├── 📁 Arrays & Special
+│   ├── INTEGER[], TEXT[]             ← array of any type
+│   ├── BYTEA                         ← raw bytes (files, images)
+│   ├── ENUM                          ← fixed set of values
+│   └── INET / CIDR                   ← IP addresses
+```
+
+---
+
+## 1️⃣ Numeric Types
+
+| Type | Storage | Range | Use Case |
+|------|---------|-------|----------|
+| `SMALLINT` | 2 bytes | -32,768 to 32,767 | Tiny counters, flags |
+| `INTEGER` | 4 bytes | -2.1B to 2.1B | Standard IDs, counts |
+| `BIGINT` | 8 bytes | ±9.2 quintillion | High-volume metrics, distributed IDs |
+| `NUMERIC(p,s)` | variable | exact, user-defined precision | **Money**, financial data |
+| `REAL` | 4 bytes | ~6 decimal digits | Scientific approximations |
+| `DOUBLE PRECISION` | 8 bytes | ~15 decimal digits | High-precision math |
+| `SERIAL` / `BIGSERIAL` | 4 / 8 bytes | auto-increment | Legacy auto-ID (use `GENERATED ALWAYS AS IDENTITY` in modern PG) |
+
+<Code lang="sql" title="Numeric type usage" code={`CREATE TABLE products (
+  id          BIGSERIAL PRIMARY KEY,      -- future-proof auto ID
+  price       NUMERIC(10, 2),             -- exact: 99999999.99 max
+  rating      REAL,                       -- approximate: 4.5 ok
+  stock       INTEGER,                    -- standard inventory
+  views       BIGINT                      -- YouTube-scale metrics
+);`} />
+
+<Aside type="caution">
+**⚠️ Critical Interview Trap: Never use `FLOAT`/`REAL` for money!**
+```sql
+SELECT 0.1 + 0.2;
+-- Result: 0.30000000000000004  💀
+
+SELECT 0.1::REAL + 0.2::REAL;
+-- Result: 0.3000000149011612   💀
+
+SELECT 0.1::NUMERIC + 0.2::NUMERIC;
+-- Result: 0.3 ✅
+```
+**Rule**:
+> 🎯 **Interview Q:** *"What type do you use for money?"*
+> **A:** `NUMERIC(12, 2)` — never FLOAT or REAL. Floating point can't represent decimals exactly in binary.
+
+> 🎯 **DSA connection:** `INTEGER` = 32-bit signed int (same as Java `int`). `BIGINT` = 64-bit (same as Java `long`). If your table will exceed 2 billion rows → use `BIGSERIAL` not `SERIAL`.
+</Aside>
+
+---
+
+## 2️⃣ Text / String Types
+
+| Type | Behaviour | When to Use |
+|------|-----------|-------------|
+| `CHAR(n)` | Fixed length. Pads with spaces. | Rare: fixed codes (`CHAR(2)` for country) |
+| `VARCHAR(n)` | Variable. Max `n` chars. Errors if exceeded. | When you **must** enforce DB-level length limit |
+| `TEXT` | Unlimited length. No performance penalty. | **Default choice** for strings, bios, descriptions |
+
+<Code lang="sql" title="String type selection" code={`CREATE TABLE users (
+  country_code  CHAR(2),          -- 'US', 'IN', 'DE' → always 2 chars
+  username      VARCHAR(50),      -- enforce max length at DB level
+  bio           TEXT              -- unlimited, zero performance penalty
+);`} />
+
+<Aside type="tip">
+**🤯 The Big Surprise**: In PostgreSQL, `TEXT` and `VARCHAR` have **ZERO performance difference**. Postgres stores them identically internally. Use `TEXT` for flexibility, `VARCHAR(n)` only when you need a hard constraint.
+</Aside>
+
+---
+
+## 3️⃣ Boolean
+
+<Code lang="sql" title="Boolean usage & querying" code={`CREATE TABLE features (
+    is_active     BOOLEAN DEFAULT true,
+    is_deleted    BOOLEAN DEFAULT false
+);
+
+-- Postgres accepts many true/false forms:
+INSERT INTO features VALUES ('yes', 'no');
+INSERT INTO features VALUES ('on', 'off');
+-- INSERT INTO features VALUES (1, 0);  ← ❌ NOT in Postgres (unlike MySQL)
+
+-- Querying shorthand
+SELECT * FROM features WHERE is_active;       -- = true
+SELECT * FROM features WHERE NOT is_deleted;  -- = false`} />
+
+<Aside type="note">
+**💡 Real-Life Pattern: Soft Deletes**
+```sql
+CREATE INDEX idx_active_features ON features(id) WHERE is_deleted = false;
+```
+Partial index only indexes active rows → smaller index, faster queries for 99% of reads.
+</Aside>
+
+---
+
+## 4️⃣ Date & Time Types
+
+| Type | Storage | Example | Notes |
+|------|---------|---------|-------|
+| `DATE` | 4 bytes | `'2024-01-15'` | No time component |
+| `TIME` | 8 bytes | `'14:30:00'` | No date component |
+| `TIMESTAMP` | 8 bytes | `'2024-01-15 14:30:00'` | **No timezone awareness** ⚠️ |
+| `TIMESTAMPTZ` | 8 bytes | `'2024-01-15 14:30:00+05:30'` | Converts to UTC on store ✅ **Always use** |
+| `INTERVAL` | 16 bytes | `'2 hours'`, `'30 days'` | Durations, age calculations |
+
+<Code lang="sql" title="Temporal functions & best practices" code={`
+CREATE TABLE orders (
+    id            BIGSERIAL PRIMARY KEY,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),    -- ✅ Always TIMESTAMPTZ
+    delivery_date DATE,
+    expires_in    INTERVAL
+);
+
+-- Useful functions
+SELECT AGE(created_at) FROM orders;                   -- interval since creation
+SELECT created_at + INTERVAL '7 days' FROM orders;    -- add duration
+SELECT DATE_TRUNC('month', created_at) AS month,      -- group by month
+       COUNT(*) AS orders
+FROM orders
+GROUP BY 1;`} />
+
+<Aside type="danger">
+**⚠️ TIMESTAMP vs TIMESTAMPTZ**
+- `TIMESTAMP`: Stores as-is. If server timezone changes, data means wrong time. 💀
+- `TIMESTAMPTZ`: Converts to UTC on write, converts back on read. Consistent across servers/timezones. ✅
+**Rule**: Always use `TIMESTAMPTZ` in production. Handle timezone conversion in the application/UI layer.
+</Aside>
+
+---
+
+## 5️⃣ UUID vs SERIAL
+
+<CardGrid>
+  <Card title="SERIAL / BIGSERIAL" icon="information">
+    ```sql
+    id SERIAL PRIMARY KEY
+    -- Output: 1, 2, 3, 4...
+    ```
+    ✅ Sequential, 4/8 bytes, fast B-Tree index<br/>
+    ⚠️ Predictable, single-DB only, security risk if exposed
+  </Card>
+  
+  <Card title="UUID" icon="shield">
+    ```sql
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+    -- Output: a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+    ```
+    ✅ Globally unique, distributed-friendly, secure<br/>
+    ⚠️ 16 bytes, larger indexes, slightly slower inserts
+  </Card>
+</CardGrid>
+
+<Code lang="sql" title="Enable UUID generation (PG 13+)" code={`-- No extension needed in modern Postgres!
+SELECT gen_random_uuid();
+
+-- For older versions:
+-- CREATE EXTENSION IF NOT EXISTS "pgcrypto";`} />
+
+<Aside type="tip">
+**Interview Answer**: Use `SERIAL`/`BIGSERIAL` for internal IDs. Use `UUID` when IDs are exposed in URLs (security), or in distributed/multi-tenant systems where independent ID generation is required.
+</Aside>
+
+---
+
+## 6️⃣ JSONB — Postgres Superpower
+
+<Code lang="sql" title="JSONB usage & querying" code={`CREATE TABLE products (
+  id        BIGSERIAL PRIMARY KEY,
+  name      TEXT,
+  metadata  JSONB                -- ✅ Always JSONB over JSON
+);
+
+-- Query JSON fields
+SELECT metadata->>'brand' AS brand FROM products;
+SELECT metadata->'specs'->>'ram' AS ram FROM products;
+
+-- Filter & check existence
+SELECT * FROM products WHERE metadata->>'brand' = 'Dell';
+SELECT * FROM products WHERE metadata ? 'brand';
+
+-- Contains operator (great for tags)
+SELECT * FROM products WHERE metadata @> '{"tags": ["sale"]}';
+
+-- GIN index for fast JSONB queries
+CREATE INDEX idx_product_meta ON products USING GIN(metadata);`} />
+
+<table>
+  <thead><tr><th>JSON</th><th>JSONB</th></tr></thead>
+  <tbody>
+    <tr><td>Stored as text</td><td>Stored as binary ✅</td></tr>
+    <tr><td>Preserves key order & whitespace</td><td>Normalizes & sorts keys</td></tr>
+    <tr><td>Slower to query, no indexing</td><td>Faster queries, GIN index support ✅</td></tr>
+  </tbody>
+</table>
+
+<Aside type="note">
+**Real-World SDE**: Use `JSONB` for semi-structured data: product attributes, user preferences, feature flags, event payloads. It's Postgres's answer to document stores, with full ACID guarantees.
+</Aside>
+
+---
+
+## 7️⃣ Arrays & ENUM
+
+<Code lang="sql" title="Array usage" code={`CREATE TABLE posts (
+  id    BIGSERIAL PRIMARY KEY,
+  tags  TEXT[],           -- array of text
+  scores INTEGER[]
+);
+
+-- Query: contains element
+SELECT * FROM posts WHERE 'sql' = ANY(tags);
+
+-- Array index (1-based in Postgres!)
+SELECT tags[1] FROM posts;
+
+-- Flatten to rows (UNNEST)
+SELECT id, UNNEST(tags) AS tag FROM posts;`} />
+
+<Code lang="sql" title="ENUM usage" code={`CREATE TYPE order_status AS ENUM ('pending', 'processing', 'shipped', 'delivered', 'cancelled');
+
+CREATE TABLE orders (
+  id     BIGSERIAL PRIMARY KEY,
+  status order_status DEFAULT 'pending'
+);
+
+-- INSERT INTO orders (status) VALUES ('flying');  ← ❌ ERROR: invalid input
+
+-- ENUM vs TEXT + CHECK
+-- ENUM: strict, 4-byte storage, self-documenting, harder to ALTER
+-- TEXT + CHECK: flexible, easy to modify, slightly larger storage`} />
+
+---
+
+## 🧠 Type Selection Decision Tree
+
+```text
+What are you storing?
+│
+├── Whole number?
+│   ├── Small (< 32K)     → SMALLINT
+│   ├── Normal            → INTEGER
+│   └── Very large / ID   → BIGINT / BIGSERIAL
+│
+├── Decimal?
+│   ├── Money / exact     → NUMERIC(p, s)
+│   └── Science / approx  → DOUBLE PRECISION
+│
+├── Text?
+│   ├── Fixed length      → CHAR(n)
+│   ├── Max length needed → VARCHAR(n)
+│   └── Anything else     → TEXT ✅
+│
+├── True/False            → BOOLEAN
+├── Date/Time             → TIMESTAMPTZ ✅ (always)
+├── Duration              → INTERVAL
+├── Unique ID?
+│   ├── Simple / internal → SERIAL / BIGSERIAL
+│   └── Public / distributed → UUID
+├── Semi-structured?      → JSONB
+├── Multiple values?      → ARRAY (simple) or junction table (relational)
+└── Fixed set of values?  → ENUM (stable) or TEXT + CHECK (flexible)
+```
+
+---
+
+# 🏗️ Storage Architecture — How PostgreSQL Actually Stores Types
+
+> **Postgres stores everything in 8KB pages on disk. Every row is a "tuple" inside a page. How a type is stored — fixed, variable, or TOASTed — directly decides your query speed and disk usage.**
+
+---
+
+## 🗺️ The Full Storage Stack
+
+```text
+              YOUR DATA
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│              ROW (Tuple)                │
+│  Header | NULL Bitmap | Column Values   │
+└─────────────────────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│              PAGE (8KB)                 │
+│  Page Header                            │
+│  Item Pointers → [ ][ ][ ][ ]          │
+│  Free Space          ↕                  │
+│  Tuples ← [ Row ][ Row ][ Row ]         │
+└─────────────────────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│         TABLE FILE (Heap File)          │
+│  Page 0 | Page 1 | Page 2 | ...         │
+│  Each file max 1GB, then new segment    │
+└─────────────────────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│              DISK                       │
+│  $PGDATA/base/<db_oid>/<table_oid>      │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ The Page — Fundamental I/O Unit
+
+**Every read/write in Postgres = at least one full 8KB page.** You never read a single row — you always load its entire page into `shared_buffers`.
+
+```text
+┌────────────────────────────────────────────────────┐
+│                   PAGE  (8192 bytes)               │
+│                                                    │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  PAGE HEADER  (24 bytes)                     │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                    │
+│  ┌────┬────┬────┬────┬────┐                        │
+│  │ P1 │ P2 │ P3 │ P4 │ P5 │  ITEM POINTERS         │
+│  │ ↓  │ ↓  │ ↓  │ ↓  │ ↓  │  (offset + length      │
+│  └────┴────┴────┴────┴────┘   to each tuple)       │
+│                                                    │
+│            FREE SPACE  ↕↕↕                         │
+│                                                    │
+│  ┌──────────┐┌──────────┐┌──────────┐              │
+│  │  Tuple 3 ││  Tuple 2 ││  Tuple 1 │  TUPLES      │
+│  │  (Row)   ││  (Row)   ││  (Row)   │  grow from   │
+│  └──────────┘└──────────┘└──────────┘  bottom up   │
+└────────────────────────────────────────────────────┘
+Item pointers grow ↓ from top | Tuples grow ↑ from bottom
+```
+
+---
+
+## 2️⃣ The Tuple — How a Row is Stored
+
+Every row = a **tuple** with this exact layout:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                       TUPLE                                 │
+│  ┌────────────────────────┐                                 │
+│  │    TUPLE HEADER (23b)  │                                 │
+│  │  xmin  (4b)  ← txn inserted this row                     │
+│  │  xmax  (4b)  ← txn deleted this row                      │
+│  │  ctid  (6b)  ← physical location (page, offset)          │
+│  │  infomask/hoff      ← visibility & layout flags          │
+│  └────────────────────────┘                                 │
+│  ┌────────────────────────┐                                 │
+│  │    NULL BITMAP          │  1 bit per column (0 = NULL)   │
+│  └────────────────────────┘                                 │
+│  ┌────────────────────────┐                                 │
+│  │    COLUMN DATA         │  actual values                  │
+│  └────────────────────────┘                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+<Aside type="tip">
+**MVCC Secret (`xmin` / `xmax`)**:
+- `INSERT`: `xmin = current_txn`, `xmax = 0`
+- `UPDATE`: Old tuple gets `xmax = current_txn`. New tuple gets new `xmin`. **No in-place overwrite!**
+- `DELETE`: `xmax = current_txn`
+This is why `Autovacuum` is mandatory — it cleans dead tuples left behind by MVCC.
+</Aside>
+
+---
+
+## 3️⃣ Fixed vs Variable Length Storage
+
+<CardGrid>
+  <Card title="Fixed Length (Inline, Fast)" icon="rocket">
+    ```text
+    BOOLEAN → 1B | SMALLINT → 2B | INT → 4B
+    BIGINT → 8B | TIMESTAMP → 8B | UUID → 16B
+    ```
+    ✅ Direct memory access. No indirection. Super fast.
+  </Card>
+  
+  <Card title="Variable Length (varlena)" icon="shield">
+    ```text
+    TEXT/VARCHAR → 1-4B header + data
+    BYTEA → 1-4B header + data
+    JSONB → 4B header + binary payload
+    NUMERIC → base-10000 digit array
+    ```
+    ✅ Flexible sizing. ⚠️ Slight header overhead. May trigger TOAST if large.
+  </Card>
+</CardGrid>
+
+---
+
+## 4️⃣ Alignment & Padding — The Hidden Space Waster
+
+Postgres aligns data to natural boundaries. **Column order matters for storage efficiency.**
+
+| Type | Alignment |
+|------|-----------|
+| `BOOLEAN` | 1 byte |
+| `SMALLINT` | 2 bytes |
+| `INT` / `REAL` | 4 bytes |
+| `BIGINT` / `DOUBLE` / `TIMESTAMP` | 8 bytes |
+
+<Code lang="sql" title="❌ Bad Order (wastes 11 bytes padding)" code={`CREATE TABLE bad_order (
+  is_active  BOOLEAN,    -- 1 byte + 7 bytes PADDING
+  user_id    BIGINT,     -- 8 bytes
+  score      SMALLINT,   -- 2 bytes + 4 bytes PADDING
+  count      INTEGER     -- 4 bytes
+};
+-- Total: 26 bytes per row`} />
+
+<Code lang="sql" title="✅ Good Order (saves space)" code={`CREATE TABLE good_order (
+  user_id    BIGINT,     -- 8 bytes
+  count      INTEGER,    -- 4 bytes
+  score      SMALLINT,   -- 2 bytes
+  is_active  BOOLEAN     -- 1 byte + 1 byte end padding
+};
+-- Total: 15 bytes per row (42% smaller!)
+-- At 100M rows: ~1.1GB saved just from column order!`} />
+
+<Aside type="note">
+**Senior SDE Rule**: Place largest alignment types first, smallest last. Reduces padding waste significantly in wide tables.
+</Aside>
+
+---
+
+## 5️⃣ NULL Storage — The NULL Bitmap
+
+> `NULL` does **not** store a special value. It uses **1 bit** in the tuple header's NULL bitmap.
+
+```text
+Row: (id=1, name='Raj', email=NULL, phone=NULL)
+NULL Bitmap: [ 1 ][ 1 ][ 0 ][ 0 ]
+                      ↑     ↑
+                    NULL  NULL → zero column storage!
+```
+
+<Aside type="tip">
+**Interview Answer**: `NULL` costs almost nothing (1 bit per column). `''` (empty string) costs actual storage (header + 0 bytes). `NULL` ≠ `''`.
+</Aside>
+
+---
+
+## 6️⃣ TOAST — Oversized-Attribute Storage Technique
+
+**Problem**: A page is 8KB. What if one `TEXT` value is 1MB?  
+**Solution**: TOAST compresses and/or moves large values out-of-line.
+
+### TOAST Flow
+1. Row size > ~2KB? → Try **compress** inline
+2. Still too big? → Move to **TOAST table** (`pg_toast.pg_toast_<oid>`)
+3. Leave 18-byte pointer in main tuple
+
+```text
+MAIN TABLE (heap)                TOAST TABLE
+┌────────────────────┐           ┌─────────────────────────────┐
+│ id=1, bio=[ptr 42] │──────────▶│ chunk_id=42, seq=0, data... │
+└────────────────────┘           │ chunk_id=42, seq=1, data... │
+                                 │ chunk_id=42, seq=2, data... │
+                                 └─────────────────────────────┘
+```
+
+### TOAST Storage Strategies
+- `p` = PLAIN (no compression/TOAST)
+- `e` = EXTERNAL (no compression, TOAST if large)
+- `x` = EXTENDED (compress → TOAST) **✅ Default for TEXT/JSONB**
+- `m` = MAIN (compress, try to keep inline)
+
+<CardGrid>
+  <Card title="✅ TOAST Helps" icon="approve-check">
+    - Large `JSONB` configs, article content, XML<br/>
+    - You rarely `SELECT` the large column<br/>
+    - Repetitive text compresses well
+  </Card>
+  <Card title="⚠️ TOAST Hurts" icon="caution">
+    - You always `SELECT` large columns (extra I/O)<br/>
+    - Frequent `UPDATE`s on large values (TOAST bloat)<br/>
+    - `LIKE '%keyword%'` on TOASTed text (can't index efficiently)
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Performance Tip**: If queries are slow with large `TEXT`/`JSONB`, run:
+```sql
+SELECT pg_column_size(content) FROM posts LIMIT 5;
+-- If consistently > 2KB, you're paying TOAST read cost on every query.
+```
+</Aside>
+
+---
+
+## 7️⃣ JSONB & NUMERIC Internals
+
+<CardGrid>
+  <Card title="JSONB Binary Layout" icon="rocket">
+    ```text
+    JEntry Header (type, nkeys)
+    → Key offsets (sorted alphabetically)
+    → Value offsets
+    → Keys: "age", "name", "tags"
+    → Values: 25, "Raj", ["sql","pg"]
+    ```
+    ✅ Sorted keys = binary search possible. Faster than parsing raw JSON string.
+  </Card>
+  
+  <Card title="NUMERIC Base-10000 Layout" icon="shield">
+    ```text
+    ndigits=2 | weight=1 | sign=POS | digits=[12, 3456, 7800]
+    → Represents 123456.7800 exactly
+    ```
+    ✅ Exact decimal math. ⚠️ ~10x slower than `FLOAT`/`INT` (software math, not CPU FPU).
+  </Card>
+</CardGrid>
+
+---
+
+## 8️⃣ Free Space Map & Visibility Map
+
+For every table, Postgres maintains companion files:
+- `table_fsm` (**Free Space Map**): Tracks available space per page. Speeds up `INSERT` (no full-table scan for space).
+- `table_vm` (**Visibility Map**): Tracks which pages contain **only live tuples**. Enables **Index-Only Scans**.
+
+<Aside type="note">
+**🚀 Index-Only Scan Secret**: If index contains all requested columns AND VM says page is "all visible", Postgres **skips heap fetch entirely**. This is why `VACUUM` and covering indexes make queries blazing fast.
+</Aside>
+
+---
+
+## 🔬 Inspect Storage Yourself
+
+<Code lang="sql" title="Storage inspection queries" code={`-- Physical location of a row (page, offset)
+SELECT ctid, * FROM users LIMIT 5;
+
+-- Size of entire table + indexes
+SELECT pg_size_pretty(pg_total_relation_size('users'));
+
+-- Check TOAST table name for a table
+SELECT reltoastrelid::regclass FROM pg_class WHERE relname = 'posts';
+
+-- Dead tuple ratio (MVCC bloat)
+SELECT n_live_tup, n_dead_tup,
+       round(n_dead_tup * 100.0 / NULLIF(n_live_tup + n_dead_tup, 0), 2) AS dead_pct
+FROM pg_stat_user_tables WHERE relname = 'orders';
+
+-- Change TOAST strategy (rarely needed)
+ALTER TABLE posts ALTER COLUMN content SET STORAGE EXTERNAL;`} />
+
+---
+
+## 🎯 SDE Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Type Selection" icon="approve-check">
+    • **Money**: `NUMERIC(12,2)` — never `FLOAT`<br/>
+    • **Time**: `TIMESTAMPTZ` — always UTC internally<br/>
+    • **Strings**: `TEXT` (same perf as `VARCHAR`)<br/>
+    • **JSON**: `JSONB` (binary, indexable, sorted keys)<br/>
+    • **IDs**: `BIGSERIAL` (internal), `UUID` (public/distributed)
+  </Card>
+  
+  <Card title="Storage Internals" icon="rocket">
+    • **Page**: 8KB. Smallest I/O unit. Read whole page, not single row.<br/>
+    • **NULL**: 1 bit in bitmap. Nearly free.<br/>
+    • **Alignment**: Largest types first → saves 30-40% space.<br/>
+    • **TOAST**: Compresses/moves >2KB values out-of-line.<br/>
+    • **MVCC**: `UPDATE` = mark old dead + insert new tuple.
+  </Card>
+
+  <Card title="Performance Patterns" icon="shield">
+    • **Index-Only Scan**: Requires covering index + VM "all visible" page.<br/>
+    • **Partial Index**: `CREATE INDEX ... WHERE is_deleted = false`<br/>
+    • **Autovacuum**: Mandatory. Cleans dead tuples, updates planner stats.<br/>
+    • **EXPLAIN ANALYZE**: Always verify planner choices in production.
+  </Card>
+</CardGrid>
+
+<Aside type="caution">
+**Final Architecture Checklist**:
+1. ✅ Use `TIMESTAMPTZ` for all timestamps
+2. ✅ Order columns: largest alignment first
+3. ✅ Use `JSONB` + GIN index for semi-structured data
+4. ✅ Monitor `n_dead_tup` ratio — tune autovacuum if >10%
+5. ✅ Prefer `EXPLAIN (ANALYZE, BUFFERS)` over guessing query costs
+6. ✅ `TEXT` ≠ slower than `VARCHAR`. Use `TEXT` unless enforcing limits.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: Which uses less disk space for the same string?
+   A) VARCHAR(255)  B) TEXT  C) Both identical
+
+Q2: What happens when you UPDATE a TEXT column from "hello" to "world"?
+   A) In-place overwrite
+   B) Old marked dead, new tuple inserted
+   C) TOAST compresses it
+
+Q3: Why might an index scan be slower than a sequential scan?
+   A) Index is corrupt
+   B) Query returns >20% of table → random I/O > sequential read
+   C) Postgres doesn't use indexes on large tables
+
+Q4: What does the Visibility Map enable?
+   A) Faster INSERTs
+   B) Index-Only Scans
+   C) Automatic TOAST compression
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: C) Both identical. Postgres stores them identically.
+Q2: B) MVCC: old tuple gets xmax, new tuple created. No in-place overwrite.
+Q3: B) Planner chooses Seq Scan when returning many rows. Random I/O for index lookups is slower.
+Q4: B) Index-Only Scans. VM tells Postgres heap fetch isn't needed for visible pages.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**: 
+1. ✅ Run `EXPLAIN (ANALYZE, BUFFERS)` on your slowest queries
+2. ✅ Check `pg_stat_user_tables` for dead tuple accumulation
+3. ✅ Align columns in wide tables (largest first)
+4. ✅ Use `JSONB` + `?` / `@>` operators for document-like queries
+5. ✅ Read PostgreSQL docs on **MVCC** & **TOAST** internals
+
+Mastering storage internals turns you from a "query writer" into a **performance engineer**. 🐘⚡
+</Aside>

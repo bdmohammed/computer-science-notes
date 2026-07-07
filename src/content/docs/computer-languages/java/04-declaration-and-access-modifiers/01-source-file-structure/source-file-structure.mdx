@@ -33,47 +33,62 @@ import { Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight
 |     - Methods               |
 |     - Nested classes        |
 +-----------------------------+
+
+Java Source File (.java)
+│
+├── Package Declaration      (0 or 1 — must be first)
+├── Import Statements        (0 or many — after package)
+├── Type Declarations        (1 or many — classes/interfaces/enums)
+│   ├── Public Type          (at most 1 — must match filename)
+│   ├── Non-public Types     (any number)
+│   └── Nested Types         (inside a type declaration)
+│
+└── Rules
+    ├── Exactly one public type per file
+    ├── Filename must match public type name
+    ├── Package must match directory structure
+    └── Order: package → imports → types (strictly enforced)
 ```
 
-<Code lang="java" title="Complete valid source file example" code={`// File: com/company/MyApp.java
-package com.company;                    // 1. Package (first non-comment statement)
+<Code lang="java" title="Complete valid source file example" code={`
+// File: com/company/MyApp.java
+package com.company;                                  // 1. Package (first non-comment statement)
 
-import java.util.ArrayList;             // 2. Imports (any number)
+import java.util.ArrayList;                           // 2. Imports (any number)
 import java.util.List;
-import static java.lang.Math.*;         // Static import (Java 5+)
+import static java.lang.Math.*;                       // Static import (Java 5+)
 
-public class MyApp {                    // 3. Public class (name MUST match filename)
+public class MyApp {                                  // 3. Public class (name MUST match filename)
     
-    private List<String> items;         // Fields
+    private List<String> items;                         // Fields
     
-    public MyApp() {                    // Constructors
-        items = new ArrayList<>();    }
+    public MyApp() {}                                   // Constructors
     
-    public void addItem(String item) {  // Methods
-        items.add(item);
-    }
+    public void addItem(String item) {}                 // Methods
     
-    public static void main(String[] args) {
-        MyApp app = new MyApp();
-        app.addItem("Hello");
-        System.out.println(sqrt(16));   // Static import in action
-    }
+    public static void main(String[] args) {}           // Static import in action
 }
 
 // ✅ Additional non-public classes allowed in same file
-class Helper {
-    static void log(String msg) {
-        System.out.println(msg);
-    }
-}`} />
+class Helper {}
+`} />
 
+```
+Package → directory structure mapping:
+  com.company.payment.service → com/company/payment/service/FileName.java
+
+  JVM and compiler enforce this mapping:
+  com.company.payment.service.OrderService
+  must be at:
+  [classpath]/com/company/payment/service/OrderService.class
+```
+> 🔑 Package declaration and directory structure must **exactly match**. Mismatch compiles fine in some IDEs but fails at class loading — `NoClassDefFoundError` at runtime.
 ---
 
 ## ⚠️ Critical Rules — Must Know
 
-<CardGrid>
-  <Card title="Rule 1: Package Must Be First" icon="error">
-```java
+<Card title="Rule 1: Package Must Be First" icon="error">
+  ```java
     // ❌ Invalid: import before package
     import java.util.*;
     package com.example;  // ❌ C.E: class, interface, or enum expected
@@ -82,40 +97,43 @@ class Helper {
     // This is a comment
     package com.example;
     import java.util.*;
-```
-    **Exception**: Comments and whitespace can appear before `package`.
-  </Card>
-  
-  <Card title="Rule 2: Only ONE Package Statement" icon="error">
-```java
+  ```
+  **Exception**: Comments and whitespace can appear before `package`.
+</Card>
+
+<Card title="Rule 2: Only ONE Package Statement" icon="error">
+  ```java
     package pack1;
     package pack2;  // ❌ C.E: class, interface, or enum expected
     class A {}
-```
-    A source file can have **at most one** `package` declaration.
-  </Card>
+  ```
+  A source file can have **at most one** `package` declaration.
+</Card>
 
-  <Card title="Rule 3: Public Class Name Must Match Filename" icon="error">
-```java    // File: MyApp.java
+<Card title="Rule 3: Public Class Name Must Match Filename" icon="error">
+  ```java
+    // File: MyApp.java
     public class MyApp { }      // ✅ Valid
     
     public class WrongName { }  // ❌ C.E: class WrongName is public, 
                                 // should be declared in a file named WrongName.java
-```
-    If a class is declared `public`, the filename **must exactly match** the class name (case-sensitive).
-  </Card>
+    // If a class is declared `public`, the filename **must exactly match** the class name (case-sensitive).
+    // Compile: javac MyApp.java → creates MyApp.class, WrongName.class
+  ```
 
-  <Card title="Rule 4: Only ONE Public Class Per File" icon="error">
-```java
+</Card>
+
+<Card title="Rule 4: Only ONE Public Class Per File" icon="error">
+  ```java
     // File: MyApp.java
     public class MyApp { }      // ✅ First public class
     public class Another { }    // ❌ C.E: class Another is public, should be declared separately
-```
-    A `.java` file can contain **multiple classes**, but **only one** can be `public`.
-  </Card>
+  ```
+  A `.java` file can contain **multiple classes**, but **only one** can be `public`.
+</Card>
 
-  <Card title="Rule 5: Non-Public Classes — No Filename Restriction" icon="approve-check">
-```java
+<Card title="Rule 5: Non-Public Classes — No Filename Restriction" icon="approve-check">
+  ```java
     // File: AnyName.java (no public class → any filename works)
     class A { public static void main(String[] args) { System.out.println("A"); } }
     class B { public static void main(String[] args) { System.out.println("B"); } }
@@ -125,14 +143,16 @@ class Helper {
     // Run: java A → outputs "A"
     // Run: java B → outputs "B"
     // Run: java C → outputs "C"
-```
-    When **no class is `public`**, the filename can be anything — no matching required.
-  </Card>
-</CardGrid>
+    // Run: java AnyName → outputs "Exception in thread "main" java.lang.NoClassDefFoundError: AnyName"
+  ```
+  When **no class is `public`**, the filename can be anything — no matching required.
+</Card>
 
 ---
 
 ## 🔍 Compilation & Execution Workflow
+
+---
 
 ### 🧠 How Java Compilation Works
 
@@ -145,7 +165,8 @@ flowchart LR
 ```
 
 ### 💻 Compile & Run Examples
-<Code lang="bash" title="Compiling and running classes" code={`# Case 1: Single class, no package
+<Code lang="bash" title="Compiling and running classes" code={`
+# Case 1: Single class, no package
 javac MyApp.java          # Creates MyApp.class
 java MyApp                # Runs MyApp.main()
 
@@ -160,19 +181,18 @@ java D                    # 💥 Runtime: NoSuchMethodError: main
 
 # Case 4: .class file missing at runtime
 # Delete D.class, then:
-java D                    # 💥 Runtime: NoClassDefFoundError: D`} />
+java D                    # 💥 Runtime: NoClassDefFoundError: D
+`} />
 
-<CardGrid>
-  <Card title="NoSuchMethodError: main" icon="error">
-    **Cause**: The class you're trying to run doesn't contain a valid `main` method.  
-    **Fix**: Ensure the class has: `public static void main(String[] args)`
-  </Card>
-  
-  <Card title="NoClassDefFoundError" icon="error">
-    **Cause**: The `.class` file existed at compile time but is **missing at runtime** (deleted, wrong classpath, packaging error).  
-    **Fix**: Verify the `.class` file exists and is in the classpath.
-  </Card>
-</CardGrid>
+<Card title="NoSuchMethodError: main" icon="error">
+  **Cause**: The class you're trying to run doesn't contain a valid `main` method.  
+  **Fix**: Ensure the class has: `public static void main(String[] args)`
+</Card>
+
+<Card title="NoClassDefFoundError" icon="error">
+  **Cause**: The `.class` file existed at compile time but is **missing at runtime** (deleted, wrong classpath, packaging error).  
+  **Fix**: Verify the `.class` file exists and is in the classpath.
+</Card>
 
 <Aside type="note">
 **Key Distinction**:  
@@ -186,20 +206,27 @@ java D                    # 💥 Runtime: NoClassDefFoundError: D`} />
 
 > `import` tells the compiler **where to find** classes you reference — it's a **compile-time shortcut**, not a runtime inclusion.
 
+---
+
 ### ❌ Without Import — Verbose & Error-Prone
 
-<Code lang="java" title="Fully qualified names (no import)" code={`class Test {
-    public static void main(String[] args) {
-        // Must use full package path every time
-        java.util.ArrayList list1 = new java.util.ArrayList();
-        java.util.HashMap map = new java.util.HashMap();
-        java.util.LinkedList list2 = new java.util.LinkedList();
-    }}
+<Code lang="java" title="Fully qualified names (no import)" code={`
+class Test {
+  public static void main(String[] args) {
+    // Must use full package path every time
+    java.util.ArrayList list1 = new java.util.ArrayList();
+    java.util.HashMap map = new java.util.HashMap();
+    java.util.LinkedList list2 = new java.util.LinkedList();
+  }
+}
 // ✅ Compiles, but verbose and hard to read`} />
+
+---
 
 ### ✅ With Import — Clean & Readable
 
-<Code lang="java" title="Import statements simplify code" code={`import java.util.ArrayList;
+<Code lang="java" title="Import statements simplify code" code={`
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 
@@ -217,11 +244,14 @@ class Test {
 
 ## 📦 Types of Import Statements
 
+---
+
 ### 1️⃣ Explicit Class Import (Recommended)
 
 > Import **one specific class** by its fully qualified name.
 
-<Code lang="java" title="Explicit imports — clear and safe" code={`import java.util.ArrayList;   // Only ArrayList is imported
+<Code lang="java" title="Explicit imports — clear and safe" code={`
+import java.util.ArrayList;   // Only ArrayList is imported
 import java.util.HashMap;     // Only HashMap is imported
 import java.util.LinkedList;  // Only LinkedList is imported
 
@@ -231,11 +261,14 @@ import java.util.LinkedList;  // Only LinkedList is imported
 // • IDE auto-imports work cleanly
 // • Easy to track dependencies`} />
 
+---
+
 ### 2️⃣ Wildcard Import (Use Sparingly)
 
 > Import **all classes** from a package using `*`.
 
-<Code lang="java" title="Wildcard import — convenient but risky" code={`import java.util.*;  // Imports ALL classes in java.util package
+<Code lang="java" title="Wildcard import — convenient but risky" code={`
+import java.util.*;  // Imports ALL classes in java.util package
 
 // ✅ Pros: Quick for learning, less typing
 // ❌ Cons:
@@ -243,56 +276,84 @@ import java.util.LinkedList;  // Only LinkedList is imported
 // • Can cause naming conflicts (see below)
 // • Harder for code reviewers to audit
 
-// ⚠️ Important: * does NOT import sub-packages!import java.util.*;           // Imports java.util classes only
+// ⚠️ Important: * does NOT import sub-packages!import java.util.*;           
+// Imports java.util classes only
 // Does NOT import: java.util.concurrent, java.util.stream, etc.
-// Need separate import: import java.util.concurrent.*;`} />
+// Need separate import: import java.util.concurrent.*;
+`} />
+
+---
 
 ### 🔍 Import Validation — Which Are Valid?
 
-<Code lang="java" title="✅ Valid import statements" code={`import java.util.*;              // ✅ Wildcard import
-import java.util.ArrayList;      // ✅ Explicit class import
-import static java.lang.Math.*;  // ✅ Static wildcard import
-import static java.lang.Math.sqrt; // ✅ Static explicit import`} />
+<Code lang="java" title="✅ Valid import statements" code={`
+import java.util.*;                     // ✅ Wildcard import
+import java.util.ArrayList;             // ✅ Explicit class import
+import static java.lang.Math.*;         // ✅ Static wildcard import
+import static java.lang.Math.sqrt;      // ✅ Static explicit import 
 
-<Code lang="java" title="❌ Invalid import statements" code={`import java.util;                 // ❌ C.E: cannot find symbol (need class or *)
-import java.util.ArrayList.*;     // ❌ C.E: * not allowed after class name
-import static java.lang.Math;     // ❌ C.E: static import needs member, not class
-import static java.lang.Math.sqrt.*; // ❌ C.E: * not allowed after method
-import static java.lang.Math.sqrt(); // ❌ C.E: () not allowed in import`} />
+class A extends java.util.ArrayList {}  // ✅ Valid
+`} />
+
+<Code lang="java" title="❌ Invalid import statements" code={`
+import java.util;                       // ❌ C.E: cannot find symbol (need class or *)
+import java.util.ArrayList.*;           // ❌ C.E: * not allowed after class name
+import static java.lang.Math;           // ❌ C.E: static import needs member, not class
+import static java.lang.Math.sqrt.*;    // ❌ C.E: * not allowed after method
+import static java.lang.Math.sqrt();    // ❌ C.E: () not allowed in import`} />
 
 ---
 
 ## ⚠️ Import Naming Conflicts — Ambiguity Trap
 
+---
+
 ### Case 1: Same Class Name in Different Packages
 
-<Code lang="java" title="❌ Ambiguous import: java.util.Date vs java.sql.Date" code={`import java.util.*;
+<Code lang="java" title="❌ Ambiguous import: java.util.Date vs java.sql.Date" code={`
+import java.util.*;
 import java.sql.*;
 
 class Test {
     public static void main(String[] args) {
-        Date d = new Date();  // ❌ C.E: reference to Date is ambiguous
-        // Both java.util.Date and java.sql.Date match!
+        Date d = new Date();          // ❌ C.E: reference to Date is ambiguous
+                                      // Both java.util.Date and java.sql.Date match!
     }
 }
 // Error: reference to Date is ambiguous,
-// both class java.sql.Date in java.sql and class java.util.Date in java.util match`} />
+// both class java.sql.Date in java.sql and class java.util.Date in java.util match
 
-<Code lang="java" title="✅ Fix: Use explicit import to resolve ambiguity" code={`import java.util.Date;      // ✅ Explicit import takes precedence
-import java.sql.*;          // Wildcard import
+// Fix option 1: use only one import, fully qualify the other
+import java.util.Date;
+// use java.sql.Date with full name:
+java.sql.Date sqlDate = new java.sql.Date(System.currentTimeMillis());
+Date utilDate = new Date();
+
+// Fix option 2: no imports — fully qualify both
+java.util.Date utilDate = new java.util.Date();
+java.sql.Date  sqlDate  = new java.sql.Date(System.currentTimeMillis());
+`} />
+
+<Code lang="java" title="✅ Fix: Use explicit import to resolve ambiguity" code={`
+import java.util.Date;                // ✅ Explicit import takes precedence
+import java.sql.*;                    // Wildcard import
 
 class Test {
     public static void main(String[] args) {
-        Date d = new Date();  // ✅ Uses java.util.Date (explicit wins)
+        Date d = new Date();          // ✅ Uses java.util.Date (explicit wins)
     }
 }`} />
 
+---
+
 ### Case 2: Static Import Ambiguity (More Common!)
 
-<Code lang="java" title="❌ Ambiguous static import: MAX_VALUE in Integer vs Byte" code={`import static java.lang.Integer.*;
+<Code lang="java" title="❌ Ambiguous static import: MAX_VALUE in Integer vs Byte" code={`
+import static java.lang.Integer.*;
 import static java.lang.Byte.*;
 
-class Test {    public static void main(String[] args) {
+class Test {    
+    public static void main(String[] args) {
         System.out.println(MAX_VALUE);  // ❌ C.E: reference to MAX_VALUE is ambiguous
         // Both Integer.MAX_VALUE (2147483647) and Byte.MAX_VALUE (127) match!
     }
@@ -300,7 +361,8 @@ class Test {    public static void main(String[] args) {
 // Error: reference to MAX_VALUE is ambiguous,
 // both variable MAX_VALUE in java.lang.Integer and variable MAX_VALUE in java.lang.Byte match`} />
 
-<Code lang="java" title="✅ Fix: Explicit static import or use class prefix" code={`// Option 1: Explicit static import (explicit wins over wildcard)
+<Code lang="java" title="✅ Fix: Explicit static import or use class prefix" code={`
+// Option 1: Explicit static import (explicit wins over wildcard)
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.Byte.*;
 // MAX_VALUE now resolves to Integer.MAX_VALUE ✅
@@ -308,6 +370,8 @@ import static java.lang.Byte.*;
 // Option 2: Use class prefix (no static import needed)
 System.out.println(Integer.MAX_VALUE);  // ✅ Clear and unambiguous
 System.out.println(Byte.MAX_VALUE);     // ✅ Also clear`} />
+
+---
 
 ### 🧠 Import Resolution Precedence Order
 
@@ -317,7 +381,8 @@ When the compiler resolves a class or static member name, it checks in this **st
 2.  **Classes in current working directory** (default package)
 3.  **Wildcard import** (`import java.util.*;`)
 
-<Code lang="java" title="Precedence example: explicit beats wildcard" code={`import java.util.Date;   // Explicit import (highest priority)
+<Code lang="java" title="Precedence example: explicit beats wildcard" code={`
+import java.util.Date;   // Explicit import (highest priority)
 import java.sql.*;       // Wildcard import (lower priority)
 
 class Test {
@@ -332,6 +397,23 @@ class Test {
 - Make dependencies clear to readers
 - Help IDEs with refactoring and auto-complete
 - Reduce accidental coupling to unused classes
+</Aside>
+
+<Aside type="tip">
+In any java Program the following 2 packages are not require to import because these
+are available by default to every java Program.
+```java
+1. java.lang package
+String    s;    // java.lang.String
+System.out;     // java.lang.System
+Object    o;    // java.lang.Object
+Math.PI;        // java.lang.Math
+Integer   i;    // java.lang.Integer
+Thread    t;    // java.lang.Thread
+Exception e;    // java.lang.Exception
+
+2. default package(current working directory) 
+```
 </Aside>
 
 ---
@@ -394,30 +476,30 @@ class Test {
   </tbody>
 </table>
 
-<CardGrid>
-  <Card title="C/C++ #include — Static, Physical Inclusion" icon="information">
-```c
+<Card title="C/C++ #include — Static, Physical Inclusion" icon="information">
+  ```c
     // main.c    #include "header.h"  // Preprocessor COPIES header.h content into main.c
     
     // Result: main.c becomes larger at compile time
     // Memory: Header code is physically included → potential waste
     // Loading: All included code loads at program start (static)
-```
-    **Key**: `#include` is a **textual copy** performed by the preprocessor.
-  </Card>
-  
-  <Card title="Java import — Dynamic, Reference-Only" icon="approve-check">
-```java
+  ```
+  **Key**: `#include` is a **textual copy** performed by the preprocessor.
+</Card>
+
+<Card title="Java import — Dynamic, Reference-Only" icon="approve-check">
+  ```java
     // Main.java
     import java.util.ArrayList;  // Compiler NOTE: "ArrayList is in java.util"
     
     // Result: Main.class size UNCHANGED — no code copied
     // Memory: Only referenced classes load at runtime (dynamic)
     // Loading: Classes load on-demand when first used (lazy loading)
-```
-    **Key**: `import` is a **compile-time hint** — no runtime overhead.
-  </Card>
-</CardGrid>
+  ```
+  **Key**: `import` is a **compile-time hint** — no runtime overhead.
+</Card>
+
+---
 
 ### 🏗️ Architecture Comparison Diagram
 
@@ -457,9 +539,12 @@ class Test2 { java.util.ArrayList list = new java.util.ArrayList(); }
 
 > Introduced in Java 5, **static import** lets you use static members (methods/fields) without the class name prefix.
 
+---
+
 ### 🔑 Syntax & Usage
 
-<Code lang="java" title="Without static import — verbose" code={`import java.lang.Math;  // Regular import for the class
+<Code lang="java" title="Without static import — verbose" code={`
+import java.lang.Math;  // Regular import for the class
 
 class Demo {
     public static void main(String[] args) {
@@ -471,7 +556,8 @@ class Demo {
     }
 }`} />
 
-<Code lang="java" title="With static import — concise" code={`// Import specific static members
+<Code lang="java" title="With static import — concise" code={`
+// Import specific static members
 import static java.lang.Math.sqrt;
 import static java.lang.Math.abs;
 import static java.lang.Math.PI;
@@ -488,7 +574,10 @@ class Demo {
         System.out.println(PI);          // ✅ Clean
         System.out.println(pow(2, 3));   // ✅ Clean
     }
-}`} />
+}
+`} />
+
+---
 
 ### ⚠️ Static Import Resolution Precedence
 
@@ -497,7 +586,8 @@ When resolving a static member name, the compiler checks in this order:
 2.  **Explicit static import** (`import static java.lang.Integer.MAX_VALUE;`)
 3.  **Wildcard static import** (`import static java.lang.Integer.*;`)
 
-<Code lang="java" title="Precedence example: current class beats import" code={`import static java.lang.Integer.MAX_VALUE;  // Line 2: 2147483647
+<Code lang="java" title="Precedence example: current class beats import" code={`
+import static java.lang.Integer.MAX_VALUE;  // Line 2: 2147483647
 import static java.lang.Byte.*;              // Line 3: 127
 
 class Test {
@@ -511,6 +601,8 @@ class Test {
 // If Line 1 commented: Output = 2147483647 (explicit import wins over wildcard)
 // If Lines 1-2 commented: Output = 127 (wildcard import used)
 `} />
+
+---
 
 ### 🚫 When NOT to Use Static Import
 
@@ -528,11 +620,12 @@ class Test {
 
 ---
 
-## 🖨️ System.out.println — Full Breakdown
+## 🖨️ System.out.printzln — Full Breakdown
 
 > A classic interview question: "Explain `System.out.println`".
 
-<Code lang="java" title="Decomposing System.out.println" code={`System.out.println("Hello");
+<Code lang="java" title="Decomposing System.out.println" code={`
+System.out.println("Hello");
 // │    │    │
 // │    │    └─ println() → method of PrintStream class
 // │    └─ out → static field of System class (type: PrintStream)
@@ -547,7 +640,8 @@ System.out.printf("Name: %s, Age: %d%n", "Alice", 25);  // Formatted output`} />
 
 ### 🔧 Can We Shorten System.out.println?
 
-<Code lang="java" title="Static import for System.out" code={`import static java.lang.System.out;  // Import the static field 'out'
+<Code lang="java" title="Static import for System.out" code={`
+import static java.lang.System.out;  // Import the static field 'out'
 
 class Demo {
     public static void main(String[] args) {
@@ -612,19 +706,25 @@ class Demo {
 
 ## 📦 Package Statement — Namespaces in Java
 
-> A **package** is a namespace that groups related classes and interfaces, providing modularity and avoiding naming conflicts.
+> A **package** is a namespace that groups related classes and interfaces,  and .
+- providing modularity
+- avoiding naming conflicts
+- Easy to maintain
+- Security
 
 ### 🔑 Package Naming Convention
-
 ```text
 com.icicibank.loan.housingloan.Account
-│   │          │        │            ││   │          │        │            └── Class name
-│   │          │        └──────────── Submodule (feature)
-│   │          └──────────────────── Module (domain)
-│   └────────────────────────────── Organization (reverse domain)
+│   │          │        │            │
+│   │          │        │            └── Class name
+│   │          │        └──────────── Submodule / Feature
+│   │          └───────────────────── Module / Domain
+│   └──────────────────────────────── Organization (reverse domain)
+└─────────────────────────────────── Top-level domain
 ```
 
-<Code lang="java" title="Package declaration rules" code={`package com.company.project;  // ✅ Must be FIRST non-comment statement
+<Code lang="java" title="Package declaration rules" code={`
+package com.company.project;  // ✅ Must be FIRST non-comment statement
 
 // Rules:
 // 1. Only ONE package statement per file
@@ -688,6 +788,47 @@ This ensures:
 - Clear project structure
 - Proper JAR packaging and distribution
 </Aside>
+
+---
+
+## 🔬 Step 3 — Type Declarations
+
+```java
+package com.company.order;
+
+import java.util.List;
+
+// Public type — filename MUST be OrderService.java
+public class OrderService {
+
+    // Nested class — part of OrderService type
+    public static class Config {
+        int timeout;
+    }
+
+    // Nested interface
+    public interface OrderValidator {
+        boolean validate(Order order);
+    }
+
+    // Nested enum
+    public enum Priority { LOW, MEDIUM, HIGH }
+}
+
+// Non-public class — same file, different type
+// CAN be in same file as public type
+class OrderHelper {              // package-private — no public
+    // helper implementation
+}
+
+// Non-public interface — same file
+interface Processable {
+    void process();
+}
+
+// Non-public enum — same file
+enum Status { PENDING, COMPLETE }
+```
 
 ---
 
@@ -812,6 +953,41 @@ class Solution {
     }
 }
 // ✅ Faster typing, less error-prone — but know the tradeoffs for production code`} />
+
+**Underlying primitive: Symbol table scoping + classpath linear search**
+```java
+Compiler import resolution:
+
+import java.util.List;
+
+Compiler builds import table:
+  "List" → "java.util.List"
+
+When "List" encountered in code:
+  1. Check import table → found: java.util.List
+  2. Load java/util/List.class from classpath
+  3. Resolve symbol
+
+Wildcard import:
+  import java.util.*;
+  Compiler does NOT pre-scan java.util.*
+  When "List" encountered:
+    → check single imports first (specific wins over wildcard)
+    → if not found: search each wildcard package
+    → found in java.util → resolve
+
+Classpath search order:
+  1. bootstrap classpath (rt.jar / modules)
+  2. extension classpath
+  3. application classpath (left to right)
+  First match wins — explains why classpath order matters
+
+Package → directory mapping enforced by:
+  ClassLoader.loadClass("com.company.OrderService")
+  → converts to: com/company/OrderService.class
+  → searches classpath entries for this relative path
+  → file not found → NoClassDefFoundError
+```
 
 <Aside type="tip">
 **Contest Strategy**: Use static imports for `Math`, `Arrays`, and common utilities to save time. But in interviews, **explain the tradeoffs** — shows you understand both speed and code quality.

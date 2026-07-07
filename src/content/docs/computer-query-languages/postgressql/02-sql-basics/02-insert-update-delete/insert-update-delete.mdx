@@ -1,0 +1,893 @@
+---
+title: PostgreSQL INSERT, UPDATE, DELETE
+slug: computer-query-languages/postgresql/sql-basics/insert-update-delete
+description: Master data modification in PostgreSQL — INSERT, UPDATE, DELETE internals, MVCC behavior, RETURNING clause, upserts, and performance patterns.
+sidebar:
+  label: "Data Modification"
+  badge:
+    text: DML Operations
+    variant: tip
+tags: [postgresql, insert, update, delete, mvcc, returning, upsert, performance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 📄 INSERT, UPDATE, DELETE — Complete Guide
+
+> **`INSERT` adds new tuples, `UPDATE` creates new tuple versions, `DELETE` marks old ones dead — Postgres never truly overwrites anything. MVCC is always watching.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of Postgres as an **append-only log with versioning**.  
+- `INSERT` → append new tuple  
+- `UPDATE` → append new version + mark old dead  
+- `DELETE` → mark tuple dead  
+Nothing is ever overwritten in place. `Autovacuum` cleans up later.
+</Aside>
+
+---
+
+## ⚙️ How All Three Connect to Storage — MVCC Deep Dive
+
+<CardGrid>
+  <Card title="INSERT: New Tuple" icon="approve-check">
+    ```text
+    INSERT INTO users (name) VALUES ('Raj');
+    
+    Result:
+    ┌─────────────────────────┐
+    │ xmin = current_txn      │ ← who inserted
+    │ xmax = 0                │ ← not deleted
+    │ name = 'Raj'            │
+    └─────────────────────────┘
+    
+    • Written to WAL first (durability)
+    • Then to Shared Buffers (RAM cache)
+    • Later flushed to heap file by checkpointer
+    ```
+  </Card>
+  
+  <Card title="UPDATE: New Version + Dead Marker" icon="rocket">
+    ```text
+    UPDATE users SET name='Rahul' WHERE id=1;
+    
+    Before:                          After:
+    ┌──────────────────┐            ┌──────────────────────────────┐
+    │ Tuple1           │            │ Tuple1 (DEAD, xmax=501)      │
+    │ xmin=100 xmax=0  │    →       │ xmin=100 xmax=501            │
+    │ name='Raj'       │            ├──────────────────────────────┤
+    └──────────────────┘            │ Tuple1' (LIVE, xmin=501)     │
+                                    │ xmin=501 xmax=0              │
+                                    │ name='Rahul'                 │
+                                    └──────────────────────────────┘
+    
+    • Old tuple: xmax = current_txn (logically deleted)
+    • New tuple: xmin = current_txn (new version)
+    • Both exist on disk until Autovacuum cleans old one
+    ```
+  </Card>
+
+  <Card title="DELETE: Mark Dead, Don't Remove" icon="shield">
+    ```text
+    DELETE FROM users WHERE id=1;
+    
+    Result:
+    ┌─────────────────────────┐
+    │ xmin=100 xmax=502       │ ← xmax set = dead after txn 502
+    │ name='Raj'              │
+    └─────────────────────────┘
+    
+    • Tuple still physically on disk!
+    • Just marked invisible to new transactions
+    • Autovacuum later: reclaims space, updates FSM/VM
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="caution">
+**Key Insight**: Postgres **never overwrites data in place**.  
+This is the foundation of:
+- ✅ **MVCC**: Readers see old versions, writers create new ones
+- ✅ **Crash recovery**: WAL replay reconstructs state
+- ✅ **Point-in-time recovery**: Replay WAL to any timestamp
+- ⚠️ **Table bloat**: Dead tuples accumulate until `VACUUM` runs
+</Aside>
+
+---
+
+## 1️⃣ INSERT — Adding Data
+
+### 🔑 Basic Syntax Patterns
+
+<Code lang="sql" title="INSERT variations" code={`-- Single row
+INSERT INTO users (name, email, city)
+VALUES ('Raj', 'raj@gmail.com', 'Raipur');
+
+-- Multiple rows (one statement = one transaction = faster!)
+INSERT INTO users (name, email, city)
+VALUES
+  ('Priya', 'priya@gmail.com', 'Mumbai'),
+  ('Sam',   'sam@gmail.com',   'Delhi'),
+  ('Ankit', 'ankit@gmail.com', 'Pune');
+
+-- Omit columns with defaults
+CREATE TABLE orders (
+  id         BIGSERIAL PRIMARY KEY,          -- auto-generated
+  user_id    INTEGER NOT NULL,
+  status     TEXT    DEFAULT 'pending',      -- default value
+  created_at TIMESTAMPTZ DEFAULT NOW()       -- default function
+);
+
+INSERT INTO orders (user_id)                  -- only required column
+VALUES (42);
+-- id, status, created_at filled automatically ✅
+
+-- Insert from SELECT (copy/transform data)
+INSERT INTO orders_archive (id, user_id, amount, created_at)
+SELECT id, user_id, amount, created_at
+FROM   orders
+WHERE  created_at < '2023-01-01';`} />
+
+### 🎯 INSERT ... RETURNING — Postgres Superpower
+
+<Code lang="sql" title="RETURNING clause — get data back in one round trip" code={`-- Get the generated ID back immediately (no second SELECT needed!)
+INSERT INTO users (name, email)
+VALUES ('Raj', 'raj@gmail.com')
+RETURNING id;
+-- Returns: id = 1
+
+-- Return multiple columns
+INSERT INTO orders (user_id, amount)
+VALUES (42, 999.99)
+RETURNING id, created_at, status;
+
+-- Use in application code (Node.js example)
+const result = await pool.query(
+  \`INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id\`,
+  ['Raj', 'raj@example.com']
+);
+const newUserId = result.rows[0].id;  // ✅ Got ID immediately
+
+-- Compare to MySQL: requires LAST_INSERT_ID() or separate SELECT
+-- Postgres: one query, one round trip ✅`} />
+
+<Aside type="tip">
+**Real-Life SDE**: `RETURNING` eliminates the "insert then select" anti-pattern.  
+✅ Faster (one round trip)  
+✅ Atomic (no race condition between insert and select)  
+✅ Cleaner code (no need for LAST_INSERT_ID() or separate query)
+</Aside>
+
+### 🔁 INSERT ON CONFLICT — Atomic Upsert
+
+<Code lang="sql" title="Upsert patterns — insert or update atomically" code={`-- UPSERT: Insert if new, update if exists
+INSERT INTO user_preferences (user_id, theme, language)
+VALUES (42, 'dark', 'en')
+ON CONFLICT (user_id)                      -- conflict on UNIQUE/PK column
+DO UPDATE SET
+  theme      = EXCLUDED.theme,            -- EXCLUDED = the row we tried to insert
+  language   = EXCLUDED.language,
+  updated_at = NOW();
+
+-- Idempotent insert: skip if exists (no error)
+INSERT INTO events (id, name)
+VALUES (101, 'click')
+ON CONFLICT (id) DO NOTHING;
+
+-- Conditional update: only update if certain condition met
+INSERT INTO inventory (product_id, stock)
+VALUES (500, 10)
+ON CONFLICT (product_id)
+DO UPDATE SET
+  stock = inventory.stock + EXCLUDED.stock
+  WHERE inventory.stock + EXCLUDED.stock <= 1000;  -- only if won't exceed limit
+
+-- EXCLUDED is a special table reference:
+-- It contains the values from the INSERT that was rejected due to conflict`} />
+
+<CardGrid>
+  <Card title="ON CONFLICT Requirements" icon="information">
+    ```text
+    The conflict target (user_id, id, etc.) MUST have:
+    • A UNIQUE constraint, OR
+    • A PRIMARY KEY, OR  
+    • A UNIQUE INDEX
+    
+    Otherwise: ❌ C.E: there is no unique or exclusion constraint matching the ON CONFLICT specification
+    ```
+  </Card>
+  
+  <Card title="Why Upsert is Atomic" icon="shield">
+    ```text
+    Application-level check-then-insert has a race condition:
+    
+    Thread A: SELECT WHERE id=42 → not found
+    Thread B: SELECT WHERE id=42 → not found
+    Thread A: INSERT id=42 → success
+    Thread B: INSERT id=42 → ❌ duplicate key error!
+    
+    ON CONFLICT is atomic at the database level:
+    • Lock acquired on conflict key
+    • Check + insert/update happens in one operation
+    • No race condition possible ✅
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 2️⃣ UPDATE — Modifying Data
+
+### 🔑 Basic Syntax Patterns
+
+<Code lang="sql" title="UPDATE variations" code={`-- Update one column
+UPDATE users
+SET    city = 'Bangalore'
+WHERE  id = 42;
+
+-- Update multiple columns
+UPDATE users
+SET    city       = 'Bangalore',
+       updated_at = NOW(),
+       is_active  = true
+WHERE  id = 42;
+
+-- Update with expression (atomic increment)
+UPDATE products
+SET    price = price * 1.10        -- 10% price increase
+WHERE  category = 'electronics';
+
+-- Update with CASE (conditional logic)
+UPDATE employees
+SET    bonus = CASE
+  WHEN performance_score >= 90 THEN salary * 0.20
+  WHEN performance_score >= 75 THEN salary * 0.10
+  ELSE                              salary * 0.05
+END
+WHERE  department = 'engineering';
+
+-- UPDATE ... RETURNING (confirm changes)
+UPDATE orders
+SET    status = 'shipped'
+WHERE  id = 101
+RETURNING id, status, updated_at;`} />
+
+### 🔗 UPDATE ... FROM — Join While Updating
+
+<Code lang="sql" title="Update using values from another table" code={`-- Update orders with coupon discounts from coupons table
+UPDATE orders o
+SET    discount = c.discount_pct
+FROM   coupons c
+WHERE  o.coupon_code = c.code
+  AND  o.status = 'pending';
+
+-- Batch update prices from external price feed
+UPDATE products p
+SET    price = pf.new_price,
+       updated_at = NOW()
+FROM   price_feed pf
+WHERE  p.sku = pf.sku
+  AND  pf.valid_from <= NOW()
+  AND  pf.valid_to > NOW();
+
+-- Update with subquery
+UPDATE users u
+SET    last_order_date = latest.order_date
+FROM (
+  SELECT user_id, MAX(created_at) AS order_date
+  FROM orders
+  GROUP BY user_id
+) latest
+WHERE u.id = latest.user_id;`} />
+
+<Aside type="caution">
+**⚠️ The Nuke: UPDATE Without WHERE**
+```sql
+-- Updates EVERY row in the table — usually a mistake!
+UPDATE users SET is_active = false;  -- 💀 all users deactivated
+
+-- ✅ Safety pattern: always check first
+SELECT COUNT(*) FROM users WHERE city = 'Raipur';    -- verify count
+UPDATE users SET tier = 'regional' WHERE city = 'Raipur';  -- then update
+```
+</Aside>
+
+---
+
+## 3️⃣ DELETE — Removing Data
+
+### 🔑 Basic Syntax Patterns
+
+<Code lang="sql" title="DELETE variations" code={`-- Delete specific rows
+DELETE FROM sessions
+WHERE  expires_at < NOW();
+
+-- Delete by ID
+DELETE FROM users
+WHERE  id = 42;
+
+-- Delete with multiple conditions
+DELETE FROM orders
+WHERE  status    = 'cancelled'
+  AND  created_at < NOW() - INTERVAL '90 days';
+
+-- DELETE ... RETURNING (audit what was removed)
+DELETE FROM sessions
+WHERE  user_id = 42
+RETURNING id, created_at, ip_address;`} />
+
+### 🔗 DELETE ... USING — Join While Deleting
+
+<Code lang="sql" title="Delete based on another table" code={`-- Delete order items for cancelled orders
+DELETE FROM order_items oi
+USING  orders o
+WHERE  oi.order_id = o.id
+  AND  o.status = 'cancelled';
+
+-- Delete users who never placed an order (anti-join pattern)
+DELETE FROM users u
+WHERE  NOT EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+
+-- Alternative with USING:
+DELETE FROM users u
+USING  (SELECT DISTINCT user_id FROM orders) o
+WHERE  u.id = o.user_id;  -- Wait, this deletes users WHO HAVE orders!
+-- Be careful with USING logic — test with SELECT first!`} />
+
+### 🆚 DELETE vs TRUNCATE — Critical Difference
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>DELETE</code></th>
+      <th><code>TRUNCATE</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Rows removed</td><td>One by one</td><td>All at once</td></tr>
+    <tr><td>WAL logging</td><td>Every row logged</td><td>Minimal logging</td></tr>
+    <tr><td><code>WHERE</code> clause</td><td>✅ Yes</td><td>❌ No</td></tr>
+    <tr><td><code>RETURNING</code></td><td>✅ Yes</td><td>❌ No</td></tr>
+    <tr><td>Triggers fire</td><td>✅ Row-level</td><td>⚠️ Statement-level only</td></tr>
+    <tr><td>Rollback</td><td>✅ Yes</td><td>✅ Yes (in transaction)</td></tr>
+    <tr><td>Speed (1M rows)</td><td>Slow (logs each)</td><td>Instant</td></tr>
+    <tr><td>VACUUM needed</td><td>✅ Yes (dead tuples)</td><td>❌ No (resets pages)</td></tr>
+    <tr><td>Sequences reset</td><td>❌ No</td><td>✅ With <code>RESTART IDENTITY</code></td></tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="TRUNCATE usage" code={`-- Wipe all rows instantly
+TRUNCATE TABLE sessions;
+
+-- Wipe + reset SERIAL/BIGSERIAL sequences
+TRUNCATE TABLE sessions RESTART IDENTITY;
+
+-- Truncate multiple tables (must respect foreign keys)
+TRUNCATE TABLE orders, order_items CASCADE;
+
+-- In a transaction (can rollback)
+BEGIN;
+TRUNCATE TABLE test_data;
+-- ... test something ...
+ROLLBACK;  -- test_data restored ✅`} />
+
+<Aside type="tip">
+**Interview Answer**: *"You need to clear a 50M row log table. DELETE or TRUNCATE?"*  
+✅ **TRUNCATE** — DELETE would log every single row in WAL, take minutes, and leave 50M dead tuples requiring hours of VACUUM. TRUNCATE deallocates pages instantly with minimal logging.
+</Aside>
+
+---
+
+## 4️⃣ Internals — What Actually Happens
+
+### 🔬 INSERT Internals
+
+<Steps>
+1. Parse + Plan:
+    Trivial for simple INSERT — no complex optimization needed.
+2. Find Free Space:
+    Free Space Map (FSM) quickly locates a page with enough room for the new tuple.
+3. Write to WAL Buffer:
+    ```text
+    "Page X, offset Y: new tuple with xmin=501, name='Raj'"
+    ```
+    Sequential write → fast, durable.
+4. Write to Shared Buffers:
+    Tuple written to RAM cache (marked "dirty" — needs flushing to disk later).
+5. WAL Flushed → COMMIT:
+    WAL Writer forces WAL to disk → client receives `COMMIT` ✅
+6. Background Flush:
+    Checkpointer later writes dirty pages from RAM to actual heap files on disk.
+</Steps>
+
+### 🔬 UPDATE Internals + HOT Optimization
+
+<Code lang="text" title="Normal UPDATE vs HOT UPDATE" code={`Normal UPDATE:
+1. Find old tuple (index or seq scan)
+2. Write to WAL: "Mark old tuple xmax=502" + "New tuple xmin=502 at page X offset Z"
+3. In Shared Buffers:
+   - Old: xmin=100 xmax=502 ← dead after txn commits
+   - New: xmin=502 xmax=0   ← live
+4. Index entries: BOTH old and new tuple get index entries (expensive!)
+5. COMMIT → old tuple invisible to new transactions
+6. Autovacuum later: removes old tuple, reclaims space
+
+HOT UPDATE (Heap Only Tuple) — Optimization:
+Conditions:
+✅ Updated column is NOT indexed
+✅ New tuple fits on SAME page as old tuple
+
+Result:
+• No new index entry needed!
+• Old index → old tuple → HOT chain → new tuple
+• Saves index bloat, faster updates, less WAL
+
+Check HOT update ratio:
+SELECT n_tup_hot_upd, n_tup_upd,
+       round(n_tup_hot_upd * 100.0 / NULLIF(n_tup_upd,0), 1) AS hot_pct
+FROM pg_stat_user_tables
+WHERE relname = 'users';
+-- High hot_pct = good. Low = index bloat happening.`} />
+
+<Aside type="tip">
+**Real-Life SDE**: If you're updating a column frequently (like `last_seen_at`, `login_count`), **don't index it** — you'll destroy HOT updates and cause index bloat. Store frequently-updated fields in a separate table if they don't need indexing.
+</Aside>
+
+### 🔬 DELETE Internals
+
+<Steps>
+1. Find Tuple:
+    Via index scan or sequential scan, depending on planner choice.
+2. Mark Dead:
+    Set `xmax = current_txn` on that tuple. Tuple still physically on disk!
+3. WAL Record:
+    Log the `xmax` change for durability.
+4. COMMIT:
+    Tuple becomes invisible to new transactions (MVCC snapshot).
+5. VACUUM Later:
+    - Removes dead tuple from page
+    - Updates Free Space Map with reclaimed space
+    - Updates Visibility Map if page is now "all visible"
+</Steps>
+
+---
+
+## 5️⃣ Transactions — Safety Net for Data Modification
+
+<Code lang="sql" title="Transaction patterns for safe writes" code={`-- Wrap multiple writes in a transaction (all-or-nothing)
+BEGIN;
+
+INSERT INTO orders (user_id, amount) VALUES (42, 999);
+UPDATE users SET order_count = order_count + 1 WHERE id = 42;
+INSERT INTO order_events (order_id, event) 
+  VALUES (LASTVAL(), 'created');  -- LASTVAL() gets last SERIAL value
+
+COMMIT;
+-- If anything fails between BEGIN and COMMIT:
+-- ✅ All changes are rolled back automatically
+-- ✅ No partial updates in the database
+
+-- Manual rollback (e.g., validation failed)
+BEGIN;
+DELETE FROM orders WHERE user_id = 42;
+-- oops, wrong user. Cancel it.
+ROLLBACK;
+-- ✅ Nothing deleted
+
+-- SAVEPOINT: partial rollback within a transaction
+BEGIN;
+INSERT INTO users (name) VALUES ('Raj');
+SAVEPOINT after_user;
+
+INSERT INTO payments (user_id, amount) VALUES (1, -500); -- bad data!
+-- Validation fails...
+
+ROLLBACK TO SAVEPOINT after_user;   -- undo only payment insert
+INSERT INTO payments (user_id, amount) VALUES (1, 500);  -- correct data
+COMMIT;
+-- ✅ User inserted + correct payment committed`} />
+
+<CardGrid>
+  <Card title="Transaction Isolation Levels" icon="information">
+    ```text
+    Postgres default: READ COMMITTED
+    
+    • READ COMMITTED: Each query sees snapshot as of query start
+    • REPEATABLE READ: Entire transaction sees snapshot as of first query
+    • SERIALIZABLE: Prevents all anomalies (phantom reads, etc.)
+    
+    For most apps: READ COMMITTED is perfect.
+    Use SERIALIZABLE only for financial/audit-critical logic.
+    ```
+  </Card>
+  
+  <Card title="Locking Hints for Writes" icon="shield">
+    ```sql
+    -- Pessimistic lock: prevent other txns from updating row
+    SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;
+    -- Row locked until transaction commits/rollbacks
+    
+    -- Skip locked rows (useful for job queues)
+    SELECT * FROM jobs 
+    WHERE status = 'pending' 
+    FOR UPDATE SKIP LOCKED
+    LIMIT 10;
+    -- Only locks rows it can immediately acquire
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 6️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Audit Trail with Auto updated_at" icon="rocket">
+    ```sql
+    -- Trigger to auto-update updated_at on every UPDATE
+    CREATE OR REPLACE FUNCTION set_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    
+    CREATE TRIGGER trg_users_updated_at
+      BEFORE UPDATE ON users
+      FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    
+    -- Now every UPDATE automatically sets updated_at ✅
+    UPDATE users SET city = 'Delhi' WHERE id = 1;
+    -- updated_at auto-set to NOW() — no app code needed!
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Soft Delete (Industry Standard)" icon="shield">
+    ```sql
+    -- Never hard delete user data — mark as deleted
+    ALTER TABLE users ADD COLUMN deleted_at TIMESTAMPTZ;
+    
+    -- "Delete" a user
+    UPDATE users
+    SET    deleted_at = NOW()
+    WHERE  id = 42;
+    
+    -- All queries filter this out (add to every SELECT)
+    SELECT * FROM users WHERE deleted_at IS NULL;
+    
+    -- Restore if needed (compliance, user request)
+    UPDATE users SET deleted_at = NULL WHERE id = 42;
+    
+    -- Partial index: only index active users → smaller, faster
+    CREATE INDEX idx_users_active ON users(email) WHERE deleted_at IS NULL;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Batch Insert for High Throughput" icon="approve-check">
+    ```sql
+    -- Single INSERT with many VALUES (best for bulk)
+    INSERT INTO logs (user_id, action, created_at)
+    VALUES
+      (1, 'login',  NOW()),
+      (2, 'click',  NOW()),
+      (3, 'logout', NOW()),
+      -- ... thousands of rows
+      (9999, 'login', NOW());
+    
+    -- Even better: COPY command for millions of rows
+    COPY logs (user_id, action, created_at)
+    FROM '/tmp/logs.csv'
+    WITH (FORMAT csv, HEADER true);
+    -- 10-100x faster than INSERT for bulk loads ✅
+    
+    -- In application code (Node.js):
+    const { Pool } = require('pg');
+    const pool = new Pool();
+    
+    // Batch inserts in chunks of 1000
+    const chunkSize = 1000;
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+      const values = chunk.map(d => `(${d.userId}, '${d.action}', NOW())`).join(',');
+      await pool.query(`INSERT INTO logs (user_id, action, created_at) VALUES ${values}`);
+    }
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Safe Counter Increment" icon="backspace">
+    ```sql
+    -- Atomic increment — no race condition
+    UPDATE posts
+    SET    view_count = view_count + 1
+    WHERE  id = 101;
+    
+    -- With pessimistic lock for complex logic
+    BEGIN;
+    SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;
+    -- row is locked, no other txn can update it
+    
+    -- ... application logic ...
+    
+    UPDATE accounts SET balance = balance - 500 WHERE id = 1;
+    COMMIT;
+    
+    -- Or use SKIP LOCKED for job queues:
+    UPDATE jobs
+    SET    status = 'processing', started_at = NOW()
+    WHERE  id = (
+      SELECT id FROM jobs 
+      WHERE status = 'pending' 
+      ORDER BY created_at 
+      LIMIT 1 FOR UPDATE SKIP LOCKED
+    )
+    RETURNING id;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 7️⃣ Performance Tips — Write Fast, Scale Well
+
+<CardGrid>
+  <Card title="INSERT Performance" icon="rocket">
+    ```text
+    ✅ DO:
+    • Batch multiple rows in one INSERT statement
+    • Use COPY for millions of rows (10-100x faster)
+    • Drop indexes before bulk insert, rebuild after
+    • Use RETURNING to avoid follow-up SELECT
+    • Disable autovacuum temporarily during massive loads (then re-enable + VACUUM ANALYZE)
+    
+    ❌ AVOID:
+    • INSERT one row at a time in a loop (network + transaction overhead)
+    • Inserting into tables with many indexes (each index must update)
+    • Forgetting to ANALYZE after bulk load (planner stats stale)
+    ```
+  </Card>
+  
+  <Card title="UPDATE Performance" icon="shield">
+    ```text
+    ✅ DO:
+    • Always index columns used in WHERE clause
+    • Avoid updating indexed columns (kills HOT updates)
+    • Batch updates: WHERE id = ANY(ARRAY[1,2,3,...])
+    • Use UPDATE ... FROM for joins instead of app-side loops
+    
+    ❌ AVOID:
+    • UPDATE without WHERE = full table rewrite 💀
+    • Updating same rows repeatedly = table bloat
+    • Wrapping indexed columns in functions: WHERE UPPER(name) = 'X'
+    ```
+  </Card>
+
+  <Card title="DELETE Performance" icon="backspace">
+    ```text
+    ✅ DO:
+    • TRUNCATE for wiping entire table (instant, minimal WAL)
+    • Delete in batches for large deletes (avoid WAL explosion)
+    • Use partial indexes on soft-delete columns
+    • Run VACUUM ANALYZE after large deletes
+    
+    ❌ AVOID:
+    • DELETE millions of rows at once = WAL explosion + long locks
+    • Forgetting to filter soft-deleted rows in queries
+    • Deleting without checking affected row count first
+    ```
+  </Card>
+</CardGrid>
+
+### 🔁 Safe Batch Delete Pattern (Production-Ready)
+
+<Code lang="sql" title="Delete millions of rows without crashing your DB" code={`-- Deleting 10M old log rows? Don't do it in one shot.
+-- Do it in batches to avoid:
+-- • WAL explosion (disk full)
+-- • Long table locks (app downtime)
+-- • Autovacuum starvation
+
+DO $$
+DECLARE
+  deleted INT;
+BEGIN
+  LOOP
+    DELETE FROM logs
+    WHERE  id IN (
+      SELECT id FROM logs
+      WHERE  created_at < NOW() - INTERVAL '1 year'
+      LIMIT  10000           -- 10K rows at a time
+    );
+    
+    GET DIAGNOSTICS deleted = ROW_COUNT;
+    EXIT WHEN deleted = 0;   -- no more rows to delete
+    
+    PERFORM pg_sleep(0.1);   -- breathe, let other queries in
+  END LOOP;
+END $$;
+
+-- Monitor progress:
+SELECT n_dead_tup, n_live_tup, 
+       last_vacuum, last_autovacuum
+FROM pg_stat_user_tables 
+WHERE relname = 'logs';`} />
+
+<Aside type="tip">
+**Pro Tip**: For massive deletes, consider:
+1. `TRUNCATE` + repopulate if you can afford downtime
+2. Partitioning: `DROP PARTITION` is instant vs `DELETE` row-by-row
+3. Logical replication: redirect writes to new table, switch over
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="MVCC & Storage" icon="information">
+    ```text
+    Q: Does UPDATE overwrite data in place?
+    A: NO ❌ — marks old tuple dead (xmax=txn), inserts new tuple (xmin=txn).
+       Old version stays until Autovacuum cleans it.
+    
+    Q: What happens to a deleted row?
+    A: xmax set to deleting transaction ID. Still on disk, just invisible
+       to new transactions. Autovacuum later reclaims space.
+    
+    Q: What is HOT update?
+    A: Heap Only Tuple — optimization when updated column isn't indexed
+       AND new tuple fits on same page. No index update needed → faster.
+    ```
+  </Card>
+  
+  <Card title="RETURNING & Upsert" icon="rocket">
+    ```text
+    Q: What does RETURNING do?
+    A: Returns inserted/updated/deleted rows immediately — saves a round trip.
+       ✅ Faster, atomic, cleaner than INSERT then SELECT.
+    
+    Q: How do you do an upsert in Postgres?
+    A: INSERT ... ON CONFLICT (unique_col) DO UPDATE SET ...
+       Atomic, no race condition. EXCLUDED references the rejected row.
+    
+    Q: What does EXCLUDED mean in ON CONFLICT?
+    A: Special table reference containing the values from the INSERT
+       that was rejected due to conflict. Use it to reference incoming data.
+    ```
+  </Card>
+
+  <Card title="Performance & Operations" icon="shield">
+    ```text
+    Q: DELETE vs TRUNCATE for clearing a table?
+    A: TRUNCATE — instant, minimal WAL, resets storage. DELETE logs every row,
+       leaves dead tuples, slow for large tables.
+    
+    Q: How to safely delete 10M rows?
+    A: Batch deletes (10K at a time) with pg_sleep between batches.
+       Or use partitioning: DROP PARTITION is instant.
+    
+    Q: Why avoid updating indexed columns?
+    A: Breaks HOT updates → every update requires index modification →
+       index bloat, slower writes, more WAL.
+    
+    Q: Soft delete pattern?
+    A: Add deleted_at TIMESTAMPTZ column. "Delete" = UPDATE set deleted_at=NOW().
+       All queries add WHERE deleted_at IS NULL. Partial index on active rows.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### INSERT Patterns
+| Pattern | Syntax | Use Case |
+|---------|--------|----------|
+| Basic insert | `INSERT INTO t (c) VALUES (v)` | Single row |
+| Multi-row | `INSERT INTO t (c) VALUES (v1), (v2), ...` | Batch inserts |
+| From query | `INSERT INTO t SELECT ... FROM ...` | Copy/transform data |
+| RETURNING | `INSERT ... RETURNING col` | Get generated values immediately |
+| Upsert | `INSERT ... ON CONFLICT DO UPDATE` | Insert or update atomically |
+| Idempotent | `INSERT ... ON CONFLICT DO NOTHING` | Skip if exists, no error |
+
+### UPDATE Patterns
+| Pattern | Syntax | Use Case |
+|---------|--------|----------|
+| Basic | `UPDATE t SET c=v WHERE ...` | Modify specific rows |
+| Expression | `SET price = price * 1.1` | Atomic calculations |
+| CASE logic | `SET bonus = CASE WHEN ...` | Conditional updates |
+| FROM join | `UPDATE t SET ... FROM other WHERE ...` | Update using other table |
+| RETURNING | `UPDATE ... RETURNING col` | Confirm changes in one query |
+
+### DELETE Patterns
+| Pattern | Syntax | Use Case |
+|---------|--------|----------|
+| Basic | `DELETE FROM t WHERE ...` | Remove specific rows |
+| USING join | `DELETE FROM t USING other WHERE ...` | Delete based on other table |
+| RETURNING | `DELETE ... RETURNING col` | Audit what was removed |
+| TRUNCATE | `TRUNCATE TABLE t` | Instant wipe entire table |
+| Batch delete | `DELETE ... WHERE id IN (SELECT ... LIMIT N)` | Safe large deletes |
+
+### MVCC Behavior Quick Guide
+| Operation | xmin | xmax | Visible to new txns? | Cleanup |
+|-----------|------|------|---------------------|---------|
+| INSERT | current_txn | 0 | ✅ Yes | N/A |
+| UPDATE (old) | original_txn | current_txn | ❌ No | Autovacuum |
+| UPDATE (new) | current_txn | 0 | ✅ Yes | N/A |
+| DELETE | original_txn | current_txn | ❌ No | Autovacuum |
+
+<Aside type="caution">
+**Final Checklist for Data Modification**:
+1. ✅ Always use `RETURNING` to avoid follow-up SELECTs
+2. ✅ Use `ON CONFLICT` for atomic upserts — never check-then-insert in app code
+3. ✅ Batch INSERTs/UPDATEs/DELETEs — avoid row-by-row loops
+4. ✅ Index WHERE clause columns, but avoid indexing frequently-updated fields
+5. ✅ Use `TRUNCATE` for full-table clears, `DELETE` for filtered removes
+6. ✅ Monitor `n_dead_tup` and tune autovacuum for write-heavy tables
+7. ✅ Test destructive operations with `SELECT COUNT(*)` first
+8. ✅ Wrap multi-step writes in transactions for atomicity
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What happens to the old tuple after an UPDATE?
+A) Overwritten in place
+B) Marked dead with xmax, new tuple inserted
+C) Moved to TOAST table
+
+Q2: Why does INSERT ... RETURNING save a round trip?
+A) It combines INSERT and SELECT in one query
+B) It skips WAL logging
+C) It uses a faster storage engine
+
+Q3: What does EXCLUDED refer to in ON CONFLICT?
+A) The existing row in the table
+B) The row that was rejected due to conflict
+C) A temporary table of all conflicts
+
+Q4: Why might HOT updates not happen for a frequently-updated column?
+A) Column is indexed
+B) New tuple doesn't fit on same page
+C) Both A and B
+
+Q5: When should you use TRUNCATE instead of DELETE?
+A) When you need to filter rows with WHERE
+B) When you need RETURNING to audit deletions
+C) When you need to wipe an entire table instantly
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: B) Marked dead with xmax, new tuple inserted
+   → MVCC: old version stays until Autovacuum cleans it
+
+Q2: A) It combines INSERT and SELECT in one query
+   → One round trip instead of two → faster, atomic
+
+Q3: B) The row that was rejected due to conflict
+   → Use EXCLUDED.col to reference incoming values in DO UPDATE
+
+Q4: C) Both A and B
+   → HOT requires: non-indexed column + same-page fit
+
+Q5: C) When you need to wipe an entire table instantly
+   → TRUNCATE deallocates pages, minimal WAL, instant for large tables
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice `INSERT ... RETURNING` in your next feature — eliminate follow-up SELECTs
+2. ✅ Convert check-then-insert logic to `ON CONFLICT` upserts — prevent race conditions
+3. ✅ Run `EXPLAIN (ANALYZE, BUFFERS)` on your UPDATE/DELETE queries — verify index usage
+4. ✅ Monitor `pg_stat_user_tables` for `n_dead_tup` — tune autovacuum if bloating
+5. ✅ Use `COPY` for bulk data loads — 10-100x faster than row-by-row INSERT
+
+Mastering data modification internals turns you from a "query writer" into a **performance engineer**. 🐘⚡
+</Aside>

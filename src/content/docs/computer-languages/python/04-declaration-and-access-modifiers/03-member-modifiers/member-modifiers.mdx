@@ -1,0 +1,1234 @@
+---
+title: C++ Member Modifiers & Access Control
+slug: computer-languages/cpp/oop/member-modifiers
+description: Master public/protected/private, const, static, virtual, inline, and thread-safety in C++. Understand how C++ differs from Java's `final`, `volatile`, and `synchronized`.
+sidebar:
+  label: "Member Modifiers"
+  badge:
+    text: OOP Fundamentals
+    variant: tip
+tags: [cpp, modifiers, access-control, const, virtual, static, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔧 Member Modifiers in C++
+
+> C++ controls **visibility**, **mutability**, and **polymorphism** through a mix of access specifiers and keywords. Unlike Java, C++ gives you manual control over memory, inlining, and vtables.
+
+```text
+C++ Member Modifiers
+│
+├── Access Specifiers (Labels)
+│   ├── public     → accessible everywhere
+│   ├── protected  → same class + subclasses
+│   └── private    → same class only (default for classes!)
+│
+├── State & Behavior Keywords
+│   ├── const      → immutable state / read-only methods
+│   ├── static     → belongs to class, not instance
+│   ├── virtual    → enables runtime polymorphism (vtable)
+│   ├── override   → explicit override check (C++11)
+│   ├── final      → prevents overriding (C++11)
+│   ├── inline     → hint to compiler to embed code
+│   └── extern     → linkage specification
+│
+└── Concurrency (C++11+)
+    ├── atomic     → lock-free thread safety
+    ├── mutex      → mutual exclusion (like synchronized)
+    └── volatile   → hardware access (NOT thread safety!)
+```
+
+<Aside type="success">
+🎯 **Key Difference**: In C++, `private` is the **default** for `class` (but `public` for `struct`). There are no `package-private` or `protected` package rules—access is strictly hierarchical.
+</Aside>
+
+---
+
+## 🌍 Access Specifiers
+
+C++ uses **labels** (`public:`, `private:`, `protected:`) rather than per-member keywords.
+
+<Code lang="cpp" title="Access Control Basics" code={`
+class BankAccount {
+private: // 👈 Default for classes
+    double balance; // 🔒 Private data
+
+protected:
+    std::string owner; // 🛡️ Accessible by subclasses
+
+public:
+    void deposit(double amount) { // ✅ Public API
+        if (amount > 0) balance += amount;
+    }
+    
+    double getBalance() const { // ✅ Read-only access
+        return balance;
+    }
+};
+
+// Usage:
+BankAccount acc;
+acc.deposit(100); // ✅ OK
+// acc.balance = 500; // ❌ Compile Error: 'balance' is private
+`} />
+
+### 🔑 Visibility Rules
+
+| Specifier | Same Class | Subclass | Outside World |
+|-----------|------------|----------|---------------|
+| `private` | ✅ Yes | ❌ No | ❌ No |
+| `protected` | ✅ Yes | ✅ Yes | ❌ No |
+| `public` | ✅ Yes | ✅ Yes | ✅ Yes |
+
+<Aside type="caution">
+**Friendship**: C++ has a `friend` keyword that breaks encapsulation. A `friend` function/class can access `private` members. Use sparingly!
+</Aside>
+
+---
+
+## 🔒 const Correctness (The C++ Superpower)
+
+> `const` is pervasive in C++. It guarantees that an object or method **will not modify state**.
+
+### 1. Const Methods
+A method marked `const` promises not to modify any member variables.
+
+<Code lang="cpp" title="Const Methods" code={`
+class Player {
+    int health = 100;
+    std::string name;
+
+public:
+    // ❌ Error: Cannot modify 'health' in a const method
+    void takeDamage(int amt) const { 
+        health -= amt; 
+    }
+
+    // ✅ OK: Read-only access
+    int getHealth() const {
+        return health;
+    }
+    
+    // ✅ OK: Non-const method can modify state
+    void heal(int amt) {
+        health += amt;
+    }
+};
+
+const Player p;
+p.getHealth(); // ✅ OK
+// p.heal(10); // ❌ Error: cannot call non-const method on const object
+`} />
+
+### 2. Const Pointers & References
+C++ distinguishes between "pointer is const" and "data is const".
+
+```cpp
+int x = 10;
+const int* p1 = &x;  // Pointer to const int (can't change *p1)
+int* const p2 = &x;  // Const pointer to int (can't change p2)
+const int* const p3 = &x; // Both const
+```
+
+<Aside type="tip">
+**Interview Tip**: Always mark getter methods as `const`. It allows them to be called on `const` objects and references, improving code safety and optimization opportunities.
+</Aside>
+
+---
+
+## ⚡ virtual, override, and final
+
+C++ uses `virtual` to enable polymorphism (dynamic dispatch via vtable).
+
+<Code lang="cpp" title="Polymorphism in C++" code={`
+class Shape {
+public:
+    // Virtual destructor is CRITICAL for base classes!
+    virtual ~Shape() {} 
+
+    // Virtual method: looked up at runtime
+    virtual double area() const = 0; // Pure virtual (Abstract)
+    
+    // Normal virtual method
+    virtual void draw() const {
+        std::cout << "Drawing shape\n";
+    }
+};
+
+class Circle : public Shape {
+    double r;
+public:
+    Circle(double radius) : r(radius) {}
+
+    // override: Ensures we are actually overriding a virtual method
+    double area() const override {
+        return 3.14 * r * r;
+    }
+
+    // final: Prevents further overriding in subclasses
+    void draw() const override final {
+        std::cout << "Drawing Circle\n";
+    }
+};
+
+// class SmallCircle : public Circle {
+//     void draw() const override {} // ❌ Error: 'draw' is final
+// };
+`} />
+
+### 🔑 Key Rules
+1. **Virtual Destructor**: If a class has any virtual functions, its destructor **must** be `virtual`. Otherwise, deleting a derived object via a base pointer causes undefined behavior (memory leaks).
+2. **override**: Use this keyword in derived classes. It catches errors if the signature doesn't match the base class.
+3. **final**: Prevents a method or class from being overridden/subclassed.
+
+---
+
+## 🏛️ static Members
+
+Like Java, `static` members belong to the class, not instances.
+
+<Code lang="cpp" title="Static Members" code={`
+class Counter {
+private:
+    static int count; // Declaration only
+
+public:
+    Counter() {
+        count++;
+    }
+
+    // Static method
+    static int getCount() {
+        return count; // Can only access static members
+    }
+};
+
+// Definition (usually in .cpp file)
+int Counter::count = 0; 
+
+// Usage:
+std::cout << Counter::getCount(); // No instance needed
+`} />
+
+<Aside type="note">
+**Difference from Java**: In C++, static member variables must be **defined** outside the class (in one translation unit) unless they are `constexpr` or `inline` (C++17).
+</Aside>
+
+---
+
+## 🧵 Concurrency: volatile vs atomic vs mutex
+
+> ⚠️ **Critical Trap**: In C++, `volatile` does **NOT** provide thread safety. It tells the compiler not to optimize accesses to a variable (useful for hardware registers), but it does not prevent race conditions.
+
+<CardGrid>
+  <Card title="Thread Safety in C++" icon="shield">
+    ```cpp
+    #include <atomic>
+    #include <mutex>
+
+    class SafeCounter {
+        std::atomic<int> atomicCount{0}; // ✅ Lock-free thread safety
+        int regularCount = 0;
+        std::mutex mtx;                  // ✅ Mutual exclusion
+
+    public:
+        void incrementAtomic() {
+            atomicCount++; // ✅ Atomic operation
+        }
+
+        void incrementSafe() {
+            std::lock_guard<std::mutex> lock(mtx); // 🔒 Locks mutex
+            regularCount++;
+        }
+        
+        // ❌ DANGEROUS:
+        // volatile int vCount = 0;
+        // vCount++; // NOT atomic! Race condition possible.
+    };
+    ```
+  </Card>
+  
+  <Card title="When to use volatile?" icon="information">
+    Use `volatile` only for:
+    - Memory-mapped hardware registers
+    - Signal handlers
+    - `setjmp`/`longjmp` scenarios
+    
+    **Never** use it for threading. Use `std::atomic` or `std::mutex`.
+  </Card>
+</CardGrid>
+
+---
+
+## 🆚 Java vs C++ Modifier Mapping
+
+<table>
+  <thead>
+    <tr>
+      <th>Concept</th>
+      <th>Java</th>
+      <th>C++</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Immutable Method</strong></td>
+      <td><code>final</code> method</td>
+      <td><code>const</code> method (read-only)</td>
+    </tr>
+    <tr>
+      <td><strong>Prevent Override</strong></td>
+      <td><code>final</code> method</td>
+      <td><code>final</code> specifier (C++11)</td>
+    </tr>
+    <tr>
+      <td><strong>Polymorphism</strong></td>
+      <td>Default (all non-static/non-final)</td>
+      <td><code>virtual</code> keyword required</td>
+    </tr>
+    <tr>
+      <td><strong>Abstract Method</strong></td>
+      <td><code>abstract</code></td>
+      <td>Pure Virtual: <code>= 0</code></td>
+    </tr>
+    <tr>
+      <td><strong>Thread Safety</strong></td>
+      <td><code>synchronized</code></td>
+      <td><code>std::mutex</code> / <code>std::atomic</code></td>
+    </tr>
+    <tr>
+      <td><strong>Variable Visibility</strong></td>
+      <td><code>volatile</code> (visibility)</td>
+      <td><code>volatile</code> (no optimization) ⚠️</td>
+    </tr>
+    <tr>
+      <td><strong>Inline Expansion</strong></td>
+      <td>JIT decides</td>
+      <td><code>inline</code> hint</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the default access modifier in C++?" icon="information">
+    - For `class`: **`private`**
+    - For `struct`: **`public`**
+    - Inheritance: **`private`** (unlike Java's `public` default for interfaces/implements)
+  </Card>
+  
+  <Card title="Q: Why must destructors be virtual?" icon="error">
+    If you delete a derived object via a base pointer (`Base* p = new Derived(); delete p;`), and the destructor isn't virtual, the **derived destructor won't run**. This causes resource leaks.
+  </Card>
+
+  <Card title="Q: Does `volatile` make code thread-safe?" icon="backspace">
+    **NO ❌**. `volatile` prevents compiler optimizations (caching in registers) but does **not** provide atomicity or memory ordering guarantees. Use `std::atomic` for threads.
+  </Card>
+
+  <Card title="Q: What is `const` correctness?" icon="shield">
+    It’s the practice of marking methods as `const` if they don’t modify state. This allows objects to be shared safely via `const&` without copying, while guaranteeing they won’t be changed.
+  </Card>
+
+  <Card title="Q: How do you create an abstract class?" icon="rocket">
+    Declare at least one **pure virtual function**:
+    `virtual void foo() = 0;`
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Performance & Polymorphism
+
+<CardGrid>
+  <Card title="Pattern: Virtual Dispatch Cost" icon="caution">
+    Virtual functions use a **vtable** (virtual method table). Calling a virtual function involves:
+    1. Dereferencing the vptr (pointer in object).
+    2. Looking up the function address in the vtable.
+    3. Jumping to that address.
+    
+    This prevents **inlining** and can cause CPU cache misses. In high-performance DSA (like tight loops), prefer non-virtual interfaces (NVI) or templates (CRTP) to avoid overhead.
+  </Card>
+  
+  <Card title="Pattern: Const References for Input" icon="approve-check">
+    ```cpp
+    // ✅ Efficient: No copy, no modification allowed
+    void processGraph(const Graph& g) {
+        // g.addVertex(...); // ❌ Error
+    }
+    
+    // ❌ Bad: Copies the entire graph
+    void processGraph(Graph g) { ... }
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Keyword | Applies To | Meaning |
+|---------|------------|---------|
+| `public/protected/private` | Members/Inheritance | Access Control |
+| `const` | Methods/Vars | Immutability / Read-Only |
+| `static` | Members | Class-level scope |
+| `virtual` | Methods | Runtime Polymorphism |
+| `override` | Methods | Check override validity |
+| `final` | Methods/Classes | Prevent Override/Subclass |
+| `inline` | Functions | Hint to embed code |
+| `volatile` | Variables | Do not optimize access |
+| `= 0` | Methods | Pure Virtual (Abstract) |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Always make base class destructors `virtual`.
+2. ✅ Mark read-only methods as `const`.
+3. ✅ Use `override` in derived classes to catch signature mismatches.
+4. ✅ Never use `volatile` for threading—use `std::atomic`.
+5. ✅ Remember: `class` defaults to `private`, `struct` to `public`.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the Output/Error" code={`
+#include <iostream>
+
+class Base {
+public:
+    virtual void show() { std::cout << "Base\n"; }
+    virtual ~Base() {}
+};
+
+class Derived : public Base {
+public:
+    void show() override final { std::cout << "Derived\n"; }
+};
+
+// class SubDerived : public Derived {
+//     void show() override {} // ?
+// };
+
+int main() {
+    Base* b = new Derived();
+    b->show(); // ?
+    delete b;
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: "Derived"
+Reason: show() is virtual, so dynamic dispatch occurs.
+
+SubDerived Error: Compile Error.
+Reason: 'show' is marked 'final' in Derived, so it cannot be overridden.
+```
+</details>
+
+> 🚀 **Final Wisdom**: C++ gives you zero-cost abstractions. `virtual` costs a vtable lookup; `inline` saves a call; `const` saves a copy. Understand these costs to write high-performance code. And remember: **`volatile` is not for threads!** 🐍➡️🚀
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="C++17/20" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔧 Python Method Level Modifiers
+
+---
+
+## 🧠 Mental Model First
+
+```
+A METHOD MODIFIER changes HOW a method behaves:
+  - who it's bound to (instance / class / nobody)
+  - when it runs (lazy / cached / validated)
+  - what it returns (computed / transformed)
+  - whether subclasses must implement it
+  - whether subclasses can override it
+
+Python method modifiers = DECORATORS + NAMING CONVENTIONS
+
+Decorator execution model:
+  @decorator
+  def method(self): ...
+
+  ≡  method = decorator(method)   ← at CLASS DEFINITION TIME
+                                    not at call time
+```
+
+```
+FULL MODIFIER LANDSCAPE:
+┌─────────────────────────────────────────────────────────────────┐
+│  BINDING MODIFIERS                                              │
+│    @staticmethod       no binding (no self, no cls)            │
+│    @classmethod        bound to class (cls)                     │
+│                                                                 │
+│  ACCESS MODIFIERS                                               │
+│    @property           controlled get/set/delete               │
+│    @cached_property    computed once, stored in __dict__       │
+│                                                                 │
+│  CONTRACT MODIFIERS                                             │
+│    @abstractmethod     must be implemented by subclass         │
+│    @final              must NOT be overridden                  │
+│    @override           declares intent to override (3.12+)     │
+│                                                                 │
+│  PERFORMANCE MODIFIERS                                          │
+│    @lru_cache          memoize with LRU eviction               │
+│    @cache              memoize with no limit (3.9+)            │
+│                                                                 │
+│  DISPATCH MODIFIERS                                             │
+│    @singledispatchmethod  overload by first arg type           │
+│                                                                 │
+│  CUSTOM DECORATORS                                              │
+│    Any callable wrapping a method                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ `@staticmethod` — Detached from Instance and Class
+
+```python
+class Validator:
+    @staticmethod
+    def is_email(value: str) -> bool:
+        import re
+        return bool(re.match(r"[^@]+@[^@]+\.[^@]+", value))
+
+    @staticmethod
+    def is_positive(n: float) -> bool:
+        return n > 0
+```
+
+### 🔬 Descriptor Internals
+
+```
+Normal function in class:
+  Foo.__dict__['method'] = <function>
+  Foo.method              → function (unbound)
+  Foo().method            → bound method (self injected via __get__)
+
+@staticmethod:
+  Foo.__dict__['method'] = <staticmethod object>
+  Foo.method              → raw function (no binding)
+  Foo().method            → raw function (no binding)
+
+staticmethod.__get__() always returns the raw function.
+No self. No cls. No binding of any kind.
+```
+
+```python
+class Foo:
+    @staticmethod
+    def bar(): pass
+
+type(Foo.__dict__['bar'])   # <class 'staticmethod'>  ← wrapper object
+type(Foo.bar)               # <class 'function'>       ← unwrapped on access
+type(Foo().bar)             # <class 'function'>       ← same — no binding
+```
+
+---
+
+## 2️⃣ `@classmethod` — Bound to Class
+
+```python
+class Registry:
+    _entries: dict = {}
+
+    @classmethod
+    def register(cls, name: str):
+        def decorator(klass):
+            cls._entries[name] = klass
+            return klass
+        return decorator
+
+    @classmethod
+    def get(cls, name: str):
+        return cls._entries.get(name)
+
+    @classmethod
+    def create(cls, name: str, **kwargs):
+        klass = cls.get(name)
+        if klass is None:
+            raise KeyError(f"Unknown: {name}")
+        return klass(**kwargs)
+```
+
+### 🔬 `cls` Receives Actual Subclass
+
+```python
+class Animal:
+    @classmethod
+    def create(cls):
+        return cls()           # cls = actual class called on
+
+class Dog(Animal): pass
+class Cat(Animal): pass
+
+Dog.create()   # returns Dog()  ← cls = Dog
+Cat.create()   # returns Cat()  ← cls = Cat
+Animal.create()# returns Animal()
+
+# If this were @staticmethod:
+# No cls → always creates Animal — breaks polymorphism
+```
+
+---
+
+## 3️⃣ `@property` — Computed Attribute
+
+```python
+class User:
+    def __init__(self, first: str, last: str):
+        self._first = first
+        self._last  = last
+
+    @property
+    def full_name(self) -> str:
+        return f"{self._first} {self._last}"
+
+    @full_name.setter
+    def full_name(self, value: str):
+        parts = value.split(" ", 1)
+        self._first = parts[0]
+        self._last  = parts[1] if len(parts) > 1 else ""
+
+    @full_name.deleter
+    def full_name(self):
+        self._first = ""
+        self._last  = ""
+```
+
+### 🔬 Property Is a Data Descriptor
+
+```
+Data descriptor = defines BOTH __get__ AND __set__.
+Data descriptors take priority over instance.__dict__.
+
+Attribute lookup for instance.attr:
+  1. Data descriptors in type(instance).__mro__    ← property wins here
+  2. instance.__dict__
+  3. Non-data descriptors in type(instance).__mro__
+
+This means property always intercepts reads AND writes.
+Instance __dict__ cannot shadow a property.
+```
+
+```python
+class Demo:
+    @property
+    def x(self):
+        return 42
+
+d = Demo()
+d.__dict__['x'] = 999   # manually inject into instance dict
+d.x                      # 42  ← property still wins (data descriptor)
+```
+
+---
+
+## 4️⃣ `@functools.cached_property` — Lazy, Cached Property
+
+```python
+from functools import cached_property
+import math
+
+class Circle:
+    def __init__(self, radius: float):
+        self.radius = radius
+
+    @cached_property
+    def area(self) -> float:
+        print("computing...")
+        return math.pi * self.radius ** 2
+
+    @cached_property
+    def circumference(self) -> float:
+        return 2 * math.pi * self.radius
+```
+
+```python
+c = Circle(5)
+c.area      # "computing..." → 78.539...
+c.area      # (no print) → 78.539...  ← cached
+c.area      # (no print) → 78.539...
+```
+
+### 🔬 `cached_property` vs `property` — The Key Difference
+
+```
+property:
+  IS a data descriptor (has __set__)
+  Runs fget on EVERY access
+  No caching
+
+cached_property:
+  IS a non-data descriptor (only __get__, no __set__)
+  First access: calls fget → stores in instance.__dict__[name]
+  Subsequent: instance.__dict__[name] found at step 2 → descriptor skipped
+  Effectively caches itself by writing to instance dict
+
+CRITICAL: cached_property requires instance.__dict__
+→ Does NOT work with __slots__
+→ Is NOT thread-safe (two threads can compute simultaneously)
+```
+
+```python
+from threading import Lock
+
+class ThreadSafeCircle:
+    def __init__(self, radius):
+        self.radius = radius
+        self._lock = Lock()
+
+    @cached_property
+    def area(self):                    # race condition possible in CPython < 3.12
+        return 3.14159 * self.radius ** 2
+
+# Thread-safe alternative:
+class SafeCircle:
+    def __init__(self, radius):
+        self.radius = radius
+        self._area = None
+        self._lock = Lock()
+
+    @property
+    def area(self):
+        if self._area is None:
+            with self._lock:
+                if self._area is None:   # double-checked locking
+                    self._area = 3.14159 * self.radius ** 2
+        return self._area
+```
+
+---
+
+## 5️⃣ `@abstractmethod` — Interface Enforcement
+
+```python
+from abc import ABC, abstractmethod
+
+class DataStore(ABC):
+
+    @abstractmethod
+    def read(self, key: str): ...
+
+    @abstractmethod
+    def write(self, key: str, value): ...
+
+    @abstractmethod
+    def delete(self, key: str): ...
+
+    def exists(self, key: str) -> bool:   # concrete — uses abstract
+        try:
+            self.read(key)
+            return True
+        except KeyError:
+            return False
+```
+
+### Combining `@abstractmethod` With Other Decorators
+
+```python
+class Base(ABC):
+
+    @property
+    @abstractmethod
+    def name(self) -> str:               # abstract property
+        ...                              # @abstractmethod must be innermost
+
+    @classmethod
+    @abstractmethod
+    def from_config(cls, cfg: dict):     # abstract classmethod
+        ...                              # @abstractmethod must be innermost
+
+    @staticmethod
+    @abstractmethod
+    def validate(data) -> bool:          # abstract staticmethod
+        ...
+```
+
+```
+RULE: @abstractmethod must be the INNERMOST decorator.
+      (applied directly to the function, before other decorators wrap it)
+
+CORRECT:
+  @property
+  @abstractmethod        ← innermost
+  def foo(self): ...
+
+WRONG:
+  @abstractmethod        ← not innermost → ABC won't detect it
+  @property
+  def foo(self): ...
+```
+
+---
+
+## 6️⃣ `@final` — Prevent Override
+
+```python
+from typing import final
+
+class Base:
+    @final
+    def authenticate(self) -> bool:        # no subclass may override
+        return self._check_credentials()
+
+    def _check_credentials(self) -> bool:  # this CAN be overridden
+        ...
+
+class Child(Base):
+    @final
+    def authenticate(self):                # mypy ERROR
+        ...                                # runtime: ✅ Python allows it
+```
+
+> `@final` is **type-checker enforcement only**. `mypy` and `pyright` raise errors. CPython runtime ignores it completely.
+
+---
+
+## 7️⃣ `@override` — Declare Override Intent (3.12+)
+
+```python
+from typing import override
+
+class Animal:
+    def speak(self) -> str:
+        return "..."
+
+    def breathe(self) -> str:
+        return "inhale/exhale"
+
+class Dog(Animal):
+    @override
+    def speak(self) -> str:             # ✅ overrides Animal.speak
+        return "Woof"
+
+    @override
+    def breeth(self) -> str:            # 💥 mypy ERROR: no method 'breeth' in base
+        return "pant"                   # typo caught at static analysis time!
+```
+
+```
+@override does NOT change runtime behavior.
+It SIGNALS intent to type checkers.
+If base class doesn't have matching method → type error.
+
+Catches:
+  ├── Typos in overriding method name
+  ├── Base class method renamed → orphaned overrides flagged
+  └── API evolution — "which methods are overrides?" is explicit
+```
+
+---
+
+## 8️⃣ `@functools.lru_cache` — Memoization
+
+```python
+from functools import lru_cache
+
+class Fibonacci:
+
+    @lru_cache(maxsize=128)
+    def compute(self, n: int) -> int:
+        if n < 2:
+            return n
+        return self.compute(n-1) + self.compute(n-2)
+```
+
+### 🔬 Why `lru_cache` on Methods Is Tricky
+
+```python
+# PROBLEM — lru_cache on instance method:
+class MyClass:
+    @lru_cache(maxsize=128)
+    def expensive(self, x):
+        return x * 2
+
+# lru_cache uses ALL arguments as cache key — including self
+# self is part of the key → each instance has separate cache entries
+# BUT self holds a reference → instance NEVER garbage collected!
+# Memory leak for long-lived caches.
+
+import gc
+obj = MyClass()
+obj.expensive(1)
+del obj          # obj NOT deleted — lru_cache holds reference to self!
+gc.collect()     # obj still alive in cache
+```
+
+```python
+# FIX 1 — use cached_property + lru_cache on inner function:
+class MyClass:
+    @cached_property
+    def _expensive_impl(self):
+        @lru_cache(maxsize=128)
+        def impl(x):
+            return x * 2           # no self captured
+        return impl
+
+    def expensive(self, x):
+        return self._expensive_impl(x)
+
+# FIX 2 — methodtools.lru_cache (third-party, instance-aware)
+# FIX 3 — use @functools.cache on @staticmethod
+```
+
+### `@functools.cache` — Unlimited Cache (3.9+)
+
+```python
+from functools import cache
+
+class Solution:
+    @cache                       # no maxsize — unbounded
+    def ways(self, n: int) -> int:
+        if n <= 0: return 0
+        if n == 1: return 1
+        return self.ways(n-1) + self.ways(n-2)
+```
+
+### 🔬 LRU Cache Internals
+
+```
+lru_cache implements:
+  ├── Hash map: key → (result, prev, next) linked list node
+  ├── Doubly linked list: tracks access order
+  ├── On cache hit: move node to front (most recent)
+  ├── On cache miss: compute, add to front
+  └── If len > maxsize: evict from back (least recently used)
+
+Key = tuple of all arguments (must be HASHABLE)
+  lru_cache(fn)(1, 2)      → key = (1, 2)
+  lru_cache(fn)([1,2], 3)  → 💥 TypeError: unhashable list
+```
+
+```python
+# Cache introspection:
+class MyClass:
+    @lru_cache(maxsize=128)
+    def heavy(self, n): ...
+
+obj = MyClass()
+obj.heavy(1)
+obj.heavy(2)
+obj.heavy(1)
+
+obj.heavy.cache_info()   # CacheInfo(hits=1, misses=2, maxsize=128, currsize=2)
+obj.heavy.cache_clear()  # wipes the cache
+```
+
+---
+
+## 9️⃣ `@singledispatchmethod` — Method Overloading by Type
+
+```python
+from functools import singledispatchmethod
+
+class Serializer:
+
+    @singledispatchmethod
+    def serialize(self, data):               # default — catch-all
+        raise NotImplementedError(f"Cannot serialize {type(data)}")
+
+    @serialize.register(int)
+    def _(self, data: int) -> str:
+        return str(data)
+
+    @serialize.register(list)
+    def _(self, data: list) -> str:
+        import json
+        return json.dumps(data)
+
+    @serialize.register(dict)
+    def _(self, data: dict) -> str:
+        import json
+        return json.dumps(data)
+
+    @serialize.register(bytes)
+    def _(self, data: bytes) -> str:
+        return data.hex()
+```
+
+```python
+s = Serializer()
+s.serialize(42)             # "42"
+s.serialize([1, 2, 3])      # "[1, 2, 3]"
+s.serialize(b"\xff")        # "ff"
+s.serialize(object())       # NotImplementedError
+```
+
+### 🔬 Dispatch Internals
+
+```
+singledispatchmethod uses:
+  dispatch dictionary: {type: implementation}
+  On call: looks up type(first_arg) in dict
+           walks MRO for closest registered type
+  O(1) dispatch for registered types
+  O(depth) for unregistered → walks MRO
+```
+
+---
+
+## 🔬 Custom Method Decorators
+
+### Anatomy of a Method Decorator
+
+```python
+import functools
+import time
+
+def retry(times=3, delay=1.0, exceptions=(Exception,)):
+    def decorator(method):
+        @functools.wraps(method)          # preserve __name__, __doc__, __wrapped__
+        def wrapper(self, *args, **kwargs):
+            last_exc = None
+            for attempt in range(1, times + 1):
+                try:
+                    return method(self, *args, **kwargs)
+                except exceptions as e:
+                    last_exc = e
+                    if attempt < times:
+                        time.sleep(delay * attempt)
+            raise last_exc
+        return wrapper
+    return decorator
+
+
+class PaymentClient:
+    @retry(times=3, delay=0.5, exceptions=(TimeoutError, ConnectionError))
+    def charge(self, amount: float) -> dict:
+        return self._api.post("/charge", {"amount": amount})
+```
+
+### `@functools.wraps` — Why It's Mandatory
+
+```python
+def my_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def my_decorator_correct(func):
+    @functools.wraps(func)     # copies __name__, __doc__, __dict__, __wrapped__
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@my_decorator
+def greet(name: str) -> str:
+    """Say hello."""
+    return f"Hello {name}"
+
+@my_decorator_correct
+def greet2(name: str) -> str:
+    """Say hello."""
+    return f"Hello {name}"
+
+greet.__name__    # "wrapper"  ← broken — hides original name
+greet.__doc__     # None       ← broken — loses docstring
+
+greet2.__name__   # "greet2"   ← correct
+greet2.__doc__    # "Say hello." ← correct
+greet2.__wrapped__# original function ← accessible for unwrapping
+```
+
+```
+Without @functools.wraps:
+  ├── Introspection breaks (help(), pydoc)
+  ├── Stack traces show "wrapper" everywhere
+  ├── @lru_cache stacked on top uses wrong cache key
+  ├── pytest shows wrong test names
+  └── Sphinx generates wrong documentation
+```
+
+---
+
+## 🔬 Decorator Stacking — Order Matters
+
+```python
+class MyClass:
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def expensive_class_op(cls, n):   # ✅ works — classmethod outermost
+        return n ** 2
+
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def expensive_static(n):          # ✅ works — staticmethod outermost
+        return n ** 2
+```
+
+```
+STACKING ORDER = bottom-up application, top-down reading:
+
+  @A
+  @B
+  @C
+  def method(): ...
+
+  ≡  method = A(B(C(method)))
+  C applied first, then B wraps result, then A wraps that.
+
+EXAMPLE:
+
+  @property
+  @abstractmethod
+  def foo(self): ...
+
+  ≡  foo = property(abstractmethod(foo))
+  abstractmethod marks it abstract first
+  property wraps the abstract function
+```
+
+```python
+# Stacking order that FAILS:
+class Bad(ABC):
+    @abstractmethod   ← outermost — wraps property object
+    @property         ← property wraps raw function
+    def name(self): ...
+    # ABCMeta looks for __isabstractmethod__ attribute
+    # abstractmethod sets it on the function
+    # but property doesn't propagate __isabstractmethod__
+    # → abstract method NOT detected → class can be instantiated
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Memoization with lru_cache — classic DP:
+class Solution:
+    def coinChange(self, coins: list[int], amount: int) -> int:
+        @lru_cache(maxsize=None)
+        def dp(remaining):
+            if remaining < 0: return float('inf')
+            if remaining == 0: return 0
+            return 1 + min(dp(remaining - c) for c in coins)
+        result = dp(amount)
+        return result if result != float('inf') else -1
+
+# Dispatch by node type — AST traversal:
+class Evaluator:
+    @singledispatchmethod
+    def eval(self, node):
+        raise NotImplementedError
+
+    @eval.register(int)
+    def _(self, node): return node
+
+    @eval.register(list)   # ['+', left, right]
+    def _(self, node):
+        op, l, r = node
+        if op == '+': return self.eval(l) + self.eval(r)
+        if op == '*': return self.eval(l) * self.eval(r)
+```
+
+---
+
+## 💀 Interview Trap 1 — `lru_cache` Prevents GC of Instances
+
+```python
+from functools import lru_cache
+import weakref
+
+class HeavyObject:
+    @lru_cache(maxsize=100)
+    def compute(self, x):
+        return x ** 2
+
+obj = HeavyObject()
+obj.compute(5)     # cached with key=(obj, 5)
+del obj            # 💀 obj NOT garbage collected
+                   # lru_cache holds strong reference to obj in cache key!
+
+# Memory keeps growing if many instances created with lru_cache methods
+```
+
+---
+
+## 💀 Interview Trap 2 — `@cached_property` + `__slots__`
+
+```python
+class Point:
+    __slots__ = ("x", "y")    # no __dict__
+
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    @cached_property
+    def distance(self):
+        return (self.x**2 + self.y**2) ** 0.5
+
+p = Point(3, 4)
+p.distance      # 💥 TypeError: Cannot use cached_property instance without calling __set_name__
+                # AttributeError: 'Point' object has no attribute '__dict__'
+
+# cached_property writes to instance.__dict__ — __slots__ removes it
+# Fix: use @property instead (recomputes), or add '__dict__' to __slots__
+```
+
+---
+
+## 💀 Interview Trap 3 — Decorator Doesn't Receive `self` When Applied
+
+```python
+def log_call(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):    # self captured HERE at call time
+        print(f"{self.__class__.__name__}.{method.__name__} called")
+        return method(self, *args, **kwargs)
+    return wrapper
+
+class Service:
+    @log_call
+    def process(self, data):
+        return data
+
+# At class definition:
+#   log_call(process)  → called with UNBOUND function
+#   self doesn't exist yet — only exists when instance calls it
+
+# WRONG pattern:
+def bad_decorator(method):
+    print(self)    # NameError — self doesn't exist here!
+    def wrapper(self, *args, **kwargs):
+        return method(self, *args, **kwargs)
+    return wrapper
+```
+
+---
+
+## 💀 Interview Trap 4 — `@singledispatchmethod` Uses First Non-`self` Arg
+
+```python
+from functools import singledispatchmethod
+
+class Processor:
+    @singledispatchmethod
+    def process(self, data):         # dispatches on type(data)
+        raise NotImplementedError
+
+    @process.register(str)
+    def _(self, data: str):
+        return data.upper()
+
+p = Processor()
+p.process("hello")    # "HELLO"  ✅
+p.process(42)         # NotImplementedError  ← int not registered
+
+# Dispatch is on FIRST arg after self — NOT on self
+# Registering on the instance type does nothing
+```
+
+---

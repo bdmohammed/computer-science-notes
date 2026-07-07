@@ -1,0 +1,1468 @@
+196. Delete Duplicate Emails
+-------------------------------------------------------------------------------
+Table: Person
+
++-------------+---------+
+| Column Name | Type    |
++-------------+---------+
+| id          | int     |
+| email       | varchar |
++-------------+---------+
+id is the primary key (column with unique values) for this table.
+Each row of this table contains an email. The emails will not contain uppercase letters.
+ 
+
+Write a solution to delete all duplicate emails, keeping only one unique email with the smallest id.
+
+For SQL users, please note that you are supposed to write a DELETE statement and not a SELECT one.
+
+For Pandas users, please note that you are supposed to modify Person in place.
+
+After running your script, the answer shown is the Person table. The driver will first compile and run your piece of code and then show the Person table. The final order of the Person table does not matter.
+
+The result format is in the following example.
+
+ 
+
+Example 1:
+
+Input: 
+Person table:
++----+------------------+
+| id | email            |
++----+------------------+
+| 1  | john@example.com |
+| 2  | bob@example.com  |
+| 3  | john@example.com |
++----+------------------+
+Output: 
++----+------------------+
+| id | email            |
++----+------------------+
+| 1  | john@example.com |
+| 2  | bob@example.com  |
++----+------------------+
+Explanation: john@example.com is repeated two times. We keep the row with the smallest Id = 1.
+
+-----------------------------------------------------
+
+## 🎯 Problem Restatement (Postgres Context)
+> Delete duplicate `email` rows, keeping only the one with the **smallest `id`**.  
+> ✅ Use `DELETE`, not `SELECT`  
+> ✅ Modify table in-place  
+> ✅ Final order doesn't matter
+
+---
+
+## 🧠 The Three PostgreSQL Approaches
+
+### 🔹 Approach 1: `DELETE ... USING` Self-Join (🏆 Recommended)
+```sql
+DELETE FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email 
+  AND p1.id > p2.id;
+```
+
+### 🔹 Approach 2: `NOT IN` with Subquery
+```sql
+DELETE FROM Person
+WHERE id NOT IN (
+    SELECT MIN(id)
+    FROM Person
+    GROUP BY email
+);
+```
+
+### 🔹 Approach 3: Window Function + CTE (Postgres 9.4+)
+```sql
+DELETE FROM Person
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id, 
+               ROW_NUMBER() OVER (PARTITION BY email ORDER BY id) AS rn
+        FROM Person
+    ) t
+    WHERE rn > 1
+);
+```
+
+> 💡 **Postgres Bonus**: Add `RETURNING *` to see what was deleted:
+```sql
+DELETE FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email AND p1.id > p2.id
+RETURNING p1.*;  -- 🔍 Audit trail!
+```
+
+---
+
+## ⚡ Head-to-Head Comparison (PostgreSQL-Specific)
+
+| Criteria | **`DELETE ... USING`** (Approach 1) | **`NOT IN` Subquery** | **Window Function + CTE** |
+|----------|-------------------------------------|----------------------|---------------------------|
+| **🚀 Speed (Small <10K)** | ⭐⭐⭐⭐⭐ ~O(n) with index | ⭐⭐⭐⭐ ~O(n) | ⭐⭐⭐ ~O(n log n) |
+| **🚀 Speed (Large >1M)** | ⭐⭐⭐⭐⭐ Scales linearly | ⭐⭐ Subquery materialization overhead | ⭐⭐⭐⭐ Good with proper sort |
+| **💾 Memory** | Low (streaming nested loop) | Medium (hash table for GROUP BY) | High (window aggregate buffer) |
+| **🔍 Index Friendly** | ✅✅✅ `idx(email, id)` → Index Scan + Bitmap Heap | ✅✅ `idx(email)` helps GROUP BY | ✅✅ Needs `idx(email, id)` for sort elimination |
+| **🧊 NULL Handling** | ✅ Safe (`JOIN` excludes NULLs naturally) | ⚠️ **Dangerous**: `NOT IN (..., NULL)` → 0 rows affected | ✅ Safe (`PARTITION BY email` skips NULLs) |
+| **🔐 Postgres Compatibility** | ✅ 9.0+ | ✅ All versions | ✅ 9.4+ (window functions) |
+| **🧪 Readability** | ✅ Clear, explicit join logic | ✅ Simple, but subtle NULL trap | ❌ Nested, verbose |
+| **🔄 CTE Optimization** | N/A | ⚠️ Subquery may be re-evaluated | ✅ Use `MATERIALIZED`/`NOT MATERIALIZED` (PG 12+) |
+| **🛡️ Transaction + RETURNING** | ✅ `RETURNING` for audit/debug | ✅ Same | ✅ Same |
+
+---
+
+## 🔍 Deep Dive: PostgreSQL-Specific Dimensions
+
+### 1️⃣ ⚡ Execution Plan Analysis (`EXPLAIN ANALYZE`)
+```sql
+-- 🔍 Check the plan for Approach 1:
+EXPLAIN ANALYZE
+DELETE FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email AND p1.id > p2.id;
+```
+
+**Typical Optimal Plan:**
+```
+Delete on Person p1  (actual time=.. rows=.. loops=1)
+  -> Nested Loop  (cost=.. rows=.. width=..)
+      -> Seq Scan on Person p2  (or Index Scan if filtered)
+      -> Index Scan using idx_email_id on Person p1
+            Index Cond: (email = p2.email AND id > p2.id)
+```
+
+✅ With `idx(email, id)`: **Index-only scan possible** → minimal I/O  
+❌ Without index: **Hash Join + Seq Scan** → O(n²) risk on large tables
+
+### 2️⃣ 💾 Memory & Work_Mem Considerations
+| Approach | `work_mem` Impact | Spill to Disk? |
+|----------|-------------------|----------------|
+| `USING` Join | Low (row-by-row) | Rare |
+| `NOT IN` | Medium (hash table for GROUP BY) | Possible if `work_mem` low |
+| Window Function | High (sort + partition buffer) | Likely if unindexed + large data |
+
+> 🎯 **Tune for large deletes**:
+```sql
+SET work_mem = '256MB';  -- Temp boost for this session
+-- Run your DELETE
+RESET work_mem;
+```
+
+### 3️⃣ 🔍 Index Strategy (Postgres-Optimized)
+```sql
+-- 🎯 Optimal composite index:
+CREATE INDEX CONCURRENTLY idx_person_email_id 
+ON Person(email, id);  -- CONCURRENTLY avoids locks in prod!
+
+-- 📊 Verify usage:
+EXPLAIN ANALYZE DELETE FROM Person p1 USING Person p2 
+WHERE p1.email = p2.email AND p1.id > p2.id;
+```
+
+**Why `(email, id)`?**
+- `email` first → fast equality join / partition key
+- `id` second → supports `MIN(id)`, `ORDER BY`, range filter `p1.id > p2.id`
+- **Covering index** → Postgres can satisfy query from index alone (Index Only Scan)
+
+### 4️⃣ 🧊 NULL Safety (Postgres Behavior)
+```sql
+-- ⚠️ Approach 2 trap in Postgres:
+DELETE FROM Person
+WHERE id NOT IN (SELECT MIN(id) FROM Person GROUP BY email);
+
+-- If ANY email IS NULL:
+-- → GROUP BY creates a NULL group → MIN(id) for that group = some value
+-- → BUT: if the subquery returns ANY NULL (e.g., empty table edge case)
+-- → NOT IN (1, 2, NULL) → UNKNOWN → NO ROWS DELETED! 
+
+-- ✅ NULL-safe version:
+DELETE FROM Person
+WHERE id NOT IN (
+    SELECT MIN(id) 
+    FROM Person 
+    WHERE email IS NOT NULL  -- ✅ Explicit filter
+    GROUP BY email
+);
+
+-- ✅ Approach 1 & 3: NULL emails are naturally excluded from JOIN/PARTITION
+```
+
+### 5️⃣ 🔄 CTE Materialization (Postgres 12+)
+```sql
+-- Pre-PG12: CTEs are optimization fences (always materialized)
+-- PG12+: Can hint with MATERIALIZED / NOT MATERIALIZED
+
+-- Example: Force inline for better optimization
+DELETE FROM Person
+WHERE id IN (
+    WITH cte AS NOT MATERIALIZED (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY email ORDER BY id) rn
+        FROM Person
+    )
+    SELECT id FROM cte WHERE rn > 1
+);
+```
+
+> 🎯 **Rule of thumb**: For simple dedupe, avoid CTE overhead → use `USING` join.
+
+---
+
+## 🧭 Decision Flowchart (Postgres-Only)
+
+```
+Start
+│
+├─ Is table > 1M rows?
+│  ├─ Yes → Use DELETE...USING + idx(email,id) + CONCURRENTLY index ✅
+│  └─ No → Continue
+│
+├─ Are NULL emails possible?
+│  ├─ Yes → Avoid NOT IN; prefer USING or Window ✅
+│  └─ No → Continue
+│
+├─ Need to audit deleted rows?
+│  ├─ Yes → Add RETURNING * to USING approach ✅
+│  └─ No → Continue
+│
+├─ Complex "keep" logic? (e.g., latest created_at + min id)
+│  ├─ Yes → Window Function with PARTITION BY email, ORDER BY id, created_at ✅
+│  └─ No → DELETE...USING (simplest + fastest) 🏆
+```
+
+---
+
+## 🧪 Production-Ready Patterns (Postgres)
+
+### 🔹 Safe Delete with Dry Run + Transaction
+```sql
+BEGIN;
+
+-- 🔍 Preview what WILL be deleted
+SELECT p1.* 
+FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email AND p1.id > p2.id;
+
+-- ✅ Execute if correct
+DELETE FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email AND p1.id > p2.id
+RETURNING id, email;  -- Audit log
+
+COMMIT;  -- Or ROLLBACK if wrong
+```
+
+### 🔹 Batch Delete for Large Tables (Avoid Lock Contention)
+```sql
+-- Delete in chunks to reduce lock time
+DO $$
+DECLARE
+    batch_size INT := 10000;
+    deleted INT;
+BEGIN
+    LOOP
+        DELETE FROM Person p1
+        USING Person p2
+        WHERE p1.email = p2.email 
+          AND p1.id > p2.id
+          AND p1.id IN (
+              SELECT id FROM Person 
+              ORDER BY id 
+              LIMIT batch_size
+          );
+        
+        GET DIAGNOSTICS deleted = ROW_COUNT;
+        EXIT WHEN deleted = 0;
+        
+        COMMIT;  -- Or use SAVEPOINT for finer control
+    END LOOP;
+END $$;
+```
+
+### 🔹 Idempotent Script with Constraint (Prevention > Cure)
+```sql
+-- ✅ Add unique constraint to prevent future duplicates
+ALTER TABLE Person 
+ADD CONSTRAINT uk_person_email 
+UNIQUE (email);
+
+-- ✅ Use UPSERT for inserts (avoids duplicates at source)
+INSERT INTO Person (id, email)
+VALUES (100, 'new@example.com')
+ON CONFLICT (email) 
+DO UPDATE SET id = LEAST(Person.id, EXCLUDED.id);  -- Keep smallest id
+```
+
+---
+
+## 📋 Quick-Revision Cheat Sheet 🚀 (PostgreSQL)
+
+```sql
+-- 🏆 BEST: DELETE...USING (Memorize!)
+DELETE FROM Person p1
+USING Person p2
+WHERE p1.email = p2.email 
+  AND p1.id > p2.id;
+
+-- 🔍 Add RETURNING for debugging
+RETURNING p1.id, p1.email;
+
+-- 🎯 Index to Create (CONCURRENTLY in prod!)
+CREATE INDEX CONCURRENTLY idx_person_email_id 
+ON Person(email, id);
+
+-- 🛡️ NULL-Safe Subquery Fallback
+DELETE FROM Person
+WHERE id NOT IN (
+    SELECT MIN(id) FROM Person 
+    WHERE email IS NOT NULL 
+    GROUP BY email
+);
+```
+
+```
+⚡ Postgres Performance Ranking:
+1. DELETE...USING + idx(email,id) → 🥇 Fastest, index-only scan possible
+2. Window Function → 🥈 Flexible, good for complex logic
+3. NOT IN Subquery → 🥉 Simple but NULL-unsafe + materialization overhead
+
+🧠 Interview Script (Postgres Focus):
+"I'd use DELETE...USING with a composite index on (email, id). 
+It leverages Postgres's efficient join executor, avoids CTE 
+materialization overhead, handles NULLs safely, and supports 
+RETURNING for auditability. For large tables, I'd batch the 
+delete and use CONCURRENTLY index creation to minimize locks."
+```
+
+---
+
+## 🐘 PostgreSQL Pro Tips
+
+| Tip | Why It Matters |
+|-----|---------------|
+| `EXPLAIN (ANALYZE, BUFFERS)` | See actual I/O, not just estimates |
+| `CREATE INDEX CONCURRENTLY` | Avoid table locks during index build in prod |
+| `SET statement_timeout = '30s'` | Prevent runaway deletes from blocking |
+| Use `ctid` for ultra-fast physical dedupe (advanced) | `DELETE FROM Person WHERE ctid NOT IN (SELECT MIN(ctid) ...)` |
+| Monitor `pg_stat_user_tables` | Track `n_tup_del` to verify delete impact |
+
+---
+
+
+
+197. Rising Temperature
+Solved
+Easy
+Topics
+premium lock icon
+Companies
+SQL Schema
+Pandas Schema
+Table: Weather
+
++---------------+---------+
+| Column Name   | Type    |
++---------------+---------+
+| id            | int     |
+| recordDate    | date    |
+| temperature   | int     |
++---------------+---------+
+id is the column with unique values for this table.
+There are no different rows with the same recordDate.
+This table contains information about the temperature on a certain day.
+ 
+
+Write a solution to find all dates' id with higher temperatures compared to its previous dates (yesterday).
+
+Return the result table in any order.
+
+The result format is in the following example.
+
+ 
+
+Example 1:
+
+Input: 
+Weather table:
++----+------------+-------------+
+| id | recordDate | temperature |
++----+------------+-------------+
+| 1  | 2015-01-01 | 10          |
+| 2  | 2015-01-02 | 25          |
+| 3  | 2015-01-03 | 20          |
+| 4  | 2015-01-04 | 30          |
++----+------------+-------------+
+Output: 
++----+
+| id |
++----+
+| 2  |
+| 4  |
++----+
+Explanation: 
+In 2015-01-02, the temperature was higher than the previous day (10 -> 25).
+In 2015-01-04, the temperature was higher than the previous day (20 -> 30).
+
+
+# 🌡️ LeetCode 197: Rising Temperature
+*Easy • PostgreSQL • Time-Series Comparison Pattern*
+
+---
+
+## 🎯 Problem Summary
+> Find `id`s where `temperature` is **higher than yesterday's** temperature.  
+> ✅ Strictly 1-day gap (`recordDate - 1`)  
+> ✅ Return only `id`  
+> ✅ PostgreSQL syntax only
+
+---
+
+## ✅ PostgreSQL Solutions
+
+### 🔹 Approach 1: Self-Join + Date Arithmetic (🏆 Recommended)
+```sql
+SELECT w1.id
+FROM Weather w1
+JOIN Weather w2 
+  ON w1.recordDate = w2.recordDate + INTERVAL '1 day'
+WHERE w1.temperature > w2.temperature;
+```
+
+### 🔹 Approach 2: Window Function (`LAG`)
+```sql
+SELECT id FROM (
+    SELECT id, temperature, recordDate,
+           LAG(temperature) OVER (ORDER BY recordDate) AS prev_temp,
+           LAG(recordDate)   OVER (ORDER BY recordDate) AS prev_date
+    FROM Weather
+) t
+WHERE temperature > prev_temp 
+  AND recordDate - prev_date = 1;  -- 🐘 PG quirk: DATE - DATE = INTEGER days
+```
+
+---
+
+## ⚡ Head-to-Head Comparison (PostgreSQL-Specific)
+
+| Criteria | **Self-Join + INTERVAL** | **Window Function (`LAG`)** |
+|----------|--------------------------|-----------------------------|
+| **🚀 Speed (Small <100K)** | ⭐⭐⭐⭐⭐ ~O(N) with index | ⭐⭐⭐⭐ ~O(N log N) due to sort |
+| **🚀 Speed (Large >1M)** | ⭐⭐⭐⭐⭐ Index seek + join | ⭐⭐⭐ Window buffer + sort overhead |
+| **💾 Memory Usage** | Low (streaming nested/hash join) | Medium-High (window frame + sort temp) |
+| **🔍 Index Friendly** | ✅✅✅ `btree(recordDate)` → Index Scan/Seek | ✅✅ `btree(recordDate)` → Index Only Scan for ORDER BY |
+| **🧊 NULL Handling** | ✅ Safe (JOIN filters NULL dates naturally) | ✅ Safe (`> NULL` = false; explicit date check skips gaps) |
+| **🔐 Postgres Compatibility** | ✅ 8.0+ (standard interval math) | ✅ 8.4+ (window functions) |
+| **🔄 CTE/Inline Optimization** | N/A (direct join) | ✅ PG 12+ auto-inlines simple CTEs |
+| **🛡️ Audit/Debug** | Add `RETURNING w1.*` or `SELECT w1.*` first | Add `prev_temp, prev_date` to CTE output |
+| **📈 Readability** | ✅ Clear temporal relationship | ✅ Elegant for time-series, but slightly verbose |
+
+---
+
+## 🔍 Deep Dive: PostgreSQL Execution & Optimization
+
+### 1️⃣ ⚡ Execution Plan Analysis (`EXPLAIN (ANALYZE, BUFFERS)`)
+```sql
+-- 🔍 Self-Join Plan
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT w1.id
+FROM Weather w1
+JOIN Weather w2 ON w1.recordDate = w2.recordDate + INTERVAL '1 day'
+WHERE w1.temperature > w2.temperature;
+```
+**Typical Optimal Plan:**
+```
+Hash Join  (cost=.. rows=.. width=..)
+  Hash Cond: (w1.recordDate = (w2.recordDate + '1 day'::interval))
+  -> Seq Scan / Index Scan on Weather w1
+  -> Hash
+     -> Seq Scan / Index Scan on Weather w2
+```
+✅ With `idx(recordDate)`: Postgres often picks **Index Scan → Nested Loop** for sparse dates, or **Hash Join** for dense data. Both are highly optimized.
+
+### 2️⃣ 💾 Memory & `work_mem` Impact
+| Approach | `work_mem` Demand | Disk Spill Risk |
+|----------|-------------------|-----------------|
+| Self-Join | Low (hash table or nested loop) | Very Low |
+| Window `LAG` | Medium-High (sort + window frame buffer) | Moderate if `work_mem` < sort size |
+
+> 🎯 **Tune for large datasets**:
+```sql
+SET LOCAL work_mem = '128MB';  -- Session-only boost
+-- Run query
+```
+
+### 3️⃣ 🔍 Index Strategy (Postgres-Optimized)
+```sql
+-- 🎯 Optimal index:
+CREATE INDEX CONCURRENTLY idx_weather_date ON Weather(recordDate);
+
+-- 📊 Why this works:
+• Enables Index Scan for both w1 and w2
+• Postgres can push `INTERVAL` math into index condition
+• Covering scan possible if only `recordDate` + `id` needed
+```
+
+**Pro Tip:** If you frequently query `(recordDate, temperature)`, use:
+```sql
+CREATE INDEX CONCURRENTLY idx_weather_date_temp 
+ON Weather(recordDate, temperature);
+-- Enables Index Only Scan for both join & filter
+```
+
+### 4️⃣ 🧊 NULL & Gap Safety (Critical!)
+```sql
+-- ⚠️ What if Jan 2 is missing?
+-- Self-Join: w1(Jan3) JOIN w2(Jan2) → NO MATCH → correctly excluded ✅
+-- Window: LAG gives Jan1 → recordDate - prev_date = 2 → correctly excluded ✅
+
+-- 🛡️ Both approaches inherently handle:
+• NULL recordDate → JOIN/WINDOW filters out
+• Missing days → 1-day check fails → row excluded
+• Out-of-order data → ORDER BY / INTERVAL handles chronology
+```
+
+### 5️⃣ 🔄 PostgreSQL-Specific Quirks
+| Feature | Self-Join | Window `LAG` |
+|---------|-----------|--------------|
+| `DATE - DATE` returns `INTEGER` | ✅ `w1.recordDate - w2.recordDate = 1` works | ✅ `recordDate - prev_date = 1` works |
+| `INTERVAL` math | ✅ `+ INTERVAL '1 day'` (standard) | N/A |
+| CTE Inlining (PG 12+) | N/A | ✅ Auto-inlines simple CTEs → faster |
+| Parallel Query | ✅ Hash Join parallelizes well | ⚠️ Window sort often single-threaded |
+
+---
+
+## 🧭 Decision Flowchart (Postgres-Only)
+
+```
+Start
+│
+├─ Are dates guaranteed consecutive?
+│  ├─ Yes → Self-Join + INTERVAL (fastest) 🏆
+│  └─ No → Continue (both enforce 1-day check anyway)
+│
+├─ Is table > 5M rows?
+│  ├─ Yes → Self-Join + idx(recordDate) + Parallel Query ✅
+│  └─ No → Continue
+│
+├─ Need multi-day lookahead/lag or running stats?
+│  ├─ Yes → Window Function (LAG/LEAD/AVG OVER) ✅
+│  └─ No → Self-Join (simpler + lighter) 🥇
+│
+└─ Default → Self-Join Approach 1 ✅
+```
+
+---
+
+## 🧪 Production-Ready Patterns (PostgreSQL)
+
+### 🔹 Dry Run + Transaction Safety
+```sql
+BEGIN;
+
+-- 🔍 Preview matches
+SELECT w1.id, w1.recordDate, w1.temperature, w2.temperature AS prev_temp
+FROM Weather w1
+JOIN Weather w2 ON w1.recordDate = w2.recordDate + INTERVAL '1 day'
+WHERE w1.temperature > w2.temperature;
+
+-- ✅ Execute
+SELECT w1.id FROM ...;  -- Replace with actual query
+
+COMMIT; -- or ROLLBACK
+```
+
+### 🔹 Materialized View for Frequent Queries
+```sql
+CREATE MATERIALIZED VIEW mv_rising_temp AS
+SELECT w1.id, w1.recordDate, w1.temperature
+FROM Weather w1
+JOIN Weather w2 ON w1.recordDate = w2.recordDate + INTERVAL '1 day'
+WHERE w1.temperature > w2.temperature;
+
+-- Refresh daily
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_rising_temp;
+```
+
+### 🔹 Prevent Gaps with Constraints (Data Integrity)
+```sql
+-- Ensure no future dates or invalid ranges
+ALTER TABLE Weather 
+ADD CONSTRAINT chk_recorddate_range 
+CHECK (recordDate BETWEEN '2000-01-01' AND CURRENT_DATE);
+
+-- Unique index on date (already guaranteed by problem, but good practice)
+CREATE UNIQUE INDEX idx_weather_date_unique ON Weather(recordDate);
+```
+
+---
+
+## 📋 Quick-Revision Cheat Sheet 🚀 (PostgreSQL)
+
+```sql
+-- 🏆 BEST: Self-Join + INTERVAL (Memorize!)
+SELECT w1.id
+FROM Weather w1
+JOIN Weather w2 
+  ON w1.recordDate = w2.recordDate + INTERVAL '1 day'
+WHERE w1.temperature > w2.temperature;
+
+-- 🐘 PG Alternative: DATE subtraction = INTEGER
+-- ON w1.recordDate - w2.recordDate = 1
+
+-- 🎯 Index to Create (CONCURRENTLY in prod!)
+CREATE INDEX CONCURRENTLY idx_weather_recorddate 
+ON Weather(recordDate);
+
+-- 🛡️ Window Fallback (for complex time-series)
+SELECT id FROM (
+    SELECT id, temperature, recordDate,
+           LAG(temperature) OVER (ORDER BY recordDate) AS prev
+    FROM Weather
+) t WHERE temperature > prev AND recordDate - prev_date = 1;
+```
+
+```
+⚡ Postgres Performance Ranking:
+1. Self-Join + idx(recordDate) → 🥇 Fastest, parallel-friendly, low memory
+2. Window LAG → 🥈 Flexible, but sort overhead + higher memory
+3. Correlated Subquery → 🥉 Avoid (O(N²), no index pushdown)
+
+🧠 Interview Script (Postgres Focus):
+"I'd use a self-join with INTERVAL '1 day' and a btree index on recordDate.
+It leverages Postgres's efficient hash/nested-loop join executor, avoids 
+window sort overhead, and naturally handles missing dates or NULLs. For 
+production, I'd add a concurrent index, wrap in a transaction with dry-run,
+and consider a materialized view if queried frequently."
+```
+
+---
+
+## 🐘 PostgreSQL Pro Tips
+
+| Tip | Why It Matters |
+|-----|---------------|
+| `EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)` | See actual I/O, temp files, join strategy |
+| `SET enable_parallel_hash = on` | Speeds up self-joins on large tables |
+| `pg_stat_user_tables` → `idx_scan` | Verify index is actually being used |
+| `date_trunc('day', recordDate)` | Normalize if timestamps ever replace dates |
+| `GENERATE_SERIES` for gap analysis | Detect missing days in production data |
+
+
+
+577. Employee Bonus
+Solved
+Easy
+Topics
+premium lock icon
+Companies
+Hint
+SQL Schema
+Pandas Schema
+Table: Employee
+
++-------------+---------+
+| Column Name | Type    |
++-------------+---------+
+| empId       | int     |
+| name        | varchar |
+| supervisor  | int     |
+| salary      | int     |
++-------------+---------+
+empId is the column with unique values for this table.
+Each row of this table indicates the name and the ID of an employee in addition to their salary and the id of their manager.
+ 
+
+Table: Bonus
+
++-------------+------+
+| Column Name | Type |
++-------------+------+
+| empId       | int  |
+| bonus       | int  |
++-------------+------+
+empId is the column of unique values for this table.
+empId is a foreign key (reference column) to empId from the Employee table.
+Each row of this table contains the id of an employee and their respective bonus.
+ 
+
+Write a solution to report the name and bonus amount of each employee who satisfies either of the following:
+
+The employee has a bonus less than 1000.
+The employee did not get any bonus.
+Return the result table in any order.
+
+The result format is in the following example.
+
+ 
+
+Example 1:
+
+Input: 
+Employee table:
++-------+--------+------------+--------+
+| empId | name   | supervisor | salary |
++-------+--------+------------+--------+
+| 3     | Brad   | null       | 4000   |
+| 1     | John   | 3          | 1000   |
+| 2     | Dan    | 3          | 2000   |
+| 4     | Thomas | 3          | 4000   |
++-------+--------+------------+--------+
+Bonus table:
++-------+-------+
+| empId | bonus |
++-------+-------+
+| 2     | 500   |
+| 4     | 2000  |
++-------+-------+
+Output: 
++------+-------+
+| name | bonus |
++------+-------+
+| Brad | null  |
+| John | null  |
+| Dan  | 500   |
++------+-------+
+
+
+# 🎁 LeetCode 577: Employee Bonus
+*Easy • PostgreSQL • LEFT JOIN + Three-Valued Logic Pattern*
+
+---
+
+## 🎯 Problem Summary
+> Return `name` and `bonus` for employees who:
+> - Have `bonus < 1000`, **OR**
+> - Have **no bonus record** (`bonus IS NULL`)
+> ✅ Use `LEFT JOIN` to preserve all employees  
+> ✅ PostgreSQL syntax only  
+> ✅ Optimize for speed, memory, index usage, and NULL safety
+
+---
+
+## ✅ PostgreSQL Solution (🏆 Recommended)
+
+```sql
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+```
+
+**🔍 Why it works:**
+- `LEFT JOIN` keeps every employee row
+- Employees without a bonus get `b.bonus = NULL`
+- `WHERE` filters for `< 1000` **or** `IS NULL`
+- Explicit `IS NULL` bypasses SQL's three-valued logic (`NULL < 1000` → `UNKNOWN` → filtered out without it)
+
+---
+
+## ⚡ Head-to-Head Comparison Matrix (PostgreSQL)
+
+| Criteria | **LEFT JOIN + WHERE** (Recommended) | **COALESCE(b.bonus, 0) < 1000** | **UNION ALL (Split Logic)** |
+|----------|-------------------------------------|--------------------------------|-----------------------------|
+| **🚀 Speed** | ⭐⭐⭐⭐⭐ O(N+M), single pass | ⭐⭐⭐⭐ Function call per row | ⭐⭐⭐ Two scans + dedup |
+| **💾 Memory** | Low-Medium (Hash/Loop join) | Low | High (two result sets) |
+| **🔍 Index Friendly** | ✅✅✅ Pushes join predicate to PK | ❌ Non-sargable, blocks index | ✅✅ Good, but overhead |
+| **🧊 NULL Handling** | ✅ Explicit, three-valued logic safe | ⚠️ Masks intent, edge-case risks | ✅ Explicit per branch |
+| **🔄 Query Planner** | ✅ PG optimizes `OR IS NULL` well | ⚠️ May fall back to Seq Scan | ✅ Predictable, but verbose |
+| **📈 Readability** | ✅ Clear, standard SQL | ✅ Short, but hides NULLs | ❌ Overcomplicated |
+| **🛡️ Maintenance** | ✅ Easy to modify filters | ❌ Hard to extend logic | ❌ Duplicated code |
+
+---
+
+## 🔍 Deep Dive: PostgreSQL Execution & Optimization
+
+### 1️⃣ ⚡ Execution Plan Analysis
+```sql
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+```
+
+**Typical PG Plan:**
+```
+Hash Right Join  (cost=.. rows=.. width=..)
+  Hash Cond: (b.empId = e.empId)
+  -> Seq Scan on Bonus b
+  -> Hash
+     -> Seq Scan / Index Scan on Employee e
+Filter: (b.bonus < 1000 OR b.bonus IS NULL)
+```
+✅ With PK indexes on `empId`, PG uses **Hash Join** or **Nested Loop** efficiently.  
+✅ Filter is applied **after** join, which is correct for `LEFT JOIN` semantics.
+
+### 2️⃣ 🚨 Critical Trap: `ON` vs `WHERE` in LEFT JOIN
+```sql
+-- ❌ WRONG: Filter in ON clause
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId AND b.bonus < 1000;
+
+-- Why it fails:
+-- Employees with bonus >= 1000 get b.bonus = NULL
+-- NULL matches "no bonus" → incorrectly included! ✅
+
+-- ✅ CORRECT: Filter in WHERE
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+-- Explicitly separates join logic from filtering ✅
+```
+
+### 3️⃣ 🧊 NULL & Three-Valued Logic (SQL Standard)
+| Expression | Result | Filters Row? |
+|------------|--------|--------------|
+| `NULL < 1000` | `UNKNOWN` | ❌ Yes (filtered) |
+| `NULL IS NULL` | `TRUE` | ✅ No (kept) |
+| `500 < 1000` | `TRUE` | ✅ No (kept) |
+| `1500 < 1000` | `FALSE` | ❌ Yes (filtered) |
+
+> 💡 **PG Note**: `WHERE` only keeps `TRUE` rows. `UNKNOWN` and `FALSE` are dropped. Hence `OR b.bonus IS NULL` is **mandatory**.
+
+### 4️⃣ 🔍 Index Strategy (PostgreSQL)
+The schema states `empId` is the primary key in both tables, so indexes are auto-created:
+```sql
+-- Auto-created by PK constraint:
+-- Employee_pkey: UNIQUE btree (empId)
+-- Bonus_pkey: UNIQUE btree (empId)
+```
+**How PG uses them:**
+- `Bonus_pkey` → Hash lookup or Nested Loop probe
+- If `Bonus` grows large, consider a partial index for frequent reporting:
+```sql
+CREATE INDEX CONCURRENTLY idx_bonus_low ON Bonus(bonus) WHERE bonus < 1000;
+```
+
+### 5️⃣ 💾 Memory & `work_mem` Impact
+| Operation | `work_mem` Usage |
+|-----------|------------------|
+| Hash Join (default for this size) | Builds hash table on smaller table |
+| Nested Loop (if one table is tiny) | Near-zero memory |
+| Sort/Agg (not used here) | High |
+
+> 🎯 For tables >10M rows:
+```sql
+SET LOCAL work_mem = '128MB'; -- Speeds up hash build
+```
+
+---
+
+## 🧭 Decision Flowchart (Postgres-Only)
+
+```
+Start
+│
+├─ Need to preserve all left rows + filter right?
+│  ├─ Yes → LEFT JOIN + WHERE ✅
+│  └─ No → INNER JOIN or other
+│
+├─ Filter involves NULLs?
+│  ├─ Yes → Explicit IS NULL check ✅
+│  └─ No → Standard predicate
+│
+├─ Large table (>5M) + frequent reports?
+│  ├─ Yes → Materialized View + Partial Index ✅
+│  └─ No → Direct query 🏆
+```
+
+---
+
+## 🧪 Production-Ready Patterns (PostgreSQL)
+
+### 🔹 Idempotent & Auditable Query
+```sql
+BEGIN;
+
+-- 🔍 Preview matches
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+
+-- ✅ Execute in report generation
+COMMIT;
+```
+
+### 🔹 Materialized View for Dashboards
+```sql
+CREATE MATERIALIZED VIEW mv_low_bonus_employees AS
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+
+-- Refresh daily/hourly
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_low_bonus_employees;
+```
+
+### 🔹 Data Integrity Guard
+```sql
+-- Prevent negative bonuses
+ALTER TABLE Bonus 
+ADD CONSTRAINT chk_bonus_non_negative 
+CHECK (bonus >= 0);
+
+-- Ensure FK integrity (already implied, but explicit is better)
+ALTER TABLE Bonus 
+ADD CONSTRAINT fk_bonus_employee 
+FOREIGN KEY (empId) REFERENCES Employee(empId) 
+ON DELETE CASCADE;
+```
+
+---
+
+## 📋 Quick-Revision Cheat Sheet 🚀 (PostgreSQL)
+
+```sql
+-- 🏆 BEST: LEFT JOIN + Explicit NULL Check (Memorize!)
+SELECT e.name, b.bonus
+FROM Employee e
+LEFT JOIN Bonus b ON e.empId = b.empId
+WHERE b.bonus < 1000 OR b.bonus IS NULL;
+
+-- 🚫 AVOID: COALESCE (non-sargable, blocks indexes)
+-- WHERE COALESCE(b.bonus, 0) < 1000;
+
+-- 🎯 Indexes (Auto-created via PK, but good to know)
+-- Employee_pkey (empId), Bonus_pkey (empId)
+
+-- 🔍 Verify Plan
+EXPLAIN (ANALYZE, BUFFERS) SELECT ...;
+```
+
+```
+⚡ Performance Ranking:
+1. LEFT JOIN + WHERE (IS NULL + < 1000) → 🥇 Sargable, index-friendly, safe
+2. COALESCE approach → 🥈 Short syntax, but non-sargable
+3. UNION ALL split → 🥉 Correct but verbose & heavier
+
+🧠 Interview Script (Postgres Focus):
+"I'd use a LEFT JOIN with explicit IS NULL handling. SQL's three-valued 
+logic means NULL < 1000 evaluates to UNKNOWN, so filtering requires 
+'OR b.bonus IS NULL'. I'd place the filter in WHERE, not ON, to preserve 
+LEFT JOIN semantics. Since empId is PK in both tables, PG uses index-backed 
+hash/nested loop joins efficiently. For production dashboards, I'd wrap this 
+in a concurrently refreshed materialized view."
+```
+
+---
+
+## 🐘 PostgreSQL Pro Tips
+
+| Tip | Why It Matters |
+|-----|---------------|
+| `EXPLAIN (ANALYZE, BUFFERS)` | Confirms join strategy & I/O |
+| `SET enable_seqscan = off;` (temp) | Test index-only plans |
+| `pg_stat_user_tables` → `n_live_tup` | Monitor table bloat after updates |
+| `NULLS FIRST/LAST` in ORDER BY | Control NULL sort position if ordering needed |
+| `FILTER (WHERE ...)` with aggregates | Cleaner than CASE for partial sums |
+
+---
+
+*Quality >>>> Quantity* ✅  
+*PostgreSQL-native, production-hardened SQL* 🎯  
+*Visual + Conceptual + Practical* 🧠✨🐘
+
+
+
+
+586. Customer Placing the Largest Number of Orders
+Solved
+Easy
+Topics
+premium lock icon
+Companies
+Hint
+SQL Schema
+Pandas Schema
+Table: Orders
+
++-----------------+----------+
+| Column Name     | Type     |
++-----------------+----------+
+| order_number    | int      |
+| customer_number | int      |
++-----------------+----------+
+order_number is the primary key (column with unique values) for this table.
+This table contains information about the order ID and the customer ID.
+ 
+
+Write a solution to find the customer_number for the customer who has placed the largest number of orders.
+
+The test cases are generated so that exactly one customer will have placed more orders than any other customer.
+
+The result format is in the following example.
+
+ 
+
+Example 1:
+
+Input: 
+Orders table:
++--------------+-----------------+
+| order_number | customer_number |
++--------------+-----------------+
+| 1            | 1               |
+| 2            | 2               |
+| 3            | 3               |
+| 4            | 3               |
++--------------+-----------------+
+Output: 
++-----------------+
+| customer_number |
++-----------------+
+| 3               |
++-----------------+
+Explanation: 
+The customer with number 3 has two orders, which is greater than either customer 1 or 2 because each of them only has one order. 
+So the result is customer_number 3.
+ 
+
+Follow up: What if more than one customer has the largest number of orders, can you find all the customer_number in this case?
+
+# 🎯 Problem Summary
+> Find the `customer_number` of the customer who has placed the **maximum number of orders**.  
+> 🔁 **Follow-up**: Return **all** customers if multiple tie for the maximum count.
+
+**📥 Sample Input:**
+```
++--------------+-----------------+
+| order_number | customer_number |
++--------------+-----------------+
+| 1            | 1               |
+| 2            | 2               |
+| 3            | 3               |
+| 4            | 3               |
+| 5            | 1               |
+| 6            | 3               |
++--------------+-----------------+
+```
+
+━━━━━━━━━━━━━━━━━━━━
+# 🧩 Solutions Overview
+1. 🥇 `GROUP BY` + `ORDER BY COUNT(*) DESC` + `LIMIT 1` (Single winner)
+2. 🥈 `DENSE_RANK()` Window Function (Tie-safe follow-up)
+3. 🥉 Subquery `MAX(COUNT(*))` + `HAVING` (Legacy two-pass)
+
+━━━━━━━━━━━━━━━━━━━━
+# 🥇 Approach 1: `GROUP BY` + `ORDER BY` + `LIMIT 1`
+```sql
+SELECT customer_number
+FROM Orders
+GROUP BY customer_number
+ORDER BY COUNT(*) DESC
+LIMIT 1;
+```
+
+### 1. Execution Breakdown (Debug Style — Query-Driven)
+
+**a. Input Table Snapshot**
+```
++--------------+-----------------+
+| order_number | customer_number |
++--------------+-----------------+
+| 1            | 1               |
+| 2            | 2               |
+| 3            | 3               |
+| 4            | 3               |
+| 5            | 1               |
+| 6            | 3               |
++--------------+-----------------+
+```
+
+**b. Step-by-Step Data Flow (STRICT)**
+
+`1. FROM`
+• Loads full `Orders` table into execution pipeline.
+```
+| order_number | customer_number |
+|--------------|-----------------|
+| 1            | 1               |
+| 2            | 2               |
+| 3            | 3               |
+| 4            | 3               |
+| 5            | 1               |
+| 6            | 3               |
+```
+
+`3. GROUP BY customer_number`
+• Hashes rows into buckets, computes `COUNT(*)` for sorting later.
+• Buckets: `1→[1,5]`, `2→[2]`, `3→[3,4,6]`
+```
+| customer_number | [internal_count] |
+|-----------------|------------------|
+| 1               | 2                |
+| 2               | 1                |
+| 3               | 3                |
+```
+
+`8. ORDER BY COUNT(*) DESC`
+• PG sees `LIMIT 1` → triggers **Top-N Heapsort** (keeps only max in memory).
+```
+| customer_number | [internal_count] |
+|-----------------|------------------|
+| 3               | 3                |
+| 1               | 2                |
+| 2               | 1                |
+```
+
+`9. LIMIT 1`
+• Discards heap tail, emits top row.
+```
+| customer_number | [internal_count] |
+|-----------------|------------------|
+| 3               | 3                |
+```
+
+`6. SELECT customer_number`
+• Projects only requested column. Internal count is dropped.
+```
+| customer_number |
+|-----------------|
+| 3               |
+```
+
+**c. Intermediate Result Snapshots**
+| Step | Output |
+|------|--------|
+| `FROM` | 6×2 raw table |
+| `GROUP BY` | 3×1 aggregated (count kept internally) |
+| `ORDER BY` | 3×1 sorted by hidden count |
+| `LIMIT 1` | 1×1 top row retained |
+| `SELECT` | 1×1 final projection |
+
+**d. Query Plan Insight (PostgreSQL)**
+```
+Limit  (actual time=0.042..0.044 rows=1)
+  ->  Sort  (top-N heapsort)
+        Sort Key: (count(*)) DESC
+        ->  HashAggregate  (Group Key: customer_number)
+              ->  Seq Scan on Orders
+```
+🔗 `Seq Scan` → FROM | `HashAggregate` → GROUP BY | `Sort (top-N)` → ORDER BY | `Limit` → LIMIT
+
+**e. Key Observations**
+```
+Step         | Rows In | Rows Out | Work Done
+FROM         | 6       | 6        | Buffer load
+GROUP BY     | 6       | 3        | Hash build, counter inc
+ORDER BY     | 3       | 3        | Top-N heap push (O(log1))
+LIMIT 1      | 3       | 1        | Heap truncate
+SELECT       | 1       | 1        | Column projection
+```
+- 🔥 **Costliest**: `HashAggregate` (O(N) scan + hash).
+- 🕳️ **Hidden**: `COUNT(*)` is never materialized to disk; lives only in hash table & sort key. `LIMIT` prevents full sort.
+
+---
+
+### 2. Query Plan Insight (PostgreSQL)
+- **Why this plan?** No `WHERE` → full `Seq Scan` cheaper than index random I/O. `HashAggregate` chosen because input isn't sorted by `customer_number`. `Top-N heapsort` is auto-selected due to `LIMIT 1` (PG avoids O(G log G) full sort). If `btree(customer_number)` exists, planner swaps to `GroupAggregate` + `Index Scan`, skipping hash & sort entirely.
+
+### 3. Performance Deep Dive
+- ⏱️ **Time**: `O(N + G)` scan + `O(G log 1)` heap → `O(N)`
+- 💾 **Memory**: `work_mem ∝ G` (unique customers). Heap = 1 row. Extremely low footprint.
+- 🔍 **Index**: Ignored by default if `G` is small & table fits in cache. Index forces `GroupAggregate` → faster for >10M rows.
+- 📈 **Large Data**: Scales linearly. Streams into hash, aggregates, sorts only 1 element.
+
+### 4. Edge Cases
+- 🔘 **NULLs**: Groups into single `NULL` bucket. Safe.
+- 🤝 **Ties**: Returns **1 arbitrary** winner. Non-deterministic. ❌ Fails follow-up.
+- 📭 **Empty**: Returns `0` rows.
+- 📊 **Skewed**: Hash table size = `G`, unaffected by value distribution.
+
+### 5. Failure / Limitations
+- 🐢 Degrades to disk spill if `G > work_mem/8` (rare).
+- ❌ Non-deterministic on ties. Business logic breaks if ties occur.
+- ⚠️ `ORDER BY` without `LIMIT` forces full `O(G log G)` sort → CPU spike.
+
+━━━━━━━━━━━━━━━━━━━━
+# 🥈 Approach 2: `DENSE_RANK()` Window Function
+```sql
+WITH OrderCounts AS (
+    SELECT customer_number, COUNT(*) AS cnt
+    FROM Orders GROUP BY customer_number
+)
+SELECT customer_number
+FROM (
+    SELECT customer_number, cnt,
+           DENSE_RANK() OVER (ORDER BY cnt DESC) AS rnk
+    FROM OrderCounts
+) ranked
+WHERE rnk = 1;
+```
+
+### 1. Execution Breakdown
+
+**a. Input Table Snapshot** *(Same 6×2 table)*
+
+**b. Step-by-Step Data Flow**
+
+`1. FROM` + `3. GROUP BY` (CTE inlined)
+• Aggregates immediately. PG 12+ removes CTE fence.
+```
+| customer_number | cnt |
+|-----------------|-----|
+| 1               | 2   |
+| 2               | 1   |
+| 3               | 3   |
+```
+
+`5. WINDOW DENSE_RANK() OVER (ORDER BY cnt DESC)`
+• Requires full sort on `cnt DESC` → assigns ranks sequentially, skipping gaps for ties.
+```
+| customer_number | cnt | rnk |
+|-----------------|-----|-----|
+| 3               | 3   | 1   |
+| 1               | 2   | 2   |
+| 2               | 1   | 3   |
+```
+
+`2. WHERE rnk = 1` (Outer query filter)
+• Filters window result.
+```
+| customer_number | cnt | rnk |
+|-----------------|-----|-----|
+| 3               | 3   | 1   |
+```
+
+`6. SELECT customer_number`
+• Projects final column.
+```
+| customer_number |
+|-----------------|
+| 3               |
+```
+
+**c. Intermediate Result Snapshots**
+| Step | Output |
+|------|--------|
+| `GROUP BY` | 3×1 aggregated |
+| `WINDOW` | 3×2 + rank column (sorted internally) |
+| `WHERE` | 1×3 filtered |
+| `SELECT` | 1×1 projected |
+
+**d. Query Plan Insight**
+```
+Subquery Scan  Filter: (rnk=1)
+  -> WindowAgg
+       -> Sort (Key: cnt DESC)
+            -> HashAggregate (Group Key: customer_number)
+                 -> Seq Scan on Orders
+```
+🔗 `Seq`→FROM | `HashAgg`→GROUP BY | `Sort`+`WindowAgg`→WINDOW | `Filter`→WHERE | `Proj`→SELECT
+
+**e. Key Observations**
+```
+Step         | Rows | Work
+GROUP BY     | 6→3  | Hash build
+Sort         | 3→3  | Full Quicksort (no LIMIT optimization)
+WindowAgg    | 3→3  | Sequential rank assignment
+WHERE/SEL    | 3→1  | Post-window filter
+```
+- 🔥 **Costliest**: `Sort` step. Windows **cannot** short-circuit; must compute ranks for all `G` groups before `WHERE` filters.
+
+### 2. Query Plan Insight
+- **Why?** Window functions require sorted input for frame evaluation. PG inserts explicit `Sort`. CTE inlining merges steps, avoiding temp tables. Planner estimates cost based on `G` unique rows, not `N`.
+
+### 3. Performance Deep Dive
+- ⏱️ **Time**: `O(N)` scan + `O(G log G)` sort → dominates as `G` grows.
+- 💾 **Memory**: `work_mem ∝ G` (holds aggregated rows + sort buffer + window frame).
+- 🔍 **Index**: Speeds aggregation but **cannot eliminate sort**. Sort is mandatory for correct rank assignment.
+- 📈 **Large Data**: Scales well until `G > work_mem`. Then external merge sort triggers (disk I/O).
+
+### 4. Edge Cases
+- 🔘 **NULLs**: Safe. Grouped separately, ranked normally.
+- 🤝 **Ties**: ✅ Returns **ALL** tied customers. `DENSE_RANK` correctly assigns `rnk=1` to duplicates.
+- 📭 **Empty**: Returns `0`.
+- 📊 **Skewed**: Sort handles uniform/skewed counts identically. `DENSE_RANK` computes in single pass.
+
+### 5. Failure / Limitations
+- 🐢 Low `work_mem` → disk spill on sort → 3-5x slower.
+- ⚠️ Overhead for single-winner use cases (full sort vs top-N heap).
+- 📉 Cannot push `WHERE rnk=1` down; executed post-window.
+
+━━━━━━━━━━━━━━━━━━━━
+# 🥉 Approach 3: `MAX()` Subquery + `HAVING`
+```sql
+SELECT customer_number FROM Orders
+GROUP BY customer_number
+HAVING COUNT(*) = (
+    SELECT MAX(cnt) FROM (
+        SELECT COUNT(*) AS cnt FROM Orders GROUP BY customer_number
+    ) sub
+);
+```
+
+### 1. Execution Breakdown
+
+**a. Input Table Snapshot** *(Same)*
+
+**b. Step-by-Step Data Flow**
+
+`1. FROM` (Subquery InitPlan)
+• Runs inner subquery first (PG executes InitPlans before main).
+```
+| order_number | customer_number | (loaded) |
+```
+
+`3. GROUP BY` (Subquery)
+```
+| cnt |
+|-----|
+| 2   |
+| 1   |
+| 3   |
+```
+
+`8. ORDER BY` + `MAX()` (Subquery optimization)
+• PG computes `MAX(cnt)=3` directly without full sort if stats indicate.
+`Scalar Result: 3`
+
+`1. FROM` + `3. GROUP BY` (Outer Query)
+• Second full scan of `Orders`.
+```
+| customer_number | count |
+|-----------------|-------|
+| 1               | 2     |
+| 2               | 1     |
+| 3               | 3     |
+```
+
+`4. HAVING count = 3`
+• Compares against scalar `3`. Filters groups.
+```
+| customer_number | count |
+|-----------------|-------|
+| 3               | 3     |
+```
+
+`6. SELECT customer_number`
+```
+| customer_number |
+|-----------------|
+| 3               |
+```
+
+**c. Intermediate Result Snapshots**
+| Step | Output |
+|------|--------|
+| `SubQuery Agg` | 3×1 counts |
+| `SubQuery Max` | Scalar `3` |
+| `Outer Group` | 3×2 counts |
+| `HAVING` | 1×2 filtered |
+| `SELECT` | 1×1 final |
+
+**d. Query Plan Insight**
+```
+HashAggregate  Filter: (count(*) = $0)
+  InitPlan 1 ($0)
+    -> Limit (Sort: count DESC)
+         -> HashAggregate (customer_number)
+              -> Seq Scan on Orders
+  -> Seq Scan on Orders
+```
+🔗 Two `Seq Scan` + two `HashAggregate` + `InitPlan` scalar barrier.
+
+**e. Key Observations**
+```
+Phase       | Work
+InitPlan    | Full scan + agg + max find (1 pass)
+Main Query  | Full scan + agg + compare to scalar (2nd pass)
+HAVING      | Filter post-aggregate
+```
+- 🔥 **Costliest**: **Double scan & double aggregation**. I/O bound on large tables.
+- 🕳️ **Hidden**: `InitPlan` acts as execution barrier. Outer query blocks until subquery returns scalar `$0`.
+
+### 2. Query Plan Insight
+- **Why?** PG materializes subquery first to resolve `$0`. Lacks correlation → runs once. Planner chooses `HashAggregate` twice. Older PG versions force full materialization; PG 15+ may inline partially but still requires two passes logically.
+
+### 3. Performance Deep Dive
+- ⏱️ **Time**: `O(2N + 2G)` → strictly double the work of Approach 1.
+- 💾 **Memory**: Two concurrent hash tables + scalar cache. ~2x Approach 1 footprint.
+- 🔍 **Index**: Index speeds both scans, but **I/O doubles**. No structural bypass.
+- 📈 **Large Data**: Degrades fastest. Disk thrashing if table exceeds RAM. Avoid in production.
+
+### 4. Edge Cases
+- 🔘 **NULLs**: Safe. `MAX()` ignores nulls. Outer groups nulls normally.
+- 🤝 **Ties**: ✅ Returns all tied (scalar comparison matches multiple groups).
+- 📭 **Empty**: Subquery returns `NULL` → `HAVING count = NULL` → `UNKNOWN` → `0` rows. Correct.
+- 📊 **Skewed**: Penalty is constant regardless of distribution.
+
+### 5. Failure / Limitations
+- 🐢 Unacceptable for >5M rows (2x I/O + 2x CPU).
+- ⚠️ Hard to optimize; planner cannot push `MAX()` into outer aggregation.
+- 📉 Legacy pattern. Replaced by window functions in modern SQL.
+
+━━━━━━━━━━━━━━━━━━━━
+# 🧠 Variations / Extensions
+
+### 🔝 Variation 1: Top 3 Customers per Region
+```sql
+SELECT region, customer_number FROM (
+  SELECT r.region, o.customer_number, COUNT(*) as cnt,
+         DENSE_RANK() OVER(PARTITION BY r.region ORDER BY COUNT(*) DESC) as rnk
+  FROM Orders o JOIN Regions r USING(customer_id)
+  GROUP BY 1,2
+) WHERE rnk <= 3;
+```
+**Breakdown**: `JOIN` → `GROUP BY` (2 cols) → `WINDOW (PARTITION BY region)` → `FILTER rnk<=3` → `SELECT`. Window partitions by region, assigns rank 1-3 per bucket. Cost: `O(N)` scan + `O(G log G)` sort partitioned. Memory: `work_mem ∝ partitions`.
+
+### 📅 Variation 2: Monthly Order Growth (MoM)
+```sql
+SELECT month, COUNT(*), 
+       LAG(COUNT(*)) OVER (ORDER BY month) as prev,
+       (COUNT(*) - LAG(COUNT(*)) OVER (ORDER BY month)) as diff
+FROM Orders GROUP BY DATE_TRUNC('month', order_date);
+```
+**Breakdown**: `GROUP BY month` → `WINDOW (ORDER BY month)` computes `LAG` per row → `SELECT` projects diff. Sort required by window. Handles missing months by returning `NULL` in `LAG`.
+
+━━━━━━━━━━━━━━━━━━━━
+# 📊 Head-to-Head Comparison (PostgreSQL)
+
+| Approach | ⚡ Performance | 💾 Memory | 🔍 Index Usage | 🤝 Handles Ties | 🧩 Complexity |
+|----------|---------------|-----------|----------------|----------------|---------------|
+| `LIMIT 1` | ⭐⭐⭐⭐⭐ `O(N)` Top-N | 🔋 Very Low | ✅✅✅ Eliminates sort if indexed | ❌ No | 🟢 Trivial |
+| `DENSE_RANK()` | ⭐⭐⭐⭐ `O(G log G)` | 💧 Moderate | ✅✅ Speeds agg only | ✅ Yes | 🟡 Standard |
+| `MAX()+HAVING` | ⭐⭐ `O(2N)` | 💦 High | ✅ Helps but 2 passes | ✅ Yes | 🟠 Legacy |
+
+━━━━━━━━━━━━━━━━━━━━
+# 🚀 Production-Ready Patterns
+
+**🔍 1. Optimized Query (Index-Aware)**
+```sql
+-- 🛡️ Non-blocking index creation
+CREATE INDEX CONCURRENTLY idx_cust_orders ON Orders(customer_number);
+
+-- ✅ API-friendly (deterministic tie-break added)
+SELECT customer_number FROM Orders
+GROUP BY customer_number
+ORDER BY COUNT(*) DESC, customer_number ASC
+LIMIT 1;
+```
+
+**📦 2. Scalable Version (Large Datasets)**
+```sql
+-- 🗄️ Pre-aggregate event stream
+CREATE MATERIALIZED VIEW mv_daily_cust_orders AS
+SELECT customer_number, COUNT(*) as order_count
+FROM Orders GROUP BY customer_number;
+
+-- 🔍 Query lightweight MV
+WITH Ranked AS (
+  SELECT customer_number, DENSE_RANK() OVER(ORDER BY order_count DESC) rnk
+  FROM mv_daily_cust_orders
+) SELECT customer_number FROM Ranked WHERE rnk = 1;
+
+-- 🔄 Zero-downtime refresh
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_daily_cust_orders;
+```
+
+**💡 3. Recommended Real-World Approach**
+- ✅ **Microservices/APIs**: `LIMIT 1` + deterministic `ORDER BY ... ASC` tie-breaker. Fastest, lowest latency. ⚡
+- 📊 **BI/Dashboards**: `DENSE_RANK()` over MV or aggregated table. Tie-safe, readable, scales. 📈
+- 🛡️ **Monitoring**: Track `pg_stat_statements.mean_exec_time` & `shared_blks_read`. If >50ms, add index or switch to MV. 📉
+- 🧹 **Maintenance**: `ANALYZE Orders;` post-ETL. Accurate `n_distinct` stats ensure planner picks `HashAgg` vs `GroupAgg` correctly. 📐
+
+

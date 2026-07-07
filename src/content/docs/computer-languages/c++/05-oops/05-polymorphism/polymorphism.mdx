@@ -1,0 +1,1079 @@
+---
+title: C++ Polymorphism
+slug: computer-languages/cpp/oop/polymorphism
+description: Master polymorphism in C++ — virtual functions, vtables, dynamic dispatch, static polymorphism (templates/CRTP), and practical patterns for scalable architecture.
+sidebar:
+  label: "Polymorphism"
+  badge:
+    text: OOP Pillar
+    variant: tip
+tags: [cpp, polymorphism, virtual, overriding, vtable, crtp, templates, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🎭 Polymorphism in C++ — Complete Guide
+
+> **Polymorphism** means **"many forms"**. In C++, it allows objects of different types to be treated as objects of a common base type. Unlike Java, C++ distinguishes sharply between **Static Polymorphism** (Compile-time) and **Dynamic Polymorphism** (Runtime).
+
+```text
+Polymorphism in C++
+│
+├── Dynamic (Runtime) Polymorphism
+│   ├── Virtual Functions
+│   ├── Vtables & Dynamic Dispatch
+│   └── Abstract Base Classes (Interfaces)
+│
+├── Static (Compile-Time) Polymorphism
+│   ├── Function Overloading
+│   ├── Operator Overloading
+│   ├── Templates (Parametric)
+│   └── CRTP (Curiously Recurring Template Pattern)
+│
+└── Key Differences from Java
+    ├── Methods are NOT virtual by default
+    ├── No single root 'Object' class
+    ├── Value semantics (Slicing risk)
+    └── Explicit memory management (destructors)
+```
+
+```cpp
+// Base Class
+class Animal {
+public:
+    // Virtual destructor is MANDATORY for polymorphism
+    virtual ~Animal() = default;
+
+    // Virtual function enables runtime polymorphism
+    virtual void speak() const {
+        std::cout << "Some sound\n";
+    }
+};
+
+// Derived Classes
+class Dog : public Animal {
+public:
+    void speak() const override { // 'override' ensures correctness
+        std::cout << "Woof!\n";
+    }
+};
+
+class Cat : public Animal {
+public:
+    void speak() const override {
+        std::cout << "Meow!\n";
+    }
+};
+
+// Usage
+int main() {
+    // Pointers/References are required for polymorphism
+    std::vector<std::unique_ptr<Animal>> zoo;
+    zoo.push_back(std::make_unique<Dog>());
+    zoo.push_back(std::make_unique<Cat>());
+
+    for (const auto& animal : zoo) {
+        animal->speak(); // Dynamic Dispatch: Woof! then Meow!
+    }
+    return 0;
+}
+```
+
+<Aside type="tip">
+**Key Insight**: In C++, polymorphism works via **pointers or references**. If you use value semantics (`Animal a = Dog();`), you get **Object Slicing**, and polymorphism is lost. Always use `std::unique_ptr` or `std::shared_ptr` for owning polymorphic objects.
+</Aside>
+
+---
+
+## 1️⃣ Static Polymorphism (Compile-Time)
+
+### 🔹 Function Overloading
+
+Same function name, different parameters. Resolved by the compiler.
+
+<Code lang="cpp" title="Overloading Example" code={`
+#include <iostream>
+#include <string>
+
+void print(int i) {
+    std::cout << "Integer: " << i << std::endl;
+}
+
+void print(double d) {
+    std::cout << "Double: " << d << std::endl;
+}
+
+void print(const std::string& s) {
+    std::cout << "String: " << s << std::endl;
+}
+
+int main() {
+    print(10);       // Calls print(int)
+    print(3.14);     // Calls print(double)
+    print("Hello");  // Calls print(string)
+    return 0;
+}
+`} />
+
+### 🔹 Templates (Parametric Polymorphism)
+
+C++ Templates are more powerful than Java Generics because they support **static duck typing** and non-type parameters.
+
+<Code lang="cpp" title="Template Polymorphism" code={`
+template<typename T>
+T add(T a, T b) {
+    return a + b;
+}
+
+int main() {
+    std::cout << add(1, 2) << std::endl;       // int
+    std::cout << add(1.5, 2.5) << std::endl;   // double
+    
+    // Works with any type supporting operator+
+    std::string s1 = "Hi ", s2 = "There";
+    std::cout << add(s1, s2) << std::endl;     // string
+    return 0;
+}
+`} />
+
+### 🔹 CRTP (Curiously Recurring Template Pattern)
+
+A technique to achieve static polymorphism without the overhead of virtual functions (vtables).
+
+<Code lang="cpp" title="CRTP Example" code={`
+template <typename Derived>
+class Shape {
+public:
+    // Static dispatch – no vtable lookup!
+    double area() const {
+        // Cast this to the derived type
+        return static_cast<const Derived*>(this)->computeArea();
+    }
+};
+
+class Circle : public Shape<Circle> {
+    double radius = 5.0;
+public:
+    double computeArea() const {
+        return 3.14159 * radius * radius;
+    }
+};
+
+class Square : public Shape<Square> {
+    double side = 4.0;
+public:
+    double computeArea() const {
+        return side * side;
+    }
+};
+
+int main() {
+    Circle c;
+    Square s;
+    
+    // Polymorphic behavior at compile time
+    std::cout << c.area() << std::endl; // Circle's area
+    std::cout << s.area() << std::endl; // Square's area
+    return 0;
+}
+`} />
+
+<Aside type="note">
+**When to use CRTP?**
+- When performance is critical (no vtable indirection).
+- When the hierarchy is known at compile time.
+- Common in high-performance libraries (e.g., Eigen, Boost).
+</Aside>
+
+---
+
+## 2️⃣ Dynamic Polymorphism (Runtime)
+
+### 🔹 Virtual Functions & Vtables
+
+In C++, you must explicitly mark methods as `virtual`. The compiler creates a **Virtual Method Table (vtable)** for each class with virtual functions.
+
+```text
+Dog Object Memory Layout:
+┌──────────────────────┐
+│ vptr ──────────────┐ │
+│ radius: 5.0        │ │
+└──────────────────────┘ │
+                         ▼
+                  Dog VTable
+┌──────────────────────────┐
+│ &Dog::speak              │
+│ &Dog::eat                │
+└──────────────────────────┘
+```
+
+<Code lang="cpp" title="Virtual Dispatch" code={`
+class Base {
+public:
+    virtual void foo() { std::cout << "Base\n"; }
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+public:
+    void foo() override { std::cout << "Derived\n"; }
+};
+
+int main() {
+    Base* ptr = new Derived();
+    ptr->foo(); // Looks up vptr -> finds Derived::foo -> prints "Derived"
+    delete ptr;
+    return 0;
+}
+`} />
+
+### ⚠️ The Rule of Five & Virtual Destructors
+
+If you delete a derived object via a base pointer, the base destructor **must** be virtual. Otherwise, the derived part is not destroyed (Memory Leak/UB).
+
+<CardGrid>
+  <Card title="Correct Pattern" icon="approve-check">
+```cpp
+    class Base {
+    public:
+        virtual ~Base() = default; // ✅ Essential
+    };
+    
+    class Derived : public Base {
+        int* data = new int[100];
+    public:
+        ~Derived() override { delete[] data; }
+    };
+    
+    Base* b = new Derived();
+    delete b; // Calls ~Derived() THEN ~Base()
+```
+  </Card>
+  
+  <Card title="Incorrect Pattern" icon="error">
+```cpp
+    class Base {
+    public:
+        ~Base() {} // ❌ Not virtual
+    };
+    
+    // Memory Leak!
+    Base* b = new Derived();
+    delete b; // Only calls ~Base(). Derived resources leak.
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🆚 Static vs Dynamic Polymorphism
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th>Static (Templates/CRTP)</th>
+      <th>Dynamic (Virtual)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Resolution</strong></td><td>Compile Time</td><td>Runtime</td></tr>
+    <tr><td><strong>Performance</strong></td><td>Fast (Inlined)</td><td>Slower (Vtable lookup)</td></tr>
+    <tr><td><strong>Code Size</strong></td><td>Larger (Instantiations)</td><td>Smaller</td></tr>
+    <tr><td><strong>Heterogeneous Containers</strong></td><td>❌ Difficult</td><td>✅ Easy (vector&lt;Base*&gt;)</td></tr>
+    <tr><td><strong>Extensibility</strong></td><td>Closed (Recompile needed)</td><td>Open (New DLLs/Plugins)</td></tr>
+  </tbody>
+</table>
+
+---
+
+## 🧩 Polymorphism in DSA
+
+<CardGrid>
+  <Card title="Pattern: Strategy Pattern for Algorithms" icon="rocket">
+```cpp
+    // Abstract Strategy
+    class SortStrategy {
+    public:
+        virtual ~SortStrategy() = default;
+        virtual void sort(std::vector<int>& data) = 0;
+    };
+
+    class QuickSort : public SortStrategy {
+    public:
+        void sort(std::vector<int>& data) override {
+            std::sort(data.begin(), data.end()); // Using std::sort as proxy
+        }
+    };
+
+    class Context {
+        std::unique_ptr<SortStrategy> strategy;
+    public:
+        Context(std::unique_ptr<SortStrategy> s) : strategy(std::move(s)) {}
+        void execute(std::vector<int>& data) {
+            strategy->sort(data); // Polymorphic call
+        }
+    };
+```
+  </Card>
+  
+  <Card title="Pattern: Visitor Pattern (Double Dispatch)" icon="shield">
+```cpp
+    // Element Interface
+    class Shape {
+    public:
+        virtual ~Shape() = default;
+        virtual void accept(class Visitor& v) = 0;
+    };
+
+    class Circle : public Shape {
+    public:
+        void accept(Visitor& v) override { v.visit(*this); }
+    };
+
+    // Visitor Interface
+    class Visitor {
+    public:
+        virtual void visit(Circle& c) = 0;
+    };
+
+    class AreaCalculator : public Visitor {
+    public:
+        void visit(Circle& c) override {
+            std::cout << "Calculating Circle Area\n";
+        }
+    };
+```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the difference between overloading and overriding?" icon="information">
+    - **Overloading**: Same name, different params. Compile-time.
+    - **Overriding**: Same signature in derived class. Runtime (requires `virtual`).
+  </Card>
+  
+  <Card title="Q: Why are C++ destructors virtual?" icon="error">
+    To ensure that when a derived object is deleted via a base pointer, the derived destructor is called first. Without `virtual`, it's Undefined Behavior.
+  </Card>
+
+  <Card title="Q: What is Object Slicing?" icon="caution">
+    Assigning a derived object to a base object by value (`Base b = Derived();`). The derived-specific data is "sliced" off. Polymorphism stops working. Always use pointers/references.
+  </Card>
+
+  <Card title="Q: What is a pure virtual function?" icon="approve-check">
+    A function declared with `= 0` (e.g., `virtual void foo() = 0;`). It makes the class **Abstract** (cannot be instantiated). Derived classes MUST implement it.
+  </Card>
+
+  <Card title="Q: Can constructors be virtual?" icon="error">
+    **No**. The vtable isn't set up until the constructor finishes. Use the **Factory Pattern** or **Virtual Clone** idiom instead.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Virtual Function Rules
+
+| Rule | Detail |
+|------|--------|
+| **Declaration** | `virtual ReturnType func() = 0;` (Pure) or `virtual ReturnType func() {}` |
+| **Override** | Use `override` keyword in derived class for safety |
+| **Final** | Use `final` to prevent further overriding |
+| **Destructor** | Always `virtual ~Base() = default;` |
+| **Access** | Must be `public` or `protected` in base to be overridden publicly |
+
+### Static vs Dynamic
+
+| Feature | Static (Templates) | Dynamic (Virtual) |
+|---------|--------------------|-------------------|
+| **Keyword** | `template`, `typename` | `virtual`, `override` |
+| **Cost** | Zero overhead | Vtable lookup |
+| **Use Case** | High perf, generic libs | Plugins, UI, Heterogeneous lists |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Mark base destructors as `virtual`.
+2. ✅ Use `override` in derived classes.
+3. ✅ Avoid object slicing (use pointers/refs).
+4. ✅ Prefer `std::unique_ptr` for ownership.
+5. ✅ Use CRTP for static polymorphism if vtable cost is too high.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict output" code={`
+#include <iostream>
+
+class A {
+public:
+    virtual void foo() { std::cout << "A "; }
+    void bar() { std::cout << "A-bar "; }
+};
+
+class B : public A {
+public:
+    void foo() override { std::cout << "B "; }
+    void bar() { std::cout << "B-bar "; }
+};
+
+int main() {
+    A* ptr = new B();
+    ptr->foo();
+    ptr->bar();
+    delete ptr;
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: B A-bar 
+
+Explanation:
+1. ptr->foo(): Virtual. Looks up vtable. Calls B::foo(). -> "B "
+2. ptr->bar(): Non-virtual. Resolved at compile time based on pointer type (A*). Calls A::bar(). -> "A-bar "
+```
+</details>
+
+<Aside type="tip">
+**Pro Interview Strategy**:
+1. Explain **Vtables** and how dynamic dispatch works.
+2. Discuss **Object Slicing** and why value semantics fail for polymorphism.
+3. Mention **CRTP** for static polymorphism.
+4. Emphasize **RAII** and smart pointers with polymorphic objects.
+</Aside>
+
+---
+
+# 🎭 C++ Polymorphism — Complete Deep Dive
+
+---
+
+## 📌 What Is Polymorphism?
+
+**One interface, multiple behaviors** — the same call produces different results depending on the actual type.
+
+```
+Polymorphism = poly (many) + morph (form)
+             = same code → different behavior based on type
+```
+
+```cpp
+// Same call — different behavior depending on actual type
+shape->area();    // Circle? Rectangle? Triangle?
+                  // Same line of code → correct result per type
+```
+
+---
+
+## 🗺️ Types of Polymorphism in C++
+
+```
+Polymorphism in C++
+│
+├── Compile-Time (Static) — resolved at compile time
+│   ├── Function Overloading     → same name, different params
+│   ├── Operator Overloading     → same operator, different types
+│   ├── Template Polymorphism    → type-parametric behavior
+│   └── CRTP                    → static virtual dispatch
+│
+└── Runtime (Dynamic) — resolved at runtime
+    ├── Virtual Functions        → vtable dispatch
+    ├── Pure Virtual / Abstract  → enforced override
+    ├── Covariant Return Types   → narrowed return type
+    └── std::variant + visit     → type-safe union dispatch
+```
+
+---
+
+## 🔷 1. Compile-Time: Function Overloading
+
+```cpp
+// Same name — different behavior based on argument types
+void print(int x)         { std::cout << "int: " << x; }
+void print(double x)      { std::cout << "double: " << x; }
+void print(const char* s) { std::cout << "string: " << s; }
+void print(bool b)        { std::cout << "bool: " << b; }
+
+print(42);      // → int: 42
+print(3.14);    // → double: 3.14
+print("hello"); // → string: hello
+print(true);    // → bool: 1
+```
+
+### Overload Resolution — How Compiler Picks
+
+```
+Step 1: Find all candidates (same name, visible)
+Step 2: Filter viable (can be called with these args)
+Step 3: Find BEST viable:
+  - Exact match beats conversion
+  - Promotion (char→int) beats conversion
+  - Standard conversion (int→double) beats user conversion
+  - User-defined conversion is last
+
+Ambiguous → compile error (two equally-good candidates)
+```
+
+```cpp
+void foo(int x) { }
+void foo(double x) { }
+
+foo(3);      // → foo(int)   — exact match
+foo(3.0);    // → foo(double) — exact match
+foo(3.14f);  // → foo(double) — float→double promotion
+
+void bar(int x) { }
+void bar(long x) { }
+
+bar(3);      // → bar(int)   — int is exact match
+bar(3L);     // → bar(long)  — long is exact match
+bar(3LL);    // ❌ ambiguous — long long → both equally bad
+```
+
+---
+
+## 🔷 2. Compile-Time: Operator Overloading
+
+```cpp
+class Vector2D {
+public:
+    double x, y;
+    Vector2D(double x, double y) : x(x), y(y) { }
+
+    // Same '+' operator — different behavior per type
+    Vector2D operator+(const Vector2D& o) const {
+        return {x + o.x, y + o.y};
+    }
+    Vector2D operator*(double scalar) const {
+        return {x * scalar, y * scalar};
+    }
+    bool operator==(const Vector2D& o) const {
+        return x == o.x && y == o.y;
+    }
+    friend std::ostream& operator<<(std::ostream& os, const Vector2D& v) {
+        return os << "(" << v.x << ", " << v.y << ")";
+    }
+};
+
+Vector2D a{1.0, 2.0}, b{3.0, 4.0};
+Vector2D c = a + b;        // → (4.0, 6.0)
+Vector2D d = a * 2.0;      // → (2.0, 4.0)
+std::cout << c;            // → (4.0, 6.0)
+```
+
+---
+
+## 🔷 3. Compile-Time: Template Polymorphism
+
+```cpp
+// One function — polymorphic over any type T
+template<typename T>
+T max_val(T a, T b) {
+    return (a > b) ? a : b;
+}
+
+max_val(3, 5);            // T=int    → 5
+max_val(3.14, 2.71);      // T=double → 3.14
+max_val("abc"s, "xyz"s);  // T=string → "xyz"
+
+// Generic container — polymorphic over element type
+template<typename T>
+class Stack {
+    std::vector<T> data_;
+public:
+    void push(const T& val) { data_.push_back(val); }
+    void pop()              { data_.pop_back(); }
+    T&   top()              { return data_.back(); }
+};
+
+Stack<int>    si;   // Stack of ints
+Stack<string> ss;   // Stack of strings — same code, different type
+```
+
+### Template vs Virtual — Key Difference
+
+```
+Template:
+  Type resolved at COMPILE TIME
+  Separate binary code per type instantiation
+  Zero runtime overhead
+  No common base class needed
+  Cannot mix types at runtime
+
+Virtual:
+  Type resolved at RUNTIME via vtable
+  Single binary path for all types
+  Small runtime overhead (~2-5ns per call)
+  Requires common base class
+  Can mix types in containers at runtime
+```
+
+---
+
+## 🔷 4. Compile-Time: CRTP — Static Polymorphism
+
+**Curiously Recurring Template Pattern** — polymorphism without vtable.
+
+```cpp
+// Base CRTP template
+template<typename Derived>
+class Shape {
+public:
+    double area() const {
+        // Dispatch to derived class at compile time
+        return static_cast<const Derived*>(this)->area_impl();
+    }
+    void print() const {
+        std::cout << "Area: " << area() << "\n";
+    }
+};
+
+class Circle : public Shape<Circle> {
+    double r_;
+public:
+    explicit Circle(double r) : r_(r) { }
+    double area_impl() const { return 3.14159 * r_ * r_; }
+};
+
+class Square : public Shape<Square> {
+    double s_;
+public:
+    explicit Square(double s) : s_(s) { }
+    double area_impl() const { return s_ * s_; }
+};
+
+Circle c(5.0);
+Square s(4.0);
+
+c.print();    // → Area: 78.54
+s.print();    // → Area: 16.0
+
+// No vtable — fully resolved at compile time
+// Assembly: direct call to Circle::area_impl / Square::area_impl
+```
+
+### CRTP Under the Hood
+
+```
+Virtual dispatch:
+  shape->area()
+  → load vptr → load vtable[area_slot] → indirect call
+  → NOT inlinable
+
+CRTP dispatch:
+  shape.area()  (where shape is Circle)
+  → static_cast<const Circle*>(this)->area_impl()
+  → direct call to Circle::area_impl
+  → inlinable — compiler may eliminate call entirely
+
+Performance:
+  Hot loop over 1M shapes:
+  Virtual: ~3ms (indirect calls + vtable loads + no inline)
+  CRTP:    ~0.5ms (direct calls + inlined + optimized)
+```
+
+---
+
+## 🔷 5. Runtime: Virtual Functions
+
+```cpp
+class Animal {
+public:
+    virtual std::string sound() const = 0;    // pure virtual
+    virtual void describe() const {           // virtual with default
+        std::cout << "I am an animal that says: " << sound() << "\n";
+    }
+    virtual ~Animal() = default;
+};
+
+class Dog : public Animal {
+public:
+    std::string sound() const override { return "Woof"; }
+};
+
+class Cat : public Animal {
+public:
+    std::string sound() const override { return "Meow"; }
+    void describe() const override {   // also override describe
+        std::cout << "I am a cat: " << sound() << "\n";
+    }
+};
+
+class Cow : public Animal {
+public:
+    std::string sound() const override { return "Moo"; }
+    // describe() NOT overridden — uses Animal's version
+};
+
+// Runtime polymorphism — type known only at runtime
+std::vector<std::unique_ptr<Animal>> animals;
+animals.push_back(std::make_unique<Dog>());
+animals.push_back(std::make_unique<Cat>());
+animals.push_back(std::make_unique<Cow>());
+
+for (auto& a : animals) {
+    a->describe();    // correct describe() for each type
+}
+// → I am an animal that says: Woof  (Dog — uses base describe)
+// → I am a cat: Meow               (Cat — uses own describe)
+// → I am an animal that says: Moo  (Cow — uses base describe)
+```
+
+---
+
+## 🔷 6. Covariant Return Types
+
+```cpp
+class Base {
+public:
+    virtual Base* clone() const {
+        return new Base(*this);
+    }
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+public:
+    // Covariant: returns Derived* instead of Base*
+    // Narrower return type — still a valid override
+    Derived* clone() const override {
+        return new Derived(*this);
+    }
+};
+
+Derived* d = new Derived();
+Derived* d2 = d->clone();   // ✅ returns Derived* — no cast needed
+                              // without covariance: would return Base*
+                              // caller would need static_cast<Derived*>
+
+Base* b = d;
+Base* b2 = b->clone();      // ✅ returns Base* (covariant — still valid)
+                              // at runtime: actually a Derived* object
+```
+
+---
+
+## 🔷 7. `std::variant` + `std::visit` — Closed-Set Polymorphism
+
+```cpp
+#include <variant>
+
+// Closed set of types — no common base class
+struct Circle  { double radius; };
+struct Rect    { double w, h;   };
+struct Triangle{ double base, height; };
+
+using Shape = std::variant<Circle, Rect, Triangle>;
+
+// Visitor — one function, behavior per type
+struct AreaCalculator {
+    double operator()(const Circle& c) const {
+        return 3.14159 * c.radius * c.radius;
+    }
+    double operator()(const Rect& r) const {
+        return r.w * r.h;
+    }
+    double operator()(const Triangle& t) const {
+        return 0.5 * t.base * t.height;
+    }
+};
+
+std::vector<Shape> shapes = {
+    Circle{5.0},
+    Rect{3.0, 4.0},
+    Triangle{6.0, 8.0}
+};
+
+AreaCalculator calc;
+for (const auto& s : shapes) {
+    std::cout << std::visit(calc, s) << "\n";
+}
+// → 78.54
+// → 12.0
+// → 24.0
+```
+
+### `std::visit` with Generic Lambda (C++17)
+
+```cpp
+for (const auto& s : shapes) {
+    std::visit([](const auto& shape) {
+        // 'shape' is the actual type at compile time
+        using T = std::decay_t<decltype(shape)>;
+        if constexpr (std::is_same_v<T, Circle>)
+            std::cout << "Circle area: " << 3.14 * shape.radius * shape.radius;
+        else if constexpr (std::is_same_v<T, Rect>)
+            std::cout << "Rect area: " << shape.w * shape.h;
+        else
+            std::cout << "Triangle area: " << 0.5 * shape.base * shape.height;
+    }, s);
+}
+```
+
+### Virtual vs `std::variant` Trade-offs
+
+| | Virtual | `std::variant` |
+|---|---|---|
+| Type set | Open (add types anytime) | Closed (fixed set) |
+| New type | Add derived class | Add to variant + update visitors |
+| New operation | Virtual in base | Add visitor |
+| Heap allocation | Usually needed | Value semantics |
+| Runtime overhead | vtable lookup | jump table |
+| Type safety | No exhaustiveness | ✅ compile-time exhaustiveness |
+| Best for | Extensible hierarchy | Fixed set, value types |
+
+---
+
+## 🔬 Under the Hood — vtable Deep Dive
+
+```cpp
+class Base {
+public:
+    virtual void f() { }
+    virtual void g() { }
+    virtual ~Base() { }
+    int x = 1;
+};
+
+class Derived : public Base {
+public:
+    void f() override { }
+    // g() not overridden
+    int y = 2;
+};
+```
+
+```
+BASE vtable (in .rodata):
+┌──────────────────────────────┐
+│ &type_info for Base          │  ← RTTI
+├──────────────────────────────┤
+│ &Base::~Base                 │  ← destructor
+├──────────────────────────────┤
+│ &Base::f                     │  ← slot 0
+├──────────────────────────────┤
+│ &Base::g                     │  ← slot 1
+└──────────────────────────────┘
+
+DERIVED vtable (in .rodata):
+┌──────────────────────────────┐
+│ &type_info for Derived       │  ← RTTI
+├──────────────────────────────┤
+│ &Derived::~Derived           │  ← overridden
+├──────────────────────────────┤
+│ &Derived::f                  │  ← slot 0: overridden
+├──────────────────────────────┤
+│ &Base::g                     │  ← slot 1: inherited (same pointer)
+└──────────────────────────────┘
+
+Base object in memory:
+┌──────────────────┐
+│ vptr (8 bytes)   │──► Base vtable
+├──────────────────┤
+│ x = 1 (4 bytes)  │
+└──────────────────┘
+
+Derived object in memory:
+┌──────────────────┐
+│ vptr (8 bytes)   │──► Derived vtable
+├──────────────────┤
+│ x = 1 (4 bytes)  │  ← inherited from Base
+├──────────────────┤
+│ padding (4 bytes)│
+├──────────────────┤
+│ y = 2 (4 bytes)  │  ← Derived own data
+└──────────────────┘
+```
+
+```asm
+; Virtual call: base->f()
+mov rax, [rdi]          ; load vptr from object
+call QWORD PTR [rax+16] ; call slot 0 (f) via vtable
+                        ; offset 16 = 8 (typeinfo) + 8 (destructor)
+
+; Direct call: obj.f() where obj is concrete Derived
+call Derived::f         ; known at compile time — no vtable
+```
+
+---
+
+## 📐 Performance Comparison
+
+```cpp
+// Benchmark: 10M calls each
+
+// Virtual dispatch:
+Base* b = new Derived();
+for (int i = 0; i < 10'000'000; i++)
+    b->f();    // 3 memory loads + indirect call + no inline
+
+// CRTP static dispatch:
+Derived d;
+for (int i = 0; i < 10'000'000; i++)
+    d.f();     // direct call — may be inlined
+
+// Template:
+for (int i = 0; i < 10'000'000; i++)
+    max_val(i, i+1);   // inlined to: return i+1
+
+// Results:
+// Virtual:   ~30ms (vtable load per call)
+// CRTP:      ~5ms  (direct, inlinable)
+// Template:  ~1ms  (fully inlined)
+// std::variant: ~8ms (switch-like dispatch)
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Rendering engine — polymorphism per context:**
+
+```cpp
+// Runtime polymorphism — materials can be extended at runtime (plugins)
+class IMaterial {
+public:
+    virtual glm::vec4 shade(const Ray& ray, const HitInfo& hit) const = 0;
+    virtual ~IMaterial() = default;
+};
+
+class Lambertian : public IMaterial {
+    glm::vec3 albedo_;
+public:
+    glm::vec4 shade(const Ray&, const HitInfo& hit) const override {
+        // diffuse shading
+    }
+};
+
+class Metal : public IMaterial {
+    float roughness_;
+public:
+    glm::vec4 shade(const Ray& ray, const HitInfo& hit) const override {
+        // specular reflection
+    }
+};
+
+// Compile-time polymorphism — math operations, zero overhead
+template<typename VecType>
+VecType lerp(VecType a, VecType b, float t) {
+    return a + (b - a) * t;
+}
+// works for float, vec2, vec3, vec4 — single template
+// inlined everywhere — zero cost
+
+// CRTP — hot path transforms, must be inlined
+template<typename Derived>
+class Transform {
+public:
+    glm::vec3 apply(const glm::vec3& v) const {
+        return static_cast<const Derived*>(this)->apply_impl(v);
+    }
+};
+
+class RotationTransform : public Transform<RotationTransform> {
+    glm::mat3 mat_;
+public:
+    glm::vec3 apply_impl(const glm::vec3& v) const {
+        return mat_ * v;    // hot path — inlined, vectorized
+    }
+};
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+class Base {
+public:
+    void f() { std::cout << "Base::f\n"; }
+    virtual void g() { f(); }   // g calls f
+};
+class Derived : public Base {
+public:
+    void f() { std::cout << "Derived::f\n"; }
+};
+Derived d;
+d.g();    // → ?
+```
+> Prints `"Base::f"`. `g()` calls `this->f()`. `f()` is **non-virtual** — resolved at compile time based on static type of `this` (which is `Base*` inside `Base::g()`). Virtual dispatch only applies to `virtual` functions. Non-virtual = always static dispatch.
+
+**Trap 2:**
+```cpp
+template<typename T>
+void process(T obj) { obj.compute(); }
+// vs
+void process(IFoo& obj) { obj.compute(); }
+// Same behavior?
+```
+> **No.** Template: compile-time dispatch — `T::compute()` called directly. Each type = separate binary function. Zero overhead. `process(Foo{})` and `process(Bar{})` are different functions. Interface: runtime dispatch — vtable. One binary function. Can mix types. Template can't store in `vector<T>` mixing types. Interface can store in `vector<IFoo*>`.
+
+**Trap 3:**
+```cpp
+class A { public: virtual void f() { std::cout << "A\n"; } };
+class B : public A { public: void f() override { std::cout << "B\n"; } };
+class C : public B { public: void f() override { std::cout << "C\n"; } };
+
+A* a = new C();
+a->f();   // → ?
+B* b = static_cast<B*>(a);
+b->f();   // → ?
+```
+> Both print `"C"`. vtable of `*a` and `*b` is `C`'s vtable (same object). Regardless of pointer type (`A*` or `B*`), virtual dispatch uses the **actual object's vtable** — which is `C`'s.
+
+**Trap 4:**
+```cpp
+void process(std::vector<Animal> animals) {  // by value!
+    for (auto& a : animals)
+        a.sound();
+}
+Dog d; Cat c;
+process({d, c});   // correct polymorphism?
+```
+> ❌ **Object slicing** — `animals` is `vector<Animal>`. Copying `Dog` and `Cat` into `Animal` slots slices them. `a.sound()` calls `Animal::sound()` (if not pure virtual). Always use `vector<unique_ptr<Animal>>` or `vector<Animal*>` for polymorphic containers.
+
+**Trap 5:**
+```cpp
+// Is std::variant polymorphism open or closed?
+using Shape = std::variant<Circle, Rect>;
+// Can we add Triangle later?
+```
+> **Closed** — `std::variant` type list fixed at compile time. Adding `Triangle` requires recompiling all code using `Shape`. Every `std::visit` must handle all types. Virtual inheritance is **open** — add `Triangle : Shape` anywhere, no existing code changes (if it doesn't need to handle Triangle). This is the **Expression Problem** tradeoff.
+
+---
+
+## 📊 Polymorphism Mechanism Selector
+
+```
+Need to add new TYPES easily (open to extension)?
+  → Virtual functions (open type set)
+
+Need to add new OPERATIONS easily without touching all types?
+  → std::variant + std::visit (add visitor = new operation)
+
+Need ZERO runtime overhead in hot path?
+  → Templates or CRTP
+
+Need runtime type mixing in containers?
+  → Virtual functions + pointer containers
+
+Type set fixed at compile time, value semantics?
+  → std::variant
+
+Compile-time constraints on what types can be used?
+  → Concepts (C++20)
+```
+
+---

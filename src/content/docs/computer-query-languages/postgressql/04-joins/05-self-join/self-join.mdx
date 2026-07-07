@@ -1,0 +1,686 @@
+---
+title: PostgreSQL SELF JOIN
+slug: computer-query-languages/postgresql/joins/self-join
+description: Master SELF JOIN in PostgreSQL — hierarchy traversal, pair finding, sequential comparison, execution internals, and production-safe patterns.
+sidebar:
+  label: "SELF JOIN"
+  badge:
+    text: Relational Queries
+    variant: tip
+tags: [postgresql, self-join, hierarchy, graph-traversal, query-optimization, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 SELF JOIN — Complete Guide
+
+> **A `SELF JOIN` is a table joined to itself using two different aliases — it's the only way to compare rows within the same table, and it maps directly to graph problems like finding parent-child relationships, hierarchies, and combinations.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of a `SELF JOIN` as **cloning the table in your query's namespace**. Postgres treats the two aliases as completely separate logical tables scanning the same physical heap file. It's the SQL equivalent of traversing a directed graph edge within a single node set.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Logical View
+
+```
+FROM      ← SELF JOIN happens here, same as all JOINs ✅
+    └── table aliased twice, treated as two separate tables
+WHERE     ← filters the joined result
+GROUP BY
+HAVING
+SELECT
+ORDER BY
+LIMIT
+```
+
+```text
+[Table T] ──┐
+            ↓ (PG treats as TWO logical references: T1, T2)
+[Table T] ──┘
+            ↓ (Join Condition filters matching pairs)
+[Result] → Projected rows where T1.col = T2.col
+```
+
+<Code lang="sql" title="How Postgres sees it" code={`-- Postgres sees this as joining TWO tables
+-- even though it's the same physical table
+
+FROM employees e1        -- alias 1 → "the employee"
+JOIN employees e2        -- alias 2 → "the manager"
+  ON e1.manager_id = e2.id
+
+-- Internally: two scans of the same heap file
+-- Aliases are MANDATORY — without them, column names are ambiguous`} />
+
+---
+
+## 1️⃣ Why SELF JOIN Exists — The Core Problem
+
+Some data relationships live **within a single table**. Self-referencing foreign keys (`manager_id` → `id`) create parent-child edges that require a join to resolve.
+
+```text
+employees table:
+┌────┬──────────┬────────────┬─────────────┐
+│ id │ name     │ department │ manager_id  │
+├────┼──────────┼────────────┼─────────────┤
+│  1 │ Sharma   │ Engineering│    NULL     │← CEO, no manager
+│  2 │ Raj      │ Engineering│     1       │← managed by Sharma
+│  3 │ Priya    │ Engineering│     1       │← managed by Sharma
+│  4 │ Sam      │ Sales      │     1       │← managed by Sharma
+│  5 │ Ankit    │ Sales      │     4       │← managed by Sam
+│  6 │ Meera    │ Sales      │     4       │← managed by Sam
+└────┴──────────┴────────────┴─────────────┘
+
+Without SELF JOIN:               With SELF JOIN:
+Two queries needed               One query, one result set ✅
+No way to get both names         Both employee + manager name ✅
+```
+```
+employees (e1)              employees (e2)
+[the employee]   ────────►  [the manager]
+┌────┬───────┐   ON          ┌────┬─────────┐
+│ id │ name  │   e1.manager  │ id │ name    │
+│  2 │ Raj   │   = e2.id     │  1 │ Sharma  │
+│  3 │ Priya │──────────────►│  1 │ Sharma  │
+│  5 │ Ankit │               │  4 │ Sam     │
+└────┴───────┘               └────┴─────────┘
+```
+<Aside type="note">
+**🎯 DSA Connection**: `SELF JOIN` = traversing a single edge in a directed graph. `manager_id` is a self-referencing FK. Finding a manager's name = following one edge in the graph.
+</Aside>
+
+---
+
+## 2️⃣ Basic Syntax — Aliases Are Mandatory
+
+<Code lang="sql" title="❌ Without aliases (Ambiguous)" code={`SELECT name, manager_id FROM employees
+JOIN employees ON manager_id = id;
+-- ERROR: ambiguous column reference "name"`} />
+
+<Code lang="sql" title="✅ With aliases (Clean & Unambiguous)" code={`SELECT
+    e.name          AS employee,
+    m.name          AS manager
+FROM employees e             -- e = the employee
+JOIN employees m             -- m = the manager (same table, different alias)
+  ON e.manager_id = m.id;
+
+-- Result:
+-- ┌──────────┬─────────┐
+-- │ employee │ manager │
+-- ├──────────┼─────────┤
+-- │ Raj      │ Sharma  │
+-- │ Priya    │ Sharma  │
+-- │ Sam      │ Sharma  │
+-- │ Ankit    │ Sam     │
+-- │ Meera    │ Sam     │
+-- └──────────┴─────────┘
+-- Sharma not in result (NULL manager_id → INNER JOIN drops it)`} />
+
+---
+
+## 3️⃣ INNER vs LEFT SELF JOIN — Include Root Node
+
+<CardGrid>
+  <Card title="INNER SELF JOIN (Drops Root)" icon="error">
+    ```sql
+    SELECT e.name AS employee, m.name AS manager
+    FROM   employees e
+    JOIN   employees m ON e.manager_id = m.id;
+    -- Sharma (CEO) MISSING — manager_id IS NULL → no match 💀
+    ```
+  </Card>
+  
+  <Card title="LEFT SELF JOIN (Preserves Root)" icon="approve-check">
+    ```sql
+    SELECT
+        e.name                            AS employee,
+        COALESCE(m.name, '👑 Top Level') AS manager
+    FROM   employees e
+    LEFT JOIN employees m ON e.manager_id = m.id;
+    -- Sharma → '👑 Top Level' ✅
+    -- Everyone else → their manager name ✅
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="caution">
+**🚨 Interview Trap**: `INNER SELF JOIN` silently drops the root node (the one with `NULL` in the self-referencing column). Always use `LEFT SELF JOIN` when you need all nodes, then handle `NULL` with `COALESCE`.
+</Aside>
+
+---
+
+## 4️⃣ Finding Pairs — Row-to-Row Comparison
+
+> **SELF JOIN's second superpower: comparing rows against each other to find combinations.**
+
+<Code lang="sql" title="Find all employees in the same department" code={`SELECT
+    e1.name      AS employee_1,
+    e2.name      AS employee_2,
+    e1.department
+FROM   employees e1
+JOIN   employees e2
+  ON   e1.department = e2.department
+  AND  e1.id < e2.id     -- ← critical: avoid duplicates and self-pairing
+ORDER BY e1.department, e1.name;`} />
+
+```text
+Without e1.id < e2.id:           With e1.id < e2.id:
+┌────────┬────────┐              ┌────────┬────────┐
+│ Raj    │ Raj    │ ← self pair  │ Raj    │ Priya  │ ✅
+│ Raj    │ Priya  │              │ Raj    │ Sam... │ ✅
+│ Priya  │ Raj    │ ← duplicate  └────────┴────────┘
+│ Priya  │ Priya  │ ← self pair  Only unique pairs, no self-match
+│ ...    │ ...    │
+└────────┴────────┘
+
+The < condition:
+  e1.id < e2.id  → unique pairs only (combinatorial, not permutational)
+  e1.id = e2.id  → self pairs only (useless)
+  e1.id != e2.id → both (A,B) and (B,A) = duplicates
+```
+
+<CardGrid>
+  <Card title="Products with same price" icon="search">
+    ```sql
+    SELECT
+    p1.name   AS product_1,
+    p2.name   AS product_2,
+    p1.price  AS shared_price
+    FROM   products p1
+    JOIN   products p2
+    ON   p1.price = p2.price
+    AND  p1.id    < p2.id       -- unique pairs only ✅
+    ORDER BY p1.price;
+    ```
+  </Card>
+  
+  <Card title="Users signed up same day" icon="calendar">
+    ```sql
+    -- Find users who signed up on the same day
+    SELECT
+    u1.name        AS user_1,
+    u2.name        AS user_2,
+    u1.created_at::DATE AS signup_date
+    FROM   users u1
+    JOIN   users u2
+    ON   u1.created_at::DATE = u2.created_at::DATE
+    AND  u1.id < u2.id
+    ORDER BY signup_date;
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**🎯 DSA Connection**: Finding pairs with `SELF JOIN` = generating combinations **C(n,2)**. The `id < id` condition exactly enumerates combinations without repetition. Worst case: **O(n²)** pairs.
+</Aside>
+
+---
+
+## 5️⃣ Sequential Comparison vs Window Functions
+
+<Tabs>
+  <TabItem label="SELF JOIN Approach" icon="loop">
+    ```sql
+    -- Compare each row with the next row (ordered sequence)
+    -- Find days where revenue dropped
+
+    SELECT
+    t1.sale_date,
+    t1.revenue                    AS today_revenue,
+    t2.revenue                    AS prev_revenue,
+    t1.revenue - t2.revenue       AS change,
+    CASE
+        WHEN t1.revenue > t2.revenue THEN '📈 up'
+        WHEN t1.revenue < t2.revenue THEN '📉 down'
+        ELSE                              '➡️ same'
+    END                           AS trend
+    FROM   daily_sales t1
+    JOIN   daily_sales t2
+    ON   t2.sale_date = t1.sale_date - INTERVAL '1 day'
+    ORDER BY t1.sale_date;
+    ```
+  </TabItem>
+  
+  <TabItem label="Window Function (Modern)" icon="rocket">
+    ```sql
+    SELECT
+        sale_date,
+        revenue,
+        LAG(revenue) OVER (ORDER BY sale_date) AS prev_revenue,
+        revenue - LAG(revenue) OVER (ORDER BY sale_date) AS change
+    FROM daily_sales
+    ORDER BY sale_date;
+    -- ✅ Cleaner, single pass, optimized internally
+    ```
+  </TabItem>
+</Tabs>
+
+<table>
+  <thead><tr><th>Scenario</th><th>SELF JOIN</th><th>Window Function</th></tr></thead>
+  <tbody>
+    <tr><td>Compare prev/next row</td><td>⚠️ Verbose</td><td>✅ <code>LAG()</code>/<code>LEAD()</code></td></tr>
+    <tr><td>Hierarchy traversal</td><td>✅ Natural</td><td>❌ Not suited</td></tr>
+    <tr><td>Find pairs (same table)</td><td>✅ Only way</td><td>❌ Not suited</td></tr>
+    <tr><td>Gap detection</td><td>✅ Works</td><td>✅ <code>LAG()</code> easier</td></tr>
+  </tbody>
+</table>
+
+<Aside type="note">
+**Rule of Thumb**: For sequential/day-over-day comparisons, prefer `LAG()`/`LEAD()`. Use `SELF JOIN` only for hierarchical relationships or combinatorial pair finding.
+</Aside>
+
+---
+
+## 6️⃣ Hierarchy — Fixed Depth Limit
+
+<Code lang="sql" title="Org chart: employee → manager → grand-manager" code={`
+SELECT
+    e.name                              AS employee,
+    m.name                              AS manager,
+    gm.name                             AS grand_manager,
+    COALESCE(gm.name, COALESCE(m.name, '👑')) AS top_of_chain
+FROM       employees  e
+LEFT JOIN  employees  m  ON e.manager_id  = m.id   -- level 1
+LEFT JOIN  employees  gm ON m.manager_id  = gm.id  -- level 2
+ORDER BY   gm.name NULLS LAST, m.name, e.name;
+-- Result:
+-- ┌──────────┬─────────┬───────────────┐
+-- │ employee │ manager │ grand_manager │
+-- ├──────────┼─────────┼───────────────┤
+-- │ Sharma   │ NULL    │ NULL          │← CEO
+-- │ Raj      │ Sharma  │ NULL          │← reports to CEO
+-- │ Ankit    │ Sam     │ Sharma        │← 2 levels deep
+-- └──────────┴─────────┴───────────────┘
+`} />
+
+<Aside type="danger">
+**🚨 Depth Warning**: `SELF JOIN` for hierarchy scales **linearly with depth**.
+- Level 1: `JOIN employees m`
+- Level 2: `JOIN employees gm`
+- Level N: `N JOIN` clauses needed → hardcoded, brittle 💀
+**Solution**: For unlimited depth, use a **Recursive CTE** (`WITH RECURSIVE`), which is the SQL equivalent of DFS/BFS.
+
+> 🎯 **Interview Q:** *"How would you traverse an org chart of unknown depth in SQL?"*
+> **A:** SELF JOIN only works for fixed, known depth (one or two levels). For unlimited depth, use a Recursive CTE — it's the SQL equivalent of DFS/BFS on a tree stored in a table.
+</Aside>
+
+---
+
+## 7️⃣ Internals & Performance
+
+PostgreSQL executes a `SELF JOIN` as a join between **two scans of the same heap file**.
+```
+SELF JOIN internally = JOIN between two scans of same heap file
+
+Physical execution:
+
+employees (e1 alias)    employees (e2 alias)
+      │                        │
+      ▼                        ▼
+  Seq Scan              Seq Scan / Index Scan
+  (or Index Scan)       on SAME heap file
+      │                        │
+      └──────────┬─────────────┘
+                 ▼
+          Hash Join / Nested Loop
+          ON e1.manager_id = e2.id
+                 │
+                 ▼
+            Result rows
+```
+
+<Code lang="sql" title="EXPLAIN output" code={`
+EXPLAIN (ANALYZE)
+SELECT e.name, m.name AS manager
+FROM   employees e
+JOIN   employees m ON e.manager_id = m.id;
+
+-- Typical output:
+-- Hash Join
+--   Hash Cond: (e.manager_id = m.id)
+--   -> Seq Scan on employees e     ← first scan (employee side)
+--   -> Hash
+--        -> Seq Scan on employees m ← second scan (manager side)
+
+-- With index on manager_id:
+-- Nested Loop
+--   -> Seq Scan on employees e
+--   -> Index Scan on employees m
+--        Index Cond: (id = e.manager_id)  ← O(log n) per lookup ✅
+`} />
+
+```
+Performance optimization:
+
+-- Always index the self-referencing FK column
+CREATE INDEX idx_employees_manager_id ON employees(manager_id);
+
+-- Before index: Hash Join O(n + n) = O(n) with O(n) memory
+-- After index:  Nested Loop + Index Scan O(n log n) — better for large tables
+--               and allows streaming (no need to load all rows into hash)
+```
+
+
+<CardGrid>
+  <Card title="Before Indexing" icon="caution">
+    ```text
+    Two Sequential Scans → O(n + n) = O(n)
+    High memory for Hash table
+    Doubles I/O cost
+    ```
+  </Card>
+  
+  <Card title="After Indexing" icon="approve-check">
+    ```sql
+    CREATE INDEX idx_employees_manager_id ON employees(manager_id);
+    
+    -- Execution changes to:
+    -- Nested Loop
+    --   -> Seq Scan on employees e
+    --   -> Index Scan on employees m
+    --        Index Cond: (id = e.manager_id)
+    
+    -- O(n log n) lookups, streaming-friendly, lower memory
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Golden Rule**: Always index self-referencing FK columns (`manager_id` referencing `id`). Without it, every `SELF JOIN` triggers two full table scans.
+</Aside>
+
+---
+
+## 8️⃣ Gap Detection — Find Missing Sequence Numbers
+
+```sql
+-- Find gaps in order IDs (missing orders in sequence)
+SELECT
+  t1.id + 1               AS gap_start,
+  MIN(t2.id) - 1          AS gap_end,
+  MIN(t2.id) - t1.id - 1  AS gap_size
+FROM   orders t1
+JOIN   orders t2
+  ON   t2.id > t1.id
+GROUP BY t1.id
+HAVING MIN(t2.id) > t1.id + 1   -- next id is not consecutive
+ORDER BY gap_start;
+
+-- Example: IDs are 1,2,3,7,8,10
+-- Gap: 4-6 (size 3) and 9 (size 1) ✅
+```
+
+```sql
+-- Find time gaps in events (sessions with no activity)
+SELECT
+  e1.created_at                           AS event_time,
+  e2.created_at                           AS next_event_time,
+  e2.created_at - e1.created_at           AS gap_duration
+FROM   events e1
+JOIN   events e2
+  ON   e2.user_id    = e1.user_id          -- same user
+  AND  e2.created_at > e1.created_at       -- e2 is after e1
+  AND  NOT EXISTS (                        -- no event between e1 and e2
+    SELECT 1 FROM events e3
+    WHERE  e3.user_id    = e1.user_id
+      AND  e3.created_at > e1.created_at
+      AND  e3.created_at < e2.created_at
+  )
+WHERE  e2.created_at - e1.created_at > INTERVAL '30 minutes'
+ORDER BY gap_duration DESC;
+```
+
+## 8️9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Org Chart + Salary Flag" icon="chart">
+    ```sql
+    -- Who reports to whom, with full context
+    SELECT
+    e.id                                    AS emp_id,
+    e.name                                  AS employee,
+    e.department,
+    e.salary,
+    m.name                                  AS reports_to,
+    m.department                            AS manager_dept,
+    CASE
+        WHEN e.salary > m.salary              THEN '⚠️ earns more than manager'
+        WHEN e.salary = m.salary              THEN '= same as manager'
+        ELSE                                       'normal'
+    END                                     AS salary_flag
+    FROM   employees  e
+    LEFT JOIN employees m ON e.manager_id = m.id
+    WHERE  e.deleted_at IS NULL
+    ORDER BY m.name NULLS FIRST, e.name;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Duplicate Detection" icon="shield">
+    ```sql
+    -- Find duplicate users (same email, different IDs)
+    SELECT
+    u1.id         AS id_1,
+    u2.id         AS id_2,
+    u1.email      AS duplicate_email,
+    u1.created_at AS first_created,
+    u2.created_at AS second_created
+    FROM   users u1
+    JOIN   users u2
+    ON   LOWER(u1.email) = LOWER(u2.email)  -- case-insensitive match
+    AND  u1.id < u2.id                       -- unique pairs only
+    WHERE  u1.deleted_at IS NULL
+    AND  u2.deleted_at IS NULL
+    ORDER BY u1.email;
+
+    -- Then keep the oldest, mark newer as duplicate
+    UPDATE users
+    SET    deleted_at = NOW(),
+        merged_into_id = u1.id
+    FROM   users u1
+    WHERE  users.id = u2.id
+    -- ... (use subquery with SELF JOIN to find pairs)
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Market Basket Analysis" icon="cart">
+    ```sql
+    -- Find products frequently bought together (Market Basket Analysis)
+    SELECT
+    oi1.product_id    AS product_a,
+    oi2.product_id    AS product_b,
+    COUNT(*)          AS times_bought_together
+    FROM   order_items oi1
+    JOIN   order_items oi2
+    ON   oi1.order_id   = oi2.order_id    -- same order
+    AND  oi1.product_id < oi2.product_id  -- unique pairs
+    GROUP BY oi1.product_id, oi2.product_id
+    HAVING COUNT(*) >= 10                    -- bought together ≥ 10 times
+    ORDER BY times_bought_together DESC
+    LIMIT  20;
+    -- "Customers who bought A also bought B" ✅
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Mutual Follows" icon="heart">
+    ```sql
+    -- Find mutual followers (A follows B AND B follows A)
+    SELECT
+    f1.follower_id    AS user_a,
+    f1.following_id   AS user_b
+    FROM   follows f1
+    JOIN   follows f2
+    ON   f1.follower_id  = f2.following_id   -- A follows B
+    AND  f1.following_id = f2.follower_id    -- B follows A
+    WHERE  f1.follower_id < f1.following_id;   -- unique pairs (avoid duplicates)
+    -- = mutual follows = friendships ✅
+    ```
+  </Card>
+
+    <Card title="Pattern 5 — Salary Comparison Within Department" icon="heart">
+    ```sql
+    -- For each employee: how do they compare to dept peers?
+    SELECT
+    e1.name                                 AS employee,
+    e1.department,
+    e1.salary,
+    ROUND(AVG(e2.salary), 0)               AS dept_avg_salary,
+    COUNT(e2.id)                            AS dept_size,
+    CASE
+        WHEN e1.salary > AVG(e2.salary) * 1.2 THEN '⬆️ significantly above avg'
+        WHEN e1.salary > AVG(e2.salary)        THEN '↑ above avg'
+        WHEN e1.salary < AVG(e2.salary) * 0.8 THEN '⬇️ significantly below avg'
+        ELSE                                        '↓ below avg'
+    END                                     AS salary_position
+    FROM   employees e1
+    JOIN   employees e2
+    ON   e1.department = e2.department      -- same department
+    AND  e2.deleted_at IS NULL
+    WHERE  e1.deleted_at IS NULL
+    GROUP BY e1.id, e1.name, e1.department, e1.salary
+    ORDER BY e1.department, e1.salary DESC;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE employees (
+  id         INT,
+  name       TEXT,
+  department TEXT,
+  salary     INT,
+  manager_id INT    -- self-referencing FK
+);
+
+INSERT INTO employees VALUES
+  (1, 'Sharma', 'Engineering', 200000, NULL),
+  (2, 'Raj',    'Engineering', 120000, 1),
+  (3, 'Priya',  'Engineering', 115000, 1),
+  (4, 'Sam',    'Sales',       130000, 1),
+  (5, 'Ankit',  'Sales',        90000, 4),
+  (6, 'Meera',  'Sales',        95000, 4);
+
+-- 1. Basic SELF JOIN — employee + manager
+SELECT e.name AS employee, m.name AS manager
+FROM   employees e
+JOIN   employees m ON e.manager_id = m.id;
+-- Sharma MISSING (NULL manager_id) ✅
+
+-- 2. LEFT SELF JOIN — include root
+SELECT e.name, COALESCE(m.name, '👑 CEO') AS manager
+FROM   employees e
+LEFT JOIN employees m ON e.manager_id = m.id;
+-- Sharma → '👑 CEO' ✅
+
+-- 3. Pairs in same department
+SELECT e1.name, e2.name, e1.department
+FROM   employees e1
+JOIN   employees e2
+  ON   e1.department = e2.department
+  AND  e1.id < e2.id;
+-- Engineering: (Raj,Priya), (Raj,Sharma)...
+-- Sales: (Sam,Ankit), (Sam,Meera), (Ankit,Meera)
+
+-- 4. Two-level hierarchy
+SELECT
+  e.name  AS employee,
+  m.name  AS manager,
+  gm.name AS grand_manager
+FROM       employees e
+LEFT JOIN  employees m  ON e.manager_id = m.id
+LEFT JOIN  employees gm ON m.manager_id = gm.id;
+
+-- 5. Salary comparison within dept
+SELECT e1.name, e1.salary,
+  ROUND(AVG(e2.salary)) AS dept_avg
+FROM   employees e1
+JOIN   employees e2 ON e1.department = e2.department
+GROUP BY e1.id, e1.name, e1.salary
+ORDER BY e1.department, e1.salary DESC;
+`} />
+
+<details>
+<summary>✅ Expected Results</summary>
+```text
+1. Raj-Sharma, Priya-Sharma, Sam-Sharma, Ankit-Sam, Meera-Sam (Sharma dropped)
+2. Sharma-CEO, Raj-Sharma, Priya-Sharma, Sam-Sharma, Ankit-Sam, Meera-Sam
+3. Engineering: (Raj,Priya), (Raj,Sharma), (Priya,Sharma)
+   Sales: (Sam,Ankit), (Sam,Meera), (Ankit,Meera)
+4. Sharma-NULL-NULL, Raj-Sharma-NULL, Priya-Sharma-NULL, Sam-Sharma-NULL, 
+   Ankit-Sam-Sharma, Meera-Sam-Sharma
+```
+</details>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| What is a SELF JOIN? | Table joined to itself using two aliases to compare rows or traverse self-referencing FKs |
+| Why are aliases mandatory? | Prevents ambiguous column references — PG needs distinct logical names |
+| INNER vs LEFT SELF JOIN? | `INNER` drops root (`NULL` FK). `LEFT` preserves it (use `COALESCE`) |
+| Find unique pairs pattern? | `ON e1.col = e2.col AND e1.id < e2.id` |
+| Why `<` not `!=`? | `!=` yields permutations (A,B + B,A). `<` yields combinations (A,B only) |
+| Multi-level hierarchy limit? | `SELF JOIN` = fixed depth. Unknown depth → Recursive CTE |
+| SELF JOIN vs LAG/LEAD? | `LAG` for sequential comparison. `SELF JOIN` for hierarchies/pairs |
+| Index needed? | **YES** — index the self-referencing FK column |
+| Postgres execution? | Two scans of same heap → Hash Join or Nested Loop |
+| Common real-world uses? | Org charts, duplicate detection, market basket, mutual follows |
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+SELF JOIN — Complete Picture
+
+Same table, two aliases = two logical copies:
+
+  employees (e)                employees (m)
+  "the employee"               "the manager"
+┌──────────────────┐         ┌──────────────────┐
+│ id │ manager_id  │         │ id │ name         │
+│  2 │     1    ───┼────────►│  1 │ Sharma       │
+│  3 │     1    ───┼────────►│  1 │ Sharma       │
+│  5 │     4    ───┼────────►│  4 │ Sam          │
+└──────────────────┘         └──────────────────┘
+
+Two Primary Use Cases:
+
+1. HIERARCHY (parent-child within same table)
+   ON e.parent_id = m.id
+   → Follow FK edge from child to parent
+   → Use LEFT JOIN to include root (NULL parent)
+
+2. PAIR FINDING (compare rows against each other)
+   ON e1.col = e2.col AND e1.id < e2.id
+   → Find all combinations of matching rows
+   → id < id avoids self-pairs and duplicates
+
+Depth Limitation:
+   1 level  → 1 SELF JOIN
+   2 levels → 2 SELF JOINs
+   N levels → N SELF JOINs (hardcoded, brittle)
+   ∞ levels → Recursive CTE ✅
+
+Always Index:
+   CREATE INDEX ON table(self_ref_fk_column);
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always alias self-joins clearly (`e` for employee, `m` for manager)
+2. ✅ Use `LEFT SELF JOIN` + `COALESCE` to preserve root nodes
+3. ✅ Use `id < id` for unique pair generation
+4. ✅ Index self-referencing foreign keys immediately
+5. ✅ Prefer `LAG()`/`LEAD()` for sequential row comparisons
+6. ✅ Switch to `WITH RECURSIVE` for unknown-depth hierarchies
+
+Mastering `SELF JOIN` turns flat relational tables into powerful graph-like structures. 🐘✨
+</Aside>

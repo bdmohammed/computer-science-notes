@@ -1,0 +1,721 @@
+---
+title: PostgreSQL CASE WHEN
+slug: computer-query-languages/postgresql/filtering-and-logic/case-when
+description: Master SQL conditional logic — Searched vs Simple CASE, execution order, NULL handling, conditional aggregation, pivoting, and performance patterns.
+sidebar:
+  label: "CASE WHEN"
+  badge:
+    text: Logic & Transformation
+    variant: tip
+tags: [postgresql, case-when, sql-logic, conditional-aggregation, pivot, interview, performance]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 CASE WHEN — Complete Guide
+
+> **`CASE WHEN` is SQL's if-else — it lets you make decisions row-by-row inside a query, transforming, classifying, or pivoting data without touching application code.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `CASE` as a **row-by-row decision engine**. It evaluates conditions top-to-bottom, stops at the first match (short-circuits), and returns a value. It’s an **expression**, not a statement — meaning it can be used anywhere a column or literal is allowed.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where It Lives
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← CASE WHEN lives here most commonly ✅
+ORDER BY  ← works here too ✅
+GROUP BY  ← works here too ✅
+```
+
+```
+[FROM/WHERE] → Filters rows
+       ↓
+[CASE WHEN] → Evaluates row-by-row, top-to-bottom, SHORT-CIRCUITS on first match
+       ↓
+[SELECT] → Projects the returned value
+       ↓
+[GROUP BY / ORDER BY] → Uses the computed value if referenced
+```
+
+<Code lang="sql" title="CASE is an expression, usable everywhere" code={`
+-- CASE WHEN can appear almost anywhere an expression can:
+SELECT   CASE WHEN ... END        -- ✅ computed column
+FROM     table
+WHERE    CASE WHEN ... END = 'x'  -- ✅ conditional filter
+GROUP BY CASE WHEN ... END        -- ✅ dynamic grouping
+ORDER BY CASE WHEN ... END        -- ✅ conditional sort
+`} />
+
+<Aside type="tip">
+💡 Key Insight: CASE is an expression, not a statement. It returns a value and can be used anywhere SQL accepts a column or literal (SELECT, WHERE, ORDER BY, JOIN, HAVING).
+</Aside>
+---
+
+## 1️⃣ Two Forms — Searched vs Simple
+
+<Tabs>
+  <TabItem label="Searched CASE (Most Common)" icon="search">
+    ```sql
+    -- Each WHEN is a full boolean expression (like if/else if)
+    SELECT
+      name,
+      salary,
+      CASE
+        WHEN salary >= 200000 THEN 'Principal'
+        WHEN salary >= 120000 THEN 'Senior'
+        WHEN salary >= 70000  THEN 'Mid'
+        ELSE                       'Junior'
+      END AS level
+    FROM employees;
+    
+    -- Supports: >, <, LIKE, IS NULL, AND/OR, complex logic
+    ```
+  </TabItem>
+  
+  <TabItem label="Simple CASE (Switch/Match)" icon="hash">
+    ```sql
+    -- Compares one column against fixed values
+    SELECT
+      order_id,
+      CASE status
+        WHEN 'pending'   THEN '🕐 Waiting'
+        WHEN 'shipped'   THEN '🚚 On the way'
+        WHEN 'delivered' THEN '✅ Done'
+        ELSE                  '❓ Unknown'
+      END AS status_label
+    FROM orders;
+    
+    -- Cleaner for exact matches, but less flexible
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="caution">
+**Key Difference**:  
+```sql
+Searched CASE:            Simple CASE:
+CASE                      CASE column
+  WHEN expr THEN val        WHEN val1 THEN result1
+  WHEN expr THEN val        WHEN val2 THEN result2
+  ELSE val                  ELSE result3
+END                       END
+
+```
+- **Searched CASE**: `CASE WHEN condition THEN result` → Powerful, supports any boolean logic.  
+- **Simple CASE**: `CASE column WHEN value THEN result` → Clean syntax for exact matches only.  
+✅ Prefer Searched CASE for flexibility; Simple CASE for readability when matching one column.
+</Aside>
+
+---
+
+## 2️⃣ Execution Mechanics — Short-Circuit & Order
+
+> **CASE evaluates WHEN clauses TOP TO BOTTOM. Stops at the FIRST match. Never evaluates remaining WHENs.**
+
+```sql
+salary = 150000:
+
+WHEN salary >= 200000 → FALSE  → skip
+WHEN salary >= 120000 → TRUE   → STOP → return 'Senior'
+WHEN salary >= 70000  ← never reached
+ELSE                  ← never reached
+```
+<Code lang="sql" title="Order matters critically!" code={`-- ❌ WRONG ORDER — everyone gets 'Junior'!
+CASE
+    WHEN salary >= 70000  THEN 'Junior'   -- salary=150k matches here first!
+    WHEN salary >= 120000 THEN 'Senior'   -- never reached
+    WHEN salary >= 200000 THEN 'Principal'-- never reached
+END
+
+-- ✅ CORRECT — most restrictive condition first
+CASE
+    WHEN salary >= 200000 THEN 'Principal'
+    WHEN salary >= 120000 THEN 'Senior'
+    WHEN salary >= 70000  THEN 'Mid'
+    ELSE                       'Junior'
+END`} />
+
+<Aside type="danger">
+**🚨 Interview Trap**: CASE stops at the **first** matching WHEN. Overlapping ranges evaluated top-down mean wrong order = silently wrong output. No error, just bad data. Always put the **most specific/restrictive** conditions at the top.
+</Aside>
+
+---
+
+## 3️⃣ CASE with NULL — Three-Value Logic Applies
+
+<CardGrid>
+  <Card title="The NULL Trap in Simple CASE" icon="error">
+    ```sql
+    -- NULL never matches any WHEN condition
+    -- NULL = anything → NULL (not TRUE) → condition skipped
+    -- ❌ NEVER matches! NULL = NULL → NULL (not TRUE)
+    SELECT CASE score
+        WHEN NULL THEN 'Absent'  -- Skipped
+        WHEN 100  THEN 'Perfect'
+    END FROM students;
+    
+    -- Result for NULL score: NULL (or ELSE if present)
+    ```
+  </Card>
+  
+  <Card title="Correct NULL Handling in Searched CASE" icon="approve-check">
+    ```sql
+    -- ✅ Explicit IS NULL check
+    SELECT CASE
+            WHEN score IS NULL    THEN 'Absent'    -- Matches!
+            WHEN score = 100      THEN 'Perfect'
+            WHEN score >= 75      THEN 'Pass'
+            ELSE                       'Fail'
+        END AS result
+    FROM students;
+    ```
+  </Card>
+</CardGrid>
+
+```sql
+NULL flow through CASE:
+
+score = NULL:
+  WHEN score IS NULL → TRUE  → 'Absent' ✅
+
+score = NULL (wrong version):
+  WHEN score = NULL  → NULL  → skip
+  WHEN score = 100   → NULL  → skip
+  ELSE               → 'Fail' ← wrong! Absent students marked Fail 💀
+```
+
+<Aside type="tip">
+**Rule**: In Simple CASE, `WHEN NULL` never matches because `NULL = NULL` yields `NULL`. Always use **Searched CASE** with `IS NULL` for null checks.
+</Aside>
+
+---
+
+## 4️⃣ CASE in SELECT — Column Transformation
+
+<Code lang="sql" title="Labeling and computing in one pass" code={`
+SELECT
+    u.id,
+    u.name,
+    
+    -- Tenure classification
+    CASE
+        WHEN u.created_at < NOW() - INTERVAL '2 years' THEN 'veteran'
+        WHEN u.created_at < NOW() - INTERVAL '6 months' THEN 'regular'
+        ELSE                                               'new'
+    END AS user_segment,
+
+    -- Revenue tier (with aggregation)
+    CASE
+        WHEN SUM(o.amount) > 100000 THEN 'platinum'
+        WHEN SUM(o.amount) > 50000  THEN 'gold'
+        ELSE                             'bronze'
+    END AS revenue_tier
+
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE u.deleted_at IS NULL
+GROUP BY u.id, u.name, u.created_at;`} />
+
+---
+
+## 5️⃣ CASE in WHERE — Conditional Filtering
+
+<Code lang="sql" title="Dynamic filtering based on parameters" code={`-- Role-based visibility in one query
+SELECT id, name, salary, department
+FROM   employees
+WHERE
+  CASE
+    WHEN :role = 'admin'   THEN TRUE              -- admin sees all
+    WHEN :role = 'manager' THEN department = :dept -- manager sees own dept
+    ELSE                        is_public = true   -- others see public only
+  END;
+
+-- Dynamic date range
+SELECT * FROM orders
+WHERE created_at >= CASE
+  WHEN :period = 'week'  THEN NOW() - INTERVAL '7 days'
+  WHEN :period = 'month' THEN NOW() - INTERVAL '30 days'
+  ELSE                        '2000-01-01'::TIMESTAMPTZ
+END;`} />
+
+<Aside type="caution">
+**⚠️ Performance Warning**: Using `CASE` in `WHERE` can **prevent index usage** because the planner can't easily map the expression to an index column.  
+✅ Prefer standard boolean logic: `WHERE (:role = 'admin') OR (department = :dept)` if possible.
+</Aside>
+
+---
+
+## 6️⃣ CASE in GROUP BY — Dynamic Bucketing
+
+<Code lang="sql" title="Grouping by computed categories" code={`-- Option 1: Repeat CASE in GROUP BY (verbose)
+SELECT
+  CASE
+    WHEN age BETWEEN 13 AND 17 THEN 'teen'
+    WHEN age BETWEEN 18 AND 24 THEN 'young_adult'
+    ELSE                            'adult'
+  END AS age_group,
+  COUNT(*) AS users
+FROM users
+GROUP BY
+  CASE
+    WHEN age BETWEEN 13 AND 17 THEN 'teen'
+    WHEN age BETWEEN 18 AND 24 THEN 'young_adult'
+    ELSE                            'adult'
+  END;
+
+-- Option 2: Use CTE for cleanliness (recommended)
+WITH segmented AS (
+  SELECT
+    spend,
+    CASE
+      WHEN age BETWEEN 13 AND 17 THEN 'teen'
+      WHEN age BETWEEN 18 AND 24 THEN 'young_adult'
+      ELSE                            'adult'
+    END AS age_group
+  FROM users
+)
+SELECT age_group, COUNT(*) AS users, AVG(spend) AS avg_spend
+FROM segmented
+GROUP BY age_group;`} />
+
+---
+
+## 7️⃣ CASE in ORDER BY — Conditional Sorting
+
+<Code lang="sql" title="Priority-based sorting" code={`-- Sort by status priority, then date
+SELECT id, status, created_at
+FROM   jobs
+ORDER BY
+  CASE status
+    WHEN 'failed'  THEN 1    -- most urgent first
+    WHEN 'pending' THEN 2
+    WHEN 'running' THEN 3
+    ELSE                4    -- completed last
+  END,
+  created_at ASC;            -- secondary sort
+
+-- Dynamic sort column from app parameter
+SELECT id, name, price
+FROM   products
+ORDER BY
+  CASE WHEN :sort_col = 'name'  THEN name  END ASC,
+  CASE WHEN :sort_col = 'price' THEN price END DESC;`} />
+
+---
+
+<Aside type="tip">
+> 🎯 **Real-life SDE:** Admin dashboards with user-controlled sort — instead of building separate queries per sort option, one query with CASE in ORDER BY handles all combinations.
+</Aside>
+
+## 8️⃣ Conditional Aggregation — The Power Pattern
+
+> **This is the pattern that separates junior from senior SQL writers.** Instead of multiple queries, use `CASE` inside aggregates to pivot data in a single scan.
+
+<Code lang="sql" title="Count/Sum specific conditions in one query" code={`SELECT
+  COUNT(*)                                        AS total_orders,
+  
+  -- Count only specific statuses
+  COUNT(CASE WHEN status = 'pending'   THEN 1 END) AS pending,
+  COUNT(CASE WHEN status = 'shipped'   THEN 1 END) AS shipped,
+  COUNT(CASE WHEN status = 'delivered' THEN 1 END) AS delivered,
+
+  -- Sum only delivered revenue
+  SUM(CASE WHEN status = 'delivered' THEN amount ELSE 0 END) AS delivered_revenue,
+
+  -- Average only high-value orders
+  AVG(CASE WHEN amount > 1000 THEN amount END)    AS avg_high_value
+
+FROM orders
+WHERE created_at >= DATE_TRUNC('month', NOW());`} />
+
+<CardGrid>
+  <Card title="Why This Is Better" icon="rocket">
+    ```sql
+    Without CASE:                   With CASE:
+    SELECT COUNT(*) WHERE           SELECT
+    status='pending';               COUNT(CASE WHEN status='pending' THEN 1 END),
+    SELECT COUNT(*) WHERE             COUNT(CASE WHEN status='shipped' THEN 1 END),
+    status='shipped';               COUNT(CASE WHEN status='delivered' THEN 1 END)
+    SELECT COUNT(*) WHERE           FROM orders;
+    status='delivered';
+                                    ← 1 query, 1 table scan ✅
+    ← 3 queries, 3 table scans ❌
+
+    Without CASE:
+    • 3 separate queries for 3 counts
+    • 3 table scans
+    • Application-side merging
+    
+    With CASE:
+    • 1 query
+    • 1 table scan
+    • Database does the work ✅
+    ```
+  </Card>
+  
+  <Card title="COUNT vs SUM Trick" icon="information">
+    ```sql
+    -- COUNT ignores NULLs
+    COUNT(CASE WHEN status='pending' THEN 1 END) 
+    -- If false, CASE returns NULL → COUNT skips it ✅
+    
+    -- SUM needs explicit 0 for false
+    SUM(CASE WHEN status='delivered' THEN amount ELSE 0 END)
+    -- If false, CASE returns 0 → SUM adds 0 ✅
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type='tip'>
+> 🎯 **DSA connection:** Conditional aggregation = single-pass accumulation with multiple counters. Like counting occurrences of multiple values in one O(n) loop instead of O(n×k) separate loops. Classic space-time trade-off.
+
+> 🎯 **Interview Q:** *"How would you build a pivot table in SQL?"*
+> **A:** Conditional aggregation with CASE WHEN. One row per group, CASE fans out categories into columns.
+</Aside>
+---
+
+## 9️⃣ PIVOT Table — CASE's Killer Use Case
+
+<Code lang="sql" title="Monthly revenue by category (Pivoted)" code={`SELECT
+  DATE_TRUNC('month', created_at)::DATE AS month,
+
+  SUM(CASE WHEN category = 'electronics' THEN amount ELSE 0 END) AS electronics,
+  SUM(CASE WHEN category = 'clothing'    THEN amount ELSE 0 END) AS clothing,
+  SUM(CASE WHEN category = 'books'       THEN amount ELSE 0 END) AS books,
+  SUM(amount)                                     AS total
+
+FROM orders
+WHERE created_at >= '2024-01-01'
+GROUP BY DATE_TRUNC('month', created_at)
+ORDER BY month;
+
+-- Output:
+-- month      | electronics | clothing | books | total
+-- 2024-01-01 | 45000       | 12000    | 3000  | 68000
+-- 2024-02-01 | 38000       | 15000    | 2500  | 65000`} />
+
+<Aside type="tip">
+**🎯 Real-Life SDE**: This is how analytics dashboards are built. One query produces a ready-to-render table. No Python/Excel pivoting needed.
+</Aside>
+
+---
+
+## 🔟 Internals & Performance
+
+<CardGrid>
+  <Card title="Execution Cost" icon="information">
+    ```text
+    CASE WHEN is evaluated as an expression node in the query plan.
+    Not a special operator — just an expression tree.
+
+    EXPLAIN SELECT
+    CASE WHEN amount > 1000 THEN 'high' ELSE 'low' END
+    FROM orders;
+
+    -- Plan output:
+    -- Seq Scan on orders
+    --   Output: CASE WHEN (amount > 1000) THEN 'high' ELSE 'low' END
+    --                 ↑
+    --           Evaluated per-row during projection phase
+    --           Happens AFTER filtering (WHERE), BEFORE returning to client
+    --           No extra scan — piggybacks on existing row fetch
+    ```
+
+    ```text
+    Performance characteristics:
+
+    CASE in SELECT:
+    Cost: O(n) — one evaluation per output row
+    No index possible on CASE expression result
+    (use a generated column if you need to index it)
+
+    CASE in WHERE:
+    ⚠️ Can prevent index usage
+    WHERE CASE WHEN x > 0 THEN col1 ELSE col2 END = 'val'
+    → Postgres can't use index on col1 or col2
+    → Seq scan forced
+    → Rewrite to: WHERE (x > 0 AND col1 = 'val') OR (x <= 0 AND col2 = 'val')
+
+    CASE in GROUP BY:
+    Postgres hashes/sorts the CASE result value
+    Same cost as GROUP BY on a regular column
+    (no index benefit for the grouping itself)
+    ```
+  </Card>
+  
+  <Card title="Indexing CASE Results" icon="rocket">
+    ```sql
+    -- If you need to filter/group by a CASE result often:
+    ALTER TABLE orders ADD COLUMN order_tier TEXT
+      GENERATED ALWAYS AS (
+        CASE
+          WHEN amount >= 10000 THEN 'enterprise'
+          WHEN amount >= 1000  THEN 'mid'
+          ELSE                      'small'
+        END
+      ) STORED;
+
+    CREATE INDEX idx_orders_tier ON orders(order_tier);
+    -- Now WHERE order_tier = 'enterprise' uses index ✅
+    ```
+  </Card>
+
+  <Card title="WHERE Clause Warning" icon="caution">
+    ```sql
+    -- ❌ Bad: Prevents index usage
+    WHERE CASE WHEN x > 0 THEN col1 ELSE col2 END = 'val'
+    
+    -- ✅ Good: Rewrite to standard boolean logic
+    WHERE (x > 0 AND col1 = 'val') 
+       OR (x <= 0 AND col2 = 'val')
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣1️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Feature Flags / Plan Gating" icon="shield">
+    ```sql
+    SELECT
+      u.id,
+      CASE
+        WHEN u.plan = 'enterprise' THEN 10000
+        WHEN u.plan = 'pro'        THEN 1000
+        ELSE                            10
+      END AS api_rate_limit,
+      CASE
+        WHEN u.plan IN ('enterprise', 'pro') THEN true
+        ELSE                                      false
+      END AS can_export_csv
+    FROM users u;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: SLA Breach Detection" icon="clock">
+    ```sql
+    SELECT
+      id,
+      CASE
+        WHEN status = 'pending' AND created_at < NOW() - INTERVAL '2 hours' 
+          THEN '🔴 Breached'
+        WHEN status = 'shipped' AND created_at < NOW() - INTERVAL '5 days' 
+          THEN '🟡 At Risk'
+        ELSE '🟢 On Track'
+      END AS sla_status
+    FROM orders;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Funnel Analysis" icon="chart">
+    ```sql
+    SELECT
+      COUNT(*) AS total_signups,
+      COUNT(CASE WHEN email_verified_at IS NOT NULL THEN 1 END) AS verified,
+      COUNT(CASE WHEN first_order_at IS NOT NULL THEN 1 END) AS converted,
+      ROUND(
+        COUNT(CASE WHEN first_order_at IS NOT NULL THEN 1 END) 
+        * 100.0 / NULLIF(COUNT(*), 0), 1
+      ) AS conversion_pct
+    FROM users;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Nested CASE for Complex Logic" icon="layers">
+    ```sql
+    UPDATE employees
+    SET bonus = CASE
+      WHEN department = 'engineering' THEN
+        CASE
+          WHEN performance_score >= 90 THEN salary * 0.15
+          WHEN performance_score >= 75 THEN salary * 0.10
+          ELSE                              salary * 0.05
+        END
+      ELSE salary * 0.05
+    END;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`-- 1. Basic Short-Circuit
+SELECT CASE
+  WHEN 85 >= 90 THEN 'A'
+  WHEN 85 >= 75 THEN 'B'    -- stops here ✅
+  WHEN 85 >= 60 THEN 'C'    -- never reached
+END AS grade;
+-- Result: B
+
+-- 2. Order Matters Trap
+SELECT CASE
+  WHEN 85 >= 60 THEN 'C'    -- matches first!
+  WHEN 85 >= 75 THEN 'B'    -- never reached
+END AS grade;
+-- Result: C ← WRONG!
+
+-- 3. NULL Trap
+SELECT CASE NULL WHEN NULL THEN 'null!' ELSE 'nope' END;
+-- Result: 'nope' 💀 (NULL != NULL)
+
+-- 4. Correct NULL Check
+SELECT CASE WHEN NULL IS NULL THEN 'null!' ELSE 'nope' END;
+-- Result: 'null!' ✅
+
+-- 5. Conditional Aggregation
+SELECT
+  COUNT(*) AS total,
+  COUNT(CASE WHEN val > 3 THEN 1 END) AS above_3
+FROM (VALUES (1),(2),(3),(4),(5)) AS t(val);
+-- total=5, above_3=2`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Basics & Syntax" icon="information">
+    ```text
+    Q: Two forms of CASE?
+    A: Searched (WHEN condition) vs Simple (CASE col WHEN val).
+
+    Q: Evaluation order?
+    A: Top to bottom, stops at first TRUE. Most restrictive first!
+
+    Q: WHEN NULL in Simple CASE?
+    A: Never matches. Use Searched CASE + IS NULL.
+    ```
+  </Card>
+  
+  <Card title="Performance & Indexes" icon="rocket">
+    ```text
+    Q: Does CASE in WHERE kill indexes?
+    A: Often yes. Rewrite to standard boolean logic if possible.
+
+    Q: Can you index a CASE result?
+    A: Not directly. Use a GENERATED ALWAYS AS ... STORED column.
+
+    Q: Performance cost?
+    A: O(n) per-row evaluation. No extra scan.
+    ```
+  </Card>
+
+  <Card title="Advanced Patterns" icon="shield">
+    ```text
+    Q: How to pivot data in SQL?
+    A: Conditional aggregation: SUM(CASE WHEN cat='A' THEN amt ELSE 0 END).
+
+    Q: COUNT vs SUM in conditional agg?
+    A: COUNT skips NULLs (THEN 1 END). SUM needs ELSE 0.
+
+    Q: ELSE clause required?
+    A: No. If omitted, returns NULL when no WHEN matches.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### CASE Decision Flow
+
+```text
+Row enters CASE
+      │
+WHEN cond1? ──TRUE──► return result1  STOP
+      │
+     FALSE
+      │
+WHEN cond2? ──TRUE──► return result2  STOP
+      │
+     FALSE
+      │
+   ELSE ──────────────► return default  STOP
+      │
+  (no ELSE)
+      │
+     NULL
+```
+
+### Common Pitfalls & Fixes
+
+| Mistake | Issue | Fix |
+|---------|-------|-----|
+| Wrong WHEN order | Silent wrong data | Put most restrictive conditions first |
+| `WHEN NULL` | Never matches | Use `WHEN col IS NULL` |
+| `CASE` in `WHERE` | Index skip | Rewrite to `OR`/`AND` logic |
+| Missing `ELSE` | Unexpected NULLs | Add `ELSE` default if needed |
+| Repeating CASE in `GROUP BY` | Verbose | Use CTE to compute once |
+
+<Aside type="caution">
+**Final Checklist for CASE WHEN**:
+1. ✅ Order matters: Most specific conditions first
+2. ✅ Handle NULLs explicitly with `IS NULL`
+3. ✅ Use Conditional Aggregation for pivots/counting
+4. ✅ Avoid `CASE` in `WHERE` if performance is critical
+5. ✅ Use Generated Columns if you need to index CASE results
+6. ✅ Prefer CTEs to avoid repeating complex CASE logic
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What is the result?
+SELECT CASE 
+  WHEN 10 > 5 THEN 'A' 
+  WHEN 10 > 2 THEN 'B' 
+END;
+
+Q2: How do you count active users only?
+SELECT COUNT(*) FROM users; -- counts all
+SELECT COUNT(CASE WHEN is_active THEN 1 END) FROM users; -- ?
+
+Q3: Why does this return 'nope'?
+SELECT CASE NULL WHEN NULL THEN 'yes' ELSE 'nope' END;
+
+Q4: How do you pivot sales by region?
+SELECT region, SUM(amount) FROM sales GROUP BY region; -- vertical
+-- How to get columns: North, South, East, West?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: 'A' — Stops at first match (10 > 5 is true). 'B' is never checked.
+
+Q2: Counts only active users. CASE returns 1 for active, NULL for inactive. COUNT ignores NULLs.
+
+Q3: Because NULL = NULL evaluates to NULL (unknown), not TRUE. Simple CASE doesn't match.
+
+Q4: Use conditional aggregation:
+SELECT 
+  SUM(CASE WHEN region='North' THEN amount ELSE 0 END) AS North,
+  SUM(CASE WHEN region='South' THEN amount ELSE 0 END) AS South,
+  ...
+FROM sales;
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice converting multiple `SELECT` queries into one using Conditional Aggregation
+2. ✅ Use `CASE` in `ORDER BY` for custom priority sorting
+3. ✅ Remember: `CASE` is an expression — it returns a value, it doesn't control flow like in Java/Python
+4. ✅ Watch out for NULLs — they are the #1 source of bugs in CASE logic
+
+Mastering `CASE WHEN` turns messy application-side logic into clean, efficient SQL. 🐘✨
+</Aside>

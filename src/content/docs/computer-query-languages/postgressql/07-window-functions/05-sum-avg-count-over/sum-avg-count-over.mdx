@@ -1,0 +1,1160 @@
+---
+title: PostgreSQL Running Totals & Moving Averages
+slug: computer-query-languages/postgresql/window-functions/sum-avg-count-over
+description: Master dynamic aggregates using SUM, AVG, and COUNT OVER in PostgreSQL. Learn running totals, sliding windows, ROWS vs RANGE, and anomaly detection patterns.
+sidebar:
+  label: "Running Totals"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, running-total, moving-average, analytics, finance, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 Running Totals & Moving Averages — Complete Guide
+
+> **`SUM`, `AVG`, and `COUNT` with `OVER()` turn static aggregates into dynamic running calculations. Each row gets the aggregate of all rows "visible" in its frame, making cumulative totals and moving averages single-expression operations that previously required complex self-joins.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of a running total as an **accumulator**.  
+Instead of restarting for every row, it carries forward the result of the previous calculation, adding the current row's value to the running sum.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Syntax
+
+Window aggregates are computed in the `SELECT` phase, after filtering and grouping.
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← SUM/AVG/COUNT OVER computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+
+<CardGrid>
+  <Card title="Static Aggregate (Collapses Rows)" icon="collapse">
+    ```sql
+    -- Returns ONE row for the whole table
+    SELECT SUM(amount) FROM orders;
+    ```
+  </Card>
+  
+  <Card title="Window Aggregate (Preserves Rows)" icon="expand">
+    ```sql
+    -- Returns ONE value PER row (running total)
+    SELECT
+      id, amount,
+      SUM(amount) OVER (ORDER BY date) AS running_total
+    FROM orders;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣ The Core Difference — Static vs Running
+
+```
+orders table:
+┌────┬──────────┬────────┐
+│ id │ date     │ amount │
+├────┼──────────┼────────┤
+│  1 │ Jan 1    │  1000  │
+│  2 │ Jan 2    │  2000  │
+│  3 │ Jan 3    │  1500  │
+│  4 │ Jan 4    │  3000  │
+│  5 │ Jan 5    │  2500  │
+└────┴──────────┴────────┘
+
+Regular SUM:            Window SUM (running):
+┌──────────┐            ┌────┬──────┬────────────────┐
+│  10000   │            │ id │ amt  │ running_total  │
+└──────────┘            ├────┼──────┼────────────────┤
+                        │  1 │ 1000 │     1000       │ ← 1000
+1 row only              │  2 │ 2000 │     3000       │ ← 1000+2000
+                        │  3 │ 1500 │     4500       │ ← +1500
+                        │  4 │ 3000 │     7500       │ ← +3000
+                        │  5 │ 2500 │    10000       │ ← +2500
+                        └────┴──────┴────────────────┘
+                        5 rows, cumulative per row ✅
+```
+
+
+---
+
+
+## 1️⃣ Running SUM — Cumulative Totals
+
+The most common use case is calculating a cumulative sum (prefix sum).
+
+<Code lang="sql" title="Basic Running Total" code={`SELECT
+  sale_date,
+  daily_revenue,
+  -- Default frame: RANGE UNBOUNDED PRECEDING TO CURRENT ROW
+  SUM(daily_revenue) OVER (ORDER BY sale_date) AS running_total
+FROM daily_sales
+ORDER BY sale_date;`} />
+
+```sql
+-- Explicit frame (same result, clearer intent)
+SELECT
+  sale_date,
+  daily_revenue,
+  SUM(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS running_total
+FROM daily_sales;
+
+-- Partitioned running total (restart per group)
+SELECT
+  category,
+  sale_date,
+  daily_revenue,
+  SUM(daily_revenue) OVER (
+    PARTITION BY category          -- restart per category ✅
+    ORDER BY sale_date
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) AS category_running_total
+FROM category_daily_sales
+ORDER BY category, sale_date;
+```
+
+```
+Result (running total per category):
+
+Electronics:                  Clothing:
+Jan1  1000  →  1000           Jan1   500  →   500
+Jan2  2000  →  3000           Jan2   800  →  1300
+Jan3  1500  →  4500           Jan3   600  →  1900
+                              ↑ resets per category ✅
+```
+
+### 📅 Pattern: Year-to-Date (YTD)
+
+To calculate YTD revenue, we reset the running total for every year using `PARTITION BY`.
+
+<Code lang="sql" title="YTD Revenue Pattern" code={`
+-- YTD revenue: running total reset each year
+SELECT
+  sale_date,
+  EXTRACT(YEAR FROM sale_date) AS year,
+  daily_revenue,
+  SUM(daily_revenue) OVER (
+    PARTITION BY EXTRACT(YEAR FROM sale_date)   -- restart each year ✅
+    ORDER BY sale_date
+    ROWS UNBOUNDED PRECEDING
+  ) AS ytd_revenue,
+  -- Percentage of year's total so far
+  ROUND(
+    SUM(daily_revenue) OVER (
+      PARTITION BY EXTRACT(YEAR FROM sale_date)
+      ORDER BY sale_date
+      ROWS UNBOUNDED PRECEDING
+    ) * 100.0
+    / NULLIF(SUM(daily_revenue) OVER (
+      PARTITION BY EXTRACT(YEAR FROM sale_date)
+    ), 0),
+  1)                                            AS ytd_pct_of_year
+FROM daily_sales
+ORDER BY sale_date;
+`} />
+
+<Aside type="note">
+**DSA Connection**: A running sum is equivalent to a **Prefix Sum Array**.  
+`prefix[i] = prefix[i-1] + arr[i]`. Postgres computes this in a single O(n) pass after sorting.
+</Aside>
+
+---
+
+## 2️⃣ Moving Average — The Sliding Window
+
+Instead of looking at *all* previous rows, we look at a fixed "window" of recent data (e.g., the last 7 days) to smooth out noise.
+
+<Code lang="sql" title="7-Day Moving Average" code={`
+-- 7-day moving average (most common use case)
+SELECT
+  sale_date,
+  daily_revenue,
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW   -- current + 6 before = 7 days
+  ), 0)                                         AS avg_7d,
+
+  -- 30-day moving average
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+  ), 0)                                         AS avg_30d,
+
+  -- Centered moving average (3 before + current + 3 after = 7 days)
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING
+  ), 0)                                         AS avg_7d_centered
+FROM daily_sales
+ORDER BY sale_date;
+`} />
+
+### ⚠️ Handling Partial Windows
+The first few rows won't have a full 7 days of data.
+
+<CardGrid>
+  <Card title="Full 7-Day Window" icon="check">
+    By the 7th row, the window is full.
+    `AVG` calculates over exactly 7 rows.
+  </Card>
+  
+  <Card title="Partial Window" icon="warning">
+    On the 1st row, the window only contains 1 row.
+    `AVG` calculates over just that 1 row (which is just the value itself).
+  </Card>
+</CardGrid>
+
+<Code lang="sql" title="Check for Partial Windows" code={`
+-- Three types of average with OVER:
+
+SELECT
+  sale_date,
+  daily_revenue,
+
+  -- Type 1: Static average (all rows in partition visible)
+  ROUND(AVG(daily_revenue) OVER (), 0)          AS overall_avg,
+
+  -- Type 2: Cumulative running average (grows from start)
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS UNBOUNDED PRECEDING
+  ), 0)                                          AS cumulative_avg,
+
+  -- Type 3: Moving average (fixed window slides)
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  ), 0)                                          AS moving_avg_7d
+
+FROM daily_sales
+ORDER BY sale_date;
+`} />
+
+```
+Three averages compared (data: 10, 20, 30, 40, 50):
+
+Position:   1     2     3     4     5
+
+Values:    10    20    30    40    50
+
+Overall:   30    30    30    30    30   ← same for all rows (static)
+
+Cumul avg: 10    15    20    25    30   ← grows as more data included
+           (10) (15) (20) (25) (30)
+                10+20 10+20+30...
+
+Moving 3d: 10    15    20    30    40   ← slides forward
+           (10) (15) (20→avg   ) (30→40→50 avg 40)
+```
+
+---
+
+## 3️⃣ Moving Average — The Sliding Window
+
+```sql
+-- 7-day moving average (most common use case)
+SELECT
+  sale_date,
+  daily_revenue,
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW   -- current + 6 before = 7 days
+  ), 0)                                         AS avg_7d,
+
+  -- 30-day moving average
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+  ), 0)                                         AS avg_30d,
+
+  -- Centered moving average (3 before + current + 3 after = 7 days)
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING
+  ), 0)                                         AS avg_7d_centered
+FROM daily_sales
+ORDER BY sale_date;
+```
+
+```
+7-day moving average visualization:
+
+Date    Revenue   Window (6 PRECEDING TO CURRENT)    7d_avg
+Jan 1   10000     [10000]                             10000  ← only 1 row
+Jan 2   12000     [10000, 12000]                      11000  ← 2 rows
+Jan 3    8000     [10000, 12000, 8000]                10000  ← 3 rows
+Jan 4   15000     [10000, 12000, 8000, 15000]         11250  ← 4 rows
+...
+Jan 7   11000     [10K,12K,8K,15K,9K,14K,11K]        11286  ← full 7 rows
+Jan 8   13000     [12K,8K,15K,9K,14K,11K,13K]        11714  ← slides forward ✅
+
+First 6 rows: fewer than 7 rows in window (partial window)
+Row 7 onward: full 7-day window
+```
+
+```sql
+-- Handle partial window (count actual rows in window)
+SELECT
+  sale_date,
+  daily_revenue,
+  COUNT(*) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  )                                             AS rows_in_window,
+  ROUND(AVG(daily_revenue) OVER (
+    ORDER BY sale_date
+    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+  ), 0)                                         AS moving_avg,
+  -- Flag partial windows
+  CASE
+    WHEN COUNT(*) OVER (
+      ORDER BY sale_date
+      ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) < 7 THEN '⚠️ partial'
+    ELSE '✅ full'
+  END                                           AS window_status
+FROM daily_sales
+ORDER BY sale_date;
+```
+
+> 🎯 **Real-life SDE:** Moving averages smooth out noise in time series data. Used in financial charts (stock prices), product analytics (DAU/MAU smoothing), and performance monitoring (latency trends). The 7-day window is standard for weekly seasonality.
+
+---
+
+## 4️⃣ Running COUNT — Cumulative Counts
+
+```sql
+-- Running count: how many orders so far
+SELECT
+  created_at::DATE AS order_date,
+  order_id,
+  user_id,
+  COUNT(*) OVER (
+    ORDER BY created_at
+    ROWS UNBOUNDED PRECEDING
+  )                                             AS total_orders_so_far,
+
+  -- Running count per user
+  COUNT(*) OVER (
+    PARTITION BY user_id
+    ORDER BY created_at
+    ROWS UNBOUNDED PRECEDING
+  )                                             AS user_order_number,
+
+  -- Running unique users (distinct count running)
+  COUNT(DISTINCT user_id) OVER (
+    ORDER BY created_at::DATE
+  )                                             AS cumulative_unique_users
+  -- ⚠️ COUNT DISTINCT with OVER has limitations (covered below)
+FROM orders
+WHERE status = 'delivered'
+ORDER BY created_at;
+```
+
+### COUNT DISTINCT with OVER — The Limitation
+
+```sql
+-- COUNT(DISTINCT col) OVER (...) is NOT directly supported in Postgres
+SELECT
+  sale_date,
+  COUNT(DISTINCT user_id) OVER (ORDER BY sale_date) -- ❌ ERROR in some cases
+FROM orders;
+
+-- Workaround: use a subquery or approximate approach
+-- Approach 1: pre-aggregate then window
+WITH daily_unique AS (
+  SELECT
+    created_at::DATE AS sale_date,
+    COUNT(DISTINCT user_id) AS daily_unique_users
+  FROM orders GROUP BY 1
+)
+SELECT
+  sale_date,
+  daily_unique_users,
+  SUM(daily_unique_users) OVER (
+    ORDER BY sale_date
+    ROWS UNBOUNDED PRECEDING
+  ) AS cumulative_unique_approx   -- not truly unique across days
+FROM daily_unique;
+
+-- Approach 2: track first occurrence per user
+WITH first_orders AS (
+  SELECT
+    user_id,
+    MIN(created_at::DATE) AS first_order_date
+  FROM orders
+  GROUP BY user_id
+)
+SELECT
+  first_order_date AS date,
+  COUNT(*) OVER (
+    ORDER BY first_order_date
+    ROWS UNBOUNDED PRECEDING
+  ) AS cumulative_new_users   -- true cumulative unique users ✅
+FROM first_orders
+ORDER BY first_order_date;
+```
+
+---
+
+## 3️⃣ The Critical Distinction: ROWS vs RANGE
+
+When you use `ORDER BY` in a window function, Postgres defaults to `RANGE`. This has subtle but dangerous side effects if you have **duplicate values** (e.g., two orders on the same day).
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>ROWS</code></th>
+      <th><code>RANGE</code> (Default with ORDER BY)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Basis</strong></td>
+      <td>Physical position (Row count)</td>
+      <td>Logical value (Grouped by value)</td>
+    </tr>
+    <tr>
+      <td><strong>Duplicates</strong></td>
+      <td>Treated as separate rows. Accumulation steps row by row.</td>
+      <td>Treated as peers. All rows with the same value get the <em>exact same</em> result.</td>
+    </tr>
+    <tr>
+      <td><strong>Example</strong></td>
+      <td>Row A: Sum = 100<br/>Row B (same date): Sum = 150</td>
+      <td>Row A: Sum = 150<br/>Row B (same date): Sum = 150</td>
+    </tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="ROWS vs RANGE Example" code={`-- Data: Jan 1 ($100), Jan 2 ($200), Jan 2 ($500)
+
+-- ❌ RANGE (Default): Both Jan 2 rows show the TOTAL of Jan 2
+SUM(amount) OVER (ORDER BY date RANGE UNBOUNDED PRECEDING)
+-- Jan 1: 100
+-- Jan 2: 800 (100 + 200 + 500)
+-- Jan 2: 800 (Peer effect)
+
+-- ✅ ROWS: Strictly row-by-row accumulation
+SUM(amount) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING)
+-- Jan 1: 100
+-- Jan 2: 300 (100 + 200)
+-- Jan 2: 800 (100 + 200 + 500)`} />
+
+<Aside type="caution">
+**Interview Trap**: If asked for a "running balance" where order matters (e.g., transactions), **always use `ROWS UNBOUNDED PRECEDING`**. If you rely on the default `RANGE`, ties will show the same balance, which is logically incorrect for bank statements.
+</Aside>
+
+
+```sql
+-- The frame type changes behavior with duplicate ORDER BY values
+
+-- Setup: two orders on same date
+-- date=Jan3: order_a=1000, order_b=2000
+
+-- ROWS: physical row count — deterministic
+SUM(amount) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING)
+-- For order_a on Jan3: includes everything before Jan3 + order_a
+-- For order_b on Jan3: includes everything before Jan3 + order_a + order_b
+-- Different values for same date! (depends on physical row order)
+
+-- RANGE: value-based — includes ALL rows with same date
+SUM(amount) OVER (ORDER BY date RANGE UNBOUNDED PRECEDING)
+-- For order_a on Jan3: includes everything up to AND including ALL Jan3 rows
+-- For order_b on Jan3: SAME value as order_a
+-- Both Jan3 rows see the same cumulative total (group effect)
+```
+
+```
+ROWS vs RANGE for running total:
+
+Orders: Jan1=1000, Jan2=2000, Jan3=1500, Jan3=500
+
+ROWS UNBOUNDED PRECEDING:        RANGE UNBOUNDED PRECEDING:
+Jan1  1000  →  1000              Jan1  1000  →  1000
+Jan2  2000  →  3000              Jan2  2000  →  3000
+Jan3  1500  →  4500              Jan3  1500  →  5000  ← both Jan3 rows
+Jan3   500  →  5000              Jan3   500  →  5000  ← see same total
+
+ROWS: each physical row accumulates independently
+RANGE: all rows with same ORDER BY value see same cumulative result
+
+For financial running totals: ROWS usually correct
+  (each transaction adds to running balance individually)
+For "as of date" totals: RANGE usually correct
+  (all transactions on a date appear in same snapshot)
+```
+
+> 🎯 **Interview trap:** Default frame when ORDER BY present = `RANGE UNBOUNDED PRECEDING`. This means ties get the SAME running total. Use `ROWS UNBOUNDED PRECEDING` when you want each physical row to accumulate separately.
+---
+
+## 4️⃣ Percentage of Total
+
+```sql
+-- Each row as percentage of its group total
+SELECT
+  category,
+  product_name,
+  revenue,
+
+  -- Pct of category total
+  ROUND(
+    revenue * 100.0
+    / NULLIF(SUM(revenue) OVER (PARTITION BY category), 0),
+  1)                                             AS pct_of_category,
+
+  -- Pct of overall total
+  ROUND(
+    revenue * 100.0
+    / NULLIF(SUM(revenue) OVER (), 0),
+  1)                                             AS pct_of_total,
+
+  -- Category revenue as pct of total
+  ROUND(
+    SUM(revenue) OVER (PARTITION BY category) * 100.0
+    / NULLIF(SUM(revenue) OVER (), 0),
+  1)                                             AS category_pct_of_total
+
+FROM product_revenue
+ORDER BY category, revenue DESC;
+```
+
+```
+Result:
+┌─────────────┬──────────┬─────────┬──────────────────┬────────────────┐
+│ category    │ product  │ revenue │ pct_of_category  │ pct_of_total  │
+├─────────────┼──────────┼─────────┼──────────────────┼────────────────┤
+│ Electronics │ Laptop   │  50000  │      62.5%       │    33.3%      │
+│ Electronics │ Phone    │  30000  │      37.5%       │    20.0%      │
+│ Clothing    │ Shoes    │  40000  │      57.1%       │    26.7%      │
+│ Clothing    │ Shirts   │  30000  │      42.9%       │    20.0%      │
+└─────────────┴──────────┴─────────┴──────────────────┴────────────────┘
+```
+---
+
+## 5️⃣ Running COUNT & The DISTINCT Limitation
+
+### Standard Running Count
+<Code lang="sql" title="Cumulative Count" code={`SELECT
+  created_at,
+  COUNT(*) OVER (
+    ORDER BY created_at
+    ROWS UNBOUNDED PRECEDING
+  ) AS order_number_total
+FROM orders;`} />
+
+### ⚠️ Running COUNT(DISTINCT)
+Postgres **does not** natively support `COUNT(DISTINCT col) OVER (...)` efficiently. It often results in errors or full table scans.
+
+**The Workaround**: Use a subquery or CTE to identify the *first* occurrence, then count those.
+
+<Code lang="sql" title="Running Unique Users" code={`-- Step 1: Find the FIRST time each user appeared
+WITH first_seen AS (
+  SELECT user_id, MIN(created_at::DATE) AS first_date
+  FROM orders
+  GROUP BY user_id
+)
+-- Step 2: Count cumulative new users
+SELECT
+  first_date,
+  COUNT(*) OVER (
+    ORDER BY first_date
+    ROWS UNBOUNDED PRECEDING
+  ) AS cumulative_unique_users
+FROM first_seen;`} />
+
+---
+
+## 6️⃣ Internals & Performance
+
+```
+Running aggregates = incremental computation.
+Postgres does NOT recompute from scratch for each row.
+
+For SUM OVER (ORDER BY date ROWS UNBOUNDED PRECEDING):
+
+  Sorted input: [1000, 2000, 1500, 3000, 2500]
+
+  Scan:
+  Row 1: accumulator = 1000  → emit 1000
+  Row 2: accumulator += 2000 → emit 3000
+  Row 3: accumulator += 1500 → emit 4500
+  Row 4: accumulator += 3000 → emit 7500
+  Row 5: accumulator += 2500 → emit 10000
+
+  O(1) per row after sorting ✅
+  Total: O(n log n) sort + O(n) scan = O(n log n)
+
+For sliding window SUM OVER (ROWS BETWEEN 6 PRECEDING AND CURRENT ROW):
+
+  Maintains a sliding window deque:
+  Row 1: window=[1000]              sum=1000
+  Row 2: window=[1000,2000]         sum=3000
+  ...
+  Row 7: window=[r1,r2,r3,r4,r5,r6,r7] sum=full
+  Row 8: window=[r2,r3,r4,r5,r6,r7,r8] sum: add r8, subtract r1
+  ↑ O(1) per row (add new, subtract dropped) ✅
+```
+
+```sql
+EXPLAIN (ANALYZE)
+SELECT
+  sale_date,
+  SUM(daily_revenue) OVER (ORDER BY sale_date ROWS UNBOUNDED PRECEDING),
+  AVG(daily_revenue) OVER (ORDER BY sale_date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
+FROM daily_sales;
+
+-- Output:
+-- WindowAgg                          ← both computed in ONE pass ✅
+--   -> Sort                          ← sort by sale_date
+--        Sort Key: sale_date
+--        Sort Method: quicksort  Memory: 128kB
+--        -> Seq Scan on daily_sales
+
+-- With index on sale_date:
+-- WindowAgg
+--   -> Index Scan on idx_daily_sales  ← no Sort node! ✅
+```
+
+```
+Multiple window functions with SAME OVER:
+  Computed in ONE WindowAgg pass ✅
+  One sort, one scan, multiple accumulators
+
+Multiple window functions with DIFFERENT OVER:
+  Each needs its own WindowAgg node
+  Multiple sort nodes in plan ⚠️
+  Use WINDOW clause to share definitions
+```
+
+---
+
+## 7️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Financial Dashboard" icon="chart-line">
+    ```sql
+    -- YTD Revenue + 7-Day Moving Avg + WoW Growth
+    SELECT day, revenue,
+      SUM(revenue) OVER w_cumul AS ytd_rev,
+      AVG(revenue) OVER w_7d AS ma_7d,
+      LAG(revenue, 7) OVER w_all AS last_week_rev,
+      ROUND((revenue - LAG(revenue, 7) OVER w_all) * 100.0 
+        / NULLIF(LAG(revenue, 7) OVER w_all, 0), 1) AS wow_pct
+    FROM daily_metrics
+    WINDOW 
+      w_all AS (ORDER BY day),
+      w_cumul AS (ORDER BY day ROWS UNBOUNDED PRECEDING),
+      w_7d AS (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW);
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Customer LTV Progression" icon="user-check">
+    ```sql
+    -- Track cumulative spend per customer over time
+    SELECT user_id, order_date, amount,
+      SUM(amount) OVER (
+        PARTITION BY user_id 
+        ORDER BY order_date 
+        ROWS UNBOUNDED PRECEDING
+      ) AS cumulative_ltv
+    FROM orders;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Anomaly Detection (Z-Score)" icon="alert-triangle">
+    ```sql
+    -- Compare current transaction to the 30-day moving average
+    -- Note: EXCLUDE current row (1 PRECEDING) to compare against history
+    WITH stats AS (
+      SELECT account_id, amount, txn_date,
+        AVG(amount) OVER (
+          PARTITION BY account_id 
+          ORDER BY txn_date 
+          ROWS BETWEEN 29 PRECEDING AND 1 PRECEDING
+        ) AS hist_avg,
+        STDDEV(amount) OVER (
+          PARTITION BY account_id 
+          ORDER BY txn_date 
+          ROWS BETWEEN 29 PRECEDING AND 1 PRECEDING
+        ) AS hist_stddev
+      FROM transactions
+    )
+    SELECT *, 
+      (amount - hist_avg) / NULLIF(hist_stddev, 0) AS z_score
+    FROM stats;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Cohort Revenue Progression" icon="layers">
+    ```sql
+    -- Cumulative revenue per cohort over months
+    SELECT cohort_month, month_offset, monthly_rev,
+      SUM(monthly_rev) OVER (
+        PARTITION BY cohort_month 
+        ORDER BY month_offset 
+        ROWS UNBOUNDED PRECEDING
+      ) AS cumulative_revenue
+    FROM cohort_metrics;
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern 1 — Complete Financial Dashboard
+
+```sql
+-- Revenue analytics: cumulative + moving + comparisons
+WITH daily AS (
+  SELECT
+    created_at::DATE                              AS day,
+    SUM(amount)                                   AS revenue,
+    COUNT(*)                                      AS orders,
+    COUNT(DISTINCT user_id)                       AS unique_users
+  FROM orders
+  WHERE status = 'delivered'
+    AND created_at >= DATE_TRUNC('year', NOW())
+  GROUP BY 1
+)
+SELECT
+  day,
+  revenue,
+  orders,
+  unique_users,
+
+  -- Cumulative (YTD)
+  SUM(revenue) OVER w_cumul                       AS ytd_revenue,
+  SUM(orders)  OVER w_cumul                       AS ytd_orders,
+
+  -- Moving averages
+  ROUND(AVG(revenue) OVER w_7d,  0)               AS revenue_7d_avg,
+  ROUND(AVG(revenue) OVER w_30d, 0)               AS revenue_30d_avg,
+
+  -- Period-over-period
+  LAG(revenue, 7) OVER w_all                      AS revenue_last_week,
+  ROUND(
+    (revenue - LAG(revenue, 7) OVER w_all)
+    * 100.0 / NULLIF(LAG(revenue, 7) OVER w_all, 0), 1
+  )                                               AS wow_pct,
+
+  -- Share of annual total
+  ROUND(revenue * 100.0
+    / NULLIF(SUM(revenue) OVER (), 0), 2)         AS pct_of_ytd_total,
+
+  -- Running row count (which business day is this?)
+  ROW_NUMBER() OVER w_all                         AS business_day_number
+
+FROM daily
+WINDOW
+  w_all   AS (ORDER BY day),
+  w_cumul AS (ORDER BY day ROWS UNBOUNDED PRECEDING),
+  w_7d    AS (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW),
+  w_30d   AS (ORDER BY day ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)
+ORDER BY day;
+```
+
+### Pattern 2 — Customer Lifetime Value Progression
+
+```sql
+-- Track each customer's cumulative spend over time
+WITH customer_orders AS (
+  SELECT
+    user_id,
+    created_at::DATE AS order_date,
+    amount,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_id
+      ORDER BY created_at
+    ) AS order_number
+  FROM orders
+  WHERE status = 'delivered'
+)
+SELECT
+  user_id,
+  order_date,
+  order_number,
+  amount,
+
+  -- Cumulative spend per customer
+  SUM(amount) OVER (
+    PARTITION BY user_id
+    ORDER BY order_date
+    ROWS UNBOUNDED PRECEDING
+  )                                             AS cumulative_ltv,
+
+  -- Average order value so far
+  ROUND(AVG(amount) OVER (
+    PARTITION BY user_id
+    ORDER BY order_date
+    ROWS UNBOUNDED PRECEDING
+  ), 0)                                         AS running_avg_order,
+
+  -- Is spend accelerating or decelerating?
+  CASE
+    WHEN amount > AVG(amount) OVER (
+      PARTITION BY user_id
+      ORDER BY order_date
+      ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+    ) THEN '📈 above recent avg'
+    ELSE '📉 below recent avg'
+  END                                           AS spending_trend
+
+FROM customer_orders
+ORDER BY user_id, order_date;
+```
+
+### Pattern 3 — Stock Price Analysis
+
+```sql
+-- Stock data: price + technical indicators
+SELECT
+  ticker,
+  trade_date,
+  close_price,
+  volume,
+
+  -- Simple Moving Averages
+  ROUND(AVG(close_price) OVER (
+    PARTITION BY ticker
+    ORDER BY trade_date
+    ROWS BETWEEN 9 PRECEDING AND CURRENT ROW
+  ), 2)                                         AS sma_10,
+
+  ROUND(AVG(close_price) OVER (
+    PARTITION BY ticker
+    ORDER BY trade_date
+    ROWS BETWEEN 49 PRECEDING AND CURRENT ROW
+  ), 2)                                         AS sma_50,
+
+  -- Volume moving average
+  ROUND(AVG(volume) OVER (
+    PARTITION BY ticker
+    ORDER BY trade_date
+    ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+  ), 0)                                         AS avg_volume_20d,
+
+  -- Price range (high-low) over rolling 52 weeks
+  MAX(close_price) OVER (
+    PARTITION BY ticker
+    ORDER BY trade_date
+    ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+  )                                             AS week52_high,
+
+  MIN(close_price) OVER (
+    PARTITION BY ticker
+    ORDER BY trade_date
+    ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+  )                                             AS week52_low,
+
+  -- Current position in 52-week range
+  ROUND(
+    (close_price - MIN(close_price) OVER (
+      PARTITION BY ticker
+      ORDER BY trade_date
+      ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+    )) * 100.0 / NULLIF(
+      MAX(close_price) OVER (
+        PARTITION BY ticker
+        ORDER BY trade_date
+        ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+      ) - MIN(close_price) OVER (
+        PARTITION BY ticker
+        ORDER BY trade_date
+        ROWS BETWEEN 251 PRECEDING AND CURRENT ROW
+      ), 0
+    ), 1
+  )                                             AS position_in_52w_range_pct
+
+FROM stock_prices
+WHERE trade_date >= NOW() - INTERVAL '2 years'
+ORDER BY ticker, trade_date;
+```
+
+### Pattern 4 — Anomaly Detection with Running Stats
+
+```sql
+-- Flag transactions that deviate > 2σ from recent moving average
+
+WITH stats AS (
+  SELECT
+    account_id,
+    transaction_date,
+    amount,
+    AVG(amount) OVER (
+      PARTITION BY account_id
+      ORDER BY transaction_date
+      ROWS BETWEEN 29 PRECEDING AND 1 PRECEDING   -- exclude current row!
+    )                                             AS hist_avg,
+    STDDEV(amount) OVER (
+      PARTITION BY account_id
+      ORDER BY transaction_date
+      ROWS BETWEEN 29 PRECEDING AND 1 PRECEDING
+    )                                             AS hist_stddev,
+    COUNT(*) OVER (
+      PARTITION BY account_id
+      ORDER BY transaction_date
+      ROWS BETWEEN 29 PRECEDING AND 1 PRECEDING
+    )                                             AS hist_count
+  FROM transactions
+)
+SELECT
+  account_id,
+  transaction_date,
+  amount,
+  ROUND(hist_avg, 0)                              AS recent_avg,
+  ROUND(hist_stddev, 0)                           AS recent_stddev,
+  ROUND(
+    ABS(amount - hist_avg)
+    / NULLIF(hist_stddev, 0), 1
+  )                                               AS z_score,
+  CASE
+    WHEN hist_count < 5                           THEN '⚪ insufficient history'
+    WHEN ABS(amount - hist_avg) > 3 * hist_stddev THEN '🔴 severe anomaly'
+    WHEN ABS(amount - hist_avg) > 2 * hist_stddev THEN '🟡 anomaly'
+    ELSE                                               '🟢 normal'
+  END                                             AS flag
+FROM stats
+WHERE hist_count >= 5          -- only flag when we have history
+ORDER BY z_score DESC NULLS LAST;
+```
+
+### Pattern 5 — Cohort Revenue Progression
+
+```sql
+-- Track cohort revenue cumulatively over months since acquisition
+
+WITH cohort_monthly AS (
+  SELECT
+    DATE_TRUNC('month', u.created_at)::DATE        AS cohort_month,
+    DATE_TRUNC('month', o.created_at)::DATE        AS order_month,
+    EXTRACT(EPOCH FROM
+      DATE_TRUNC('month', o.created_at)
+      - DATE_TRUNC('month', u.created_at)
+    )::INT / (30*24*3600)                           AS months_since_acquisition,
+    SUM(o.amount)                                   AS monthly_revenue
+  FROM   users  u
+  JOIN   orders o ON o.user_id = u.id
+  WHERE  o.status = 'delivered'
+  GROUP BY 1, 2, 3
+)
+SELECT
+  cohort_month,
+  months_since_acquisition,
+  monthly_revenue,
+  SUM(monthly_revenue) OVER (
+    PARTITION BY cohort_month
+    ORDER BY months_since_acquisition
+    ROWS UNBOUNDED PRECEDING
+  )                                               AS cumulative_cohort_revenue,
+  COUNT(*) OVER (
+    PARTITION BY cohort_month
+    ORDER BY months_since_acquisition
+    ROWS UNBOUNDED PRECEDING
+  )                                               AS months_tracked
+FROM   cohort_monthly
+ORDER BY cohort_month, months_since_acquisition;
+```
+
+---
+
+## 🔬 Verify Yourself
+
+```sql
+-- Setup
+CREATE TEMP TABLE t_daily (
+  day      DATE,
+  category TEXT,
+  revenue  INT
+);
+INSERT INTO t_daily VALUES
+  ('2024-01-01','Eng', 1000),
+  ('2024-01-02','Eng', 2000),
+  ('2024-01-03','Eng', 1500),
+  ('2024-01-04','Eng', 3000),
+  ('2024-01-05','Eng', 2500),
+  ('2024-01-01','Sales', 500),
+  ('2024-01-02','Sales', 800),
+  ('2024-01-03','Sales', 600),
+  ('2024-01-04','Sales', 900),
+  ('2024-01-05','Sales', 700);
+
+-- 1. Running SUM
+SELECT day, category, revenue,
+  SUM(revenue) OVER (
+    PARTITION BY category
+    ORDER BY day
+    ROWS UNBOUNDED PRECEDING
+  ) AS running_total
+FROM t_daily ORDER BY category, day;
+-- Eng:   1000, 3000, 4500, 7500, 10000 ✅
+-- Sales:  500, 1300, 1900, 2800,  3500 ✅ (restarts per category)
+
+-- 2. Running AVG (cumulative)
+SELECT day, revenue,
+  ROUND(AVG(revenue) OVER (
+    ORDER BY day
+    ROWS UNBOUNDED PRECEDING
+  ), 0) AS running_avg
+FROM t_daily WHERE category='Eng' ORDER BY day;
+-- 1000, 1500, 1500, 1875, 2000 ✅
+
+-- 3. Moving average (3-day window)
+SELECT day, revenue,
+  ROUND(AVG(revenue) OVER (
+    ORDER BY day
+    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+  ), 0) AS moving_avg_3d,
+  COUNT(*) OVER (
+    ORDER BY day
+    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+  ) AS rows_in_window
+FROM t_daily WHERE category='Eng' ORDER BY day;
+-- Jan1: avg=1000, rows=1 (partial) ✅
+-- Jan2: avg=1500, rows=2 (partial) ✅
+-- Jan3: avg=1500, rows=3 (full) ✅
+-- Jan4: avg=2167, rows=3 (slides) ✅
+
+-- 4. ROWS vs RANGE with duplicate dates
+INSERT INTO t_daily VALUES
+  ('2024-01-03','Eng', 500);  -- second Jan3 row
+
+SELECT day, revenue,
+  SUM(revenue) OVER (ORDER BY day ROWS  UNBOUNDED PRECEDING) AS rows_sum,
+  SUM(revenue) OVER (ORDER BY day RANGE UNBOUNDED PRECEDING) AS range_sum
+FROM t_daily WHERE category='Eng' ORDER BY day, revenue;
+-- Jan3 row 1: ROWS=4500, RANGE=5000 ← both Jan3 rows in RANGE! ✅
+-- Jan3 row 2: ROWS=5000, RANGE=5000 ✅
+
+-- 5. Percentage of total
+SELECT day, revenue,
+  SUM(revenue) OVER () AS grand_total,
+  ROUND(revenue * 100.0 / SUM(revenue) OVER (), 1) AS pct_of_total
+FROM t_daily WHERE category='Eng' ORDER BY day;
+-- Grand total=10000 for all Eng rows ✅
+
+-- 6. WINDOW clause: share sort across multiple functions
+SELECT day, category, revenue,
+  SUM(revenue)  OVER w AS running_sum,
+  AVG(revenue)  OVER w AS running_avg,
+  COUNT(*)      OVER w AS running_count,
+  MIN(revenue)  OVER w AS running_min,
+  MAX(revenue)  OVER w AS running_max
+FROM t_daily
+WINDOW w AS (
+  PARTITION BY category
+  ORDER BY day
+  ROWS UNBOUNDED PRECEDING
+)
+ORDER BY category, day;
+-- All five functions, ONE sort! ✅
+
+-- 7. EXPLAIN: see one WindowAgg for shared OVER
+EXPLAIN SELECT day, revenue,
+  SUM(revenue) OVER w AS s,
+  AVG(revenue) OVER w AS a,
+  COUNT(*) OVER w AS c
+FROM t_daily
+WINDOW w AS (PARTITION BY category ORDER BY day ROWS UNBOUNDED PRECEDING);
+-- WindowAgg (ONE node for all three) ← shared ✅
+
+-- 8. Running count per group
+SELECT day, category, revenue,
+  COUNT(*) OVER (
+    PARTITION BY category
+    ORDER BY day
+    ROWS UNBOUNDED PRECEDING
+  ) AS order_number_in_category
+FROM t_daily ORDER BY category, day;
+-- 1,2,3,4,5 for each category independently ✅
+```
+
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| Running total formula? | `SUM(col) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING)` |
+| Moving average formula? | `AVG(col) OVER (ORDER BY date ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW)` |
+| Default frame with ORDER BY? | `RANGE UNBOUNDED PRECEDING TO CURRENT ROW` — RANGE-based cumulative |
+| ROWS vs RANGE for running total? | ROWS: each physical row accumulates separately. RANGE: same-value rows get same total |
+| When to use ROWS? | Financial ledgers, transaction-by-transaction running balance |
+| When to use RANGE? | "As of date" snapshots where same-date rows should appear together |
+| Percentage of total? | `col * 100.0 / NULLIF(SUM(col) OVER (), 0)` |
+| Percentage of partition? | `col * 100.0 / NULLIF(SUM(col) OVER (PARTITION BY grp), 0)` |
+| YTD pattern? | `PARTITION BY EXTRACT(YEAR FROM date)` resets running total each year |
+| COUNT DISTINCT OVER? | Not natively supported — pre-aggregate unique counts then window |
+| WINDOW clause benefit? | One sort shared across all functions with same definition |
+| Partial moving window? | First N-1 rows have fewer rows in window — `COUNT(*) OVER (frame)` shows actual count |
+| Running total complexity? | O(n log n) sort + O(n) accumulation — incremental, not re-computed per row |
+| Exclude current row from frame? | `ROWS BETWEEN N PRECEDING AND 1 PRECEDING` — for anomaly detection |
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+SUM / AVG / COUNT OVER — Complete Picture
+
+Three modes:
+
+1. STATIC aggregate (no ORDER BY in OVER):
+   OVER ()                       → entire result set
+   OVER (PARTITION BY x)         → entire partition
+   Every row sees ALL partition rows
+   Result: same value for all rows in partition
+
+2. CUMULATIVE (ORDER BY, default RANGE frame):
+   OVER (ORDER BY date)          → grows from start
+   Default: RANGE UNBOUNDED PRECEDING TO CURRENT ROW
+   Result: running total that grows with each row
+
+3. SLIDING WINDOW (explicit ROWS frame):
+   OVER (ORDER BY date ROWS BETWEEN N PRECEDING AND CURRENT ROW)
+   Fixed-size window slides forward
+   Result: moving average, rolling sum
+
+Frame types:
+  ROWS:  physical position — deterministic with ties ✅
+  RANGE: value-based — same-value rows see same result
+
+Incremental execution (efficient):
+  Cumulative: add each new row → O(1) per row
+  Sliding:    add new, subtract dropped → O(1) per row
+  Sort cost:  O(n log n) — eliminated by index ✅
+
+WINDOW clause = define once, reuse many:
+  WINDOW w AS (PARTITION BY cat ORDER BY date ROWS UNBOUNDED PRECEDING)
+  SUM(x) OVER w, AVG(x) OVER w, COUNT(*) OVER w
+  → ONE sort, ONE scan, multiple accumulators ✅
+
+Common formulas:
+  Running total:    SUM(amt) OVER (ORDER BY date ROWS UNBOUNDED PRECEDING)
+  YTD:              SUM(amt) OVER (PARTITION BY year ORDER BY date ROWS UNBOUNDED PRECEDING)
+  7d moving avg:    AVG(amt) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
+  % of total:       amt * 100.0 / SUM(amt) OVER ()
+  % of partition:   amt * 100.0 / SUM(amt) OVER (PARTITION BY grp)
+  Anomaly baseline: AVG(amt) OVER (ORDER BY date ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING)
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use `ROWS UNBOUNDED PRECEDING` for financial running totals.
+2. ✅ Use `ROWS BETWEEN N PRECEDING AND CURRENT ROW` for moving averages.
+3. ✅ Use `WINDOW` clause to keep code clean when repeating frame definitions.
+4. ✅ Index your sorting columns to avoid expensive disk sorts in `WindowAgg`.
+</Aside>

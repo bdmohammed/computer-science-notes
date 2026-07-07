@@ -1,0 +1,869 @@
+---
+title: Python Data Types
+slug: computer-languages/python/language-fundamentals/data-types
+description: What the Python interpreter sees, how memory splits, and every trap that'll cost you an interview.
+sidebar:
+  label: "Data Types"
+  badge:
+    text: Core
+    variant: tip
+tags: [python, data-types, interpreter, memory, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import BitMap from './bit-diagram.svg';
+
+**A Data Type tells the Python interpreter**
+
+➜ What *type* of data a variable can store  
+➜ How much *memory* to allocate  
+➜ What *operations* are allowed
+➜ How memory and objects behave internally
+
+---
+
+## 📦 Classification of Java Data Types
+
+
+```
+Python Data Types
+│
+├── 🔵 Numeric Types
+│   ├── int
+│   ├── float
+│   └── complex
+│
+├── 🟢 Boolean Type
+│   └── bool
+│
+├── 🟣 Sequence Types
+│   ├── str
+│   ├── list
+│   ├── tuple
+│   └── range
+│
+├── 🟡 Set Types
+│   ├── set
+│   └── frozenset
+│
+├── 🟠 Mapping Type
+│   └── dict
+│
+├── 🔴 Binary Types
+│   ├── bytes
+│   ├── bytearray
+│   └── memoryview
+│
+└── ⚪ None Type
+    └── NoneType
+```
+---
+
+# 🔹 Python Data Types Overview
+
+Unlike Java/C++, Python variables do NOT store fixed primitive values directly.
+
+Python variables store **references to objects**.
+
+```python
+x = 10
+
+# 10 is an object, not a primitive stored directly in a variable.
+
+print(type(x))
+# <class 'int'>
+x ──► int object(10)
+```
+
+Variables store references
+Everything is an object
+Even integers, booleans, and floats are objects
+---
+### 📊 Complete Reference Table
+
+`1 byte = 8 bits`
+
+| Type        | Example             | Mutable? | Description                  |
+| ----------- | ------------------- | -------- | ---------------------------- |
+| `int`       | `10`                | ❌ No     | Whole numbers                |
+| `float`     | `10.5`              | ❌ No     | Decimal numbers              |
+| `complex`   | `2+3j`              | ❌ No     | Complex numbers              |
+| `bool`      | `True`              | ❌ No     | Logical values               |
+| `str`       | `"hello"`           | ❌ No     | Text / Unicode string        |
+| `list`      | `[1,2,3]`           | ✅ Yes    | Ordered mutable collection   |
+| `tuple`     | `(1,2,3)`           | ❌ No     | Ordered immutable collection |
+| `set`       | `{1,2,3}`           | ✅ Yes    | Unordered unique values      |
+| `frozenset` | `frozenset({1,2})`  | ❌ No     | Immutable set                |
+| `dict`      | `{"a":1}`           | ✅ Yes    | Key-value mapping            |
+| `bytes`     | `b"abc"`            | ❌ No     | Immutable binary data        |
+| `bytearray` | `bytearray(b"abc")` | ✅ Yes    | Mutable binary data          |
+| `NoneType`  | `None`              | ❌ No     | Represents absence of value  |
+
+---
+
+### 🔍 Deep-Dives Per Type
+
+## 1. 🔢 Integer Types
+
+Python integers have **arbitrary precision**.
+
+Unlike Java/C++:
+* No fixed 32-bit or 64-bit limit
+* Python automatically allocates more memory
+* No overflow — it seamlessly transitions to a "big int" representation when needed
+
+```text
+PyLongObject (CPython):
+┌──────────────────────────────────────┐
+│  ob_refcnt   (reference count)       │
+│  ob_type     (→ PyLong_Type)         │
+│  ob_digit[]  (array of 30-bit digits)│ ← grows as needed
+└──────────────────────────────────────┘
+```
+
+```python
+x = 10
+y = -500
+big = 999999999999999999999999999999 # ✅ No overflow like Java `int`.
+
+import sys
+sys.getsizeof(0)        # 24 bytes
+sys.getsizeof(2**30)    # 28 bytes
+sys.getsizeof(2**60)    # 32 bytes   ← grows with magnitude
+```
+
+# 🔒 Small Int Cache (-5 to 256)
+
+```python
+a = 100
+b = 100
+a is b     # True  ← same object (cached)
+
+a = 1000
+b = 1000
+a is b     # False ← different objects (outside cache)
+```
+
+```
+CPython pre-allocates PyLongObject for -5 to 256 at startup.
+These live forever in memory. Assignment just returns pointer to cached object.
+Outside range → new PyLongObject allocated on heap every time.
+```
+
+### Bases
+```python
+0b1010          # binary  → 10
+0o12            # octal   → 10
+0x0A            # hex     → 10
+int("FF", 16)   # → 255
+int("1010", 2)  # → 10
+```
+
+
+---
+## 2. 🔬 Floating-Point Types
+Python `float` uses IEEE 754 double precision internally.
+
+```python
+sys.getsizeof(3.14)    # always 24 bytes — fixed size unlike int
+```
+
+⚠️ Floating-point precision issue still exists:
+```python
+price = 0.1 + 0.2
+print(price)  # 0.30000000000000004 😱
+```
+
+**✅ Use `Math or Decimal` for financial calculations**
+
+```python
+import math
+math.isclose(0.1 + 0.2, 0.3)          # True
+round(0.1 + 0.2, 10) == round(0.3, 10) # True
+
+# For money — NEVER use float:
+from decimal import Decimal
+Decimal("0.1") + Decimal("0.2")   # Decimal('0.3') ✅
+```
+
+### Special Values
+```python
+float('inf')     # ∞
+float('-inf')    # -∞
+float('nan')     # NaN
+
+x = float('nan')
+x == x           # False  ← NaN is not equal to itself (IEEE 754 rule)
+math.isnan(x)    # True   ← correct way to check
+```
+
+<Aside type="tip">
+**Why 0.1 + 0.2 ≠ 0.3?**  
+Floats use **IEEE 754 binary representation**.  
+`0.1` in binary = `0.000110011001100...` (repeating!) → computer truncates → tiny error accumulates.
+```
+Python float = C double = 64-bit IEEE 754
+  ┌──────┬─────────────┬────────────────────────────────┐
+  │Sign 1│ Exponent 11 │         Mantissa 52            │
+  └──────┴─────────────┴────────────────────────────────┘
+
+  Range:  ±1.7 × 10^308
+  Precision: ~15–17 significant decimal digits
+  value = (-1)^S × 1.Mantissa × 2^(Exponent - 1023)
+```
+</Aside>
+
+## 3. Complex Numbers
+Python has built-in support for complex numbers using the `complex` type.
+
+```python
+z = 3 + 4j
+z.real    # 3.0
+z.imag    # 4.0
+abs(z)    # 5.0  (magnitude = √(3²+4²))
+```
+- Complex numbers are useful in certain mathematical computations, signal processing, and quantum mechanics problems.
+- Each part is a C `double`.
+---
+
+## 4. Boolean Type
+- Python's `bool` type has only two values: `True` and `False`.
+- bool IS-A int. Not just compatible — literally a subclass.
+
+```python
+class bool(int): ...
+
+True  == 1    → True
+False == 0    → True
+True + True   → 2
+True * 5      → 5
+
+isinstance(True, int)    # True
+type(True)               # <class 'bool'>  — NOT int
+True is 1                # False — different objects
+True == 1                # True  — same value
+
+flag = True
+
+# C/C++ style — will compile in Python but is not idiomatic
+# Python allows integers in conditions
+# 0 → False
+# non-zero → True
+if (x)       { }
+while (1)    { }
+
+print(True == 1)   # True
+print(False == 0)  # True
+```
+
+### 💀 Trap
+```python
+counts = {True: "yes", 1: "no"}
+print(counts)    # {True: 'no'}  ← 1 and True have same hash!
+                 # dict sees them as same key, second write overwrites
+```
+
+### Truthiness Rules
+```
+Falsy:   False, None, 0, 0.0, 0j, "", [], {}, set(), ()
+Truthy:  everything else (including "0", [0], {0: 0})
+```
+
+---
+
+# 5. 🔤 String (`str`)
+Python strings are:
+
+* Immutable
+* Unicode by default
+* Ordered sequences
+
+```python
+name = "Alice"
+
+print(name[0])   # A
+print(len(name)) # 5
+```
+
+---
+
+## 🔥 String Immutability
+
+### Internals (CPython Flexible String Repr)
+
+```
+Python 3 str — NOT a simple char array.
+CPython uses one of 3 internal encodings based on content:
+
+┌──────────────────────────────────────────────────────┐
+│            PyUnicodeObject (3 layouts)               │
+│                                                      │
+│  Latin-1  (U+0000–U+00FF)  → 1 byte per char        │
+│  UCS-2    (U+0000–U+FFFF)  → 2 bytes per char       │
+│  UCS-4    (U+0000–U+10FFFF)→ 4 bytes per char       │
+└──────────────────────────────────────────────────────┘
+
+"hello"   → Latin-1 (5 bytes)
+"héllo"   → UCS-2   (10 bytes)
+"h😀llo"  → UCS-4   (20 bytes)
+```
+
+```python
+import sys
+sys.getsizeof("hello")     # 54 bytes (object overhead + 5×1)
+sys.getsizeof("héllo")     # 76 bytes (object overhead + 5×2)
+sys.getsizeof("h😀llo")    # 100 bytes (object overhead + 5×4)
+```
+
+### Key Operations & Complexity
+
+| Operation | Complexity | Note |
+|-----------|-----------|------|
+| `s[i]` | O(1) | direct index |
+| `len(s)` | O(1) | cached in object |
+| `s + t` | O(n+m) | creates new object |
+| `s in t` | O(n·m) | naive, no KMP |
+| `s.split()` | O(n) | |
+| `"".join(list)` | O(n) | single alloc |
+
+### 💀 String Concatenation Trap
+
+```python
+# WRONG — O(n²) — each + creates new str object
+result = ""
+for word in words:
+    result += word      # 💀 in loop with 10k words → 10k allocations
+
+# CORRECT — O(n) — one allocation
+result = "".join(words)
+```
+
+### String Interning
+
+```python
+# CPython auto-interns strings that look like identifiers
+a = "hello"
+b = "hello"
+a is b          # True  ← interned automatically
+
+a = "hello world"
+b = "hello world"
+a is b          # False ← spaces → not auto-interned
+
+# Force intern:
+import sys
+a = sys.intern("hello world")
+b = sys.intern("hello world")
+a is b          # True
+```
+
+> Interning is used in CPython itself — attribute names, dictionary keys in namespaces — to speed up `==` comparison to `is` (pointer compare vs character-by-character).
+
+---
+
+# 6. 📚 List
+
+Lists are mutable dynamic arrays.
+
+```python
+nums = [1, 2, 3]
+
+nums.append(4)
+
+print(nums)
+# [1, 2, 3, 4]
+```
+
+---
+
+## 🔥 Python List vs Java Array
+
+| Feature     | Python List   | Java Array        |
+| ----------- | ------------- | ----------------- |
+| Size        | Dynamic       | Fixed             |
+| Mixed types | ✅ Yes         | ❌ No              |
+| Mutable     | ✅ Yes         | ✅ Yes             |
+| Internal    | Dynamic array | Contiguous memory |
+
+---
+
+# 7. 📦 Tuple
+
+Tuples are immutable lists.
+
+```python
+point = (10, 20)
+
+print(point[0])
+```
+
+Useful for:
+
+* Returning multiple values
+* Dictionary keys
+* Safer immutable data
+
+---
+
+# 8. 🟡 Set
+
+Stores unique unordered values.
+
+```python
+s = {1, 2, 3, 3}
+
+print(s)
+# {1, 2, 3}
+```
+
+---
+
+## ⚡ Fast Membership Testing
+
+```python
+names = {"alice", "bob"}
+
+print("alice" in names)
+# True
+```
+
+Set lookup is approximately O(1).
+
+---
+
+# 9. 🟠 Dictionary (`dict`)
+
+Python’s hash map implementation.
+
+```python
+student = {
+    "name": "Alice",
+    "age": 20
+}
+
+print(student["name"])
+```
+
+---
+
+## 🔥 DSA Importance of `dict`
+
+Used heavily for:
+
+* Frequency counting
+* Hash maps
+* Caching
+* Graph adjacency maps
+
+Example:
+
+```python
+freq = {}
+
+for ch in "banana":
+    freq[ch] = freq.get(ch, 0) + 1
+
+print(freq)
+```
+
+Output:
+
+```python
+{
+  'b': 1,
+  'a': 3,
+  'n': 2
+}
+```
+
+---
+
+# 10. 🔴 Binary Types
+
+## `bytes`
+
+- Immutable binary data.
+- immutable sequence of integers (0–255).
+
+```python
+data = b"ABC"
+
+b[0]            # 104  (ASCII code, not character)
+b[0] = 100      # 💥 TypeError: bytes is immutable
+```
+
+---
+
+## `bytearray`
+
+Mutable version of bytes.
+
+```python
+ba = bytearray(b"hello")
+ba[0] = 65     # ✅
+bytes(ba)      # b'Aello'
+```
+
+### When to use
+
+```
+str      → human-readable text
+bytes    → network packets, file I/O, cryptography, serialization
+bytearray→ when you need to mutate binary data in-place (image processing, protocol buffers)
+```
+
+```python
+# Real prod — reading binary file, patching header
+with open("file.bin", "rb") as f:
+    data = bytearray(f.read())
+data[0:4] = b'\x89PNG'    # patch magic bytes
+```
+
+---
+
+# 11. ⚪ `NoneType`
+
+Represents absence of value.
+
+```python
+x = None
+
+type(None)         # <class 'NoneType'>
+id(None)           # same address every time — singleton
+
+# Only ONE NoneType instance exists in entire Python process
+x = None
+x is None          # True  ✅ correct
+x == None          # True  ⚠️  works but wrong — calls __eq__
+```
+
+Similar to:
+
+* Java → `null`
+* JavaScript → `null`
+* C → `NULL`
+
+> Functions without `return` implicitly return `None`. `return` alone returns `None`. `return None` is explicit.
+
+
+---
+
+# 12. ⚪ `memoryview` — Zero-Copy Buffer
+```python
+data = bytearray(b"hello world")
+view = memoryview(data)
+
+view[0:5]          # memoryview slice — no copy made
+bytes(view[0:5])   # b'hello'
+
+# Mutate via view:
+view[0] = 72       # H
+bytes(data)        # b'Hello world'
+```
+
+```
+WITHOUT memoryview:
+  data[0:5]  → allocates new bytearray (copy)
+
+WITH memoryview:
+  view[0:5]  → pointer arithmetic. zero allocation.
+```
+
+> Used in high-throughput systems: network servers parsing packet headers, video frame processing, numpy array sharing.
+
+---
+
+# 🔬 Mutable vs Immutable
+
+## Immutable Types
+
+```text
+int
+float
+bool
+str
+tuple
+frozenset
+bytes
+NoneType
+```
+
+Cannot change after creation.
+
+---
+
+## Mutable Types
+
+```text
+list
+set
+dict
+bytearray
+memoryview
+```
+
+Can change in-place.
+
+```
+Immutable ≠ "can't change variable"
+Immutable  = "can't change the object in-place"
+
+x = 5
+x = 10     ✅ — rebinding x to new int object. old '5' untouched.
+
+s = "hello"
+s[0] = "H" ❌ — trying to mutate str object in-place. not allowed.
+```
+
+```
+MEMORY:
+Before:  x ──▶ PyLongObject(5)
+After:   x ──▶ PyLongObject(10)
+               PyLongObject(5)  ← still exists until GC
+```
+
+### 💀 Mutable Default Argument — The Classic Senior Dev Trap
+
+```python
+def append_to(item, lst=[]):    # lst= [] evaluated ONCE at def time
+    lst.append(item)
+    return lst
+
+append_to(1)    # [1]
+append_to(2)    # [1, 2]  ← not [2] — same list reused!
+append_to(3)    # [1, 2, 3]
+
+# Fix:
+def append_to(item, lst=None):
+    if lst is None:
+        lst = []
+    lst.append(item)
+    return lst
+```
+
+> The default `[]` is a single `PyListObject` stored in `func.__defaults__`. Every call that doesn't pass `lst` reuses the exact same list object.
+
+---
+
+## 🔬 Visual: How Variables Store Data
+
+```python
+# In Python — EVERYTHING is an object.
+# There are no primitives. No stack-allocated int like Java/C++.
+
+int x = 5;    // C++  → 4 bytes on stack. Pure value.
+x = 5         // Python → PyLongObject on heap. 'x' is a pointer.
+```
+
+```text
+MEMORY LAYOUT (Python):
+
+  Name Table          Heap
+  (namespace)
+  ┌─────────┐        ┌──────────────────────┐
+  │  x ─────┼───────▶│  PyLongObject        │
+  └─────────┘        │  ob_refcnt = 1       │
+                     │  ob_type → PyLong_Type│
+                     │  ob_digit = [5]       │
+                     └──────────────────────┘
+```
+
+```python
+a = [1, 2]
+b = a
+
+a ──┐
+    ├──► [1, 2]
+b ──┘
+```
+
+Modifying one affects both:
+
+```python
+b.append(3)
+
+print(a)
+# [1, 2, 3]
+```
+> Every Python object has 3 things: **identity** (`id()`), **type** (`type()`), **value**.
+
+---
+
+
+## ⚡ Default Values Cheatsheet
+
+<Aside type="caution">
+Unlike Java/C++, Python variables do NOT get automatic default values just by declaration.
+
+- You must assign values before use.
+</Aside>
+
+---
+
+## 🧠 Interview Traps 🔥
+
+
+## 🔥 Trap 1 — Mutable Default Arguments
+
+```python
+def add(x, arr=[]):
+    arr.append(x)
+    return arr
+```
+
+Dangerous because the same list is reused.
+
+✅ Correct:
+
+```python
+def add(x, arr=None):
+    if arr is None:
+        arr = []
+
+    arr.append(x)
+    return arr
+```
+
+```python
+# IMMUTABLE (tuple)
+t = (1, 2)
+id_before = id(t)
+t += (3,)
+id(t) == id_before    # False ← new object created
+
+# MUTABLE (list)
+lst = [1, 2]
+id_before = id(lst)
+lst += [3]
+id(lst) == id_before  # True ← same object extended in-place
+```
+
+```python
+# The dangerous version — tuple containing mutable:
+t = ([1, 2], [3, 4])
+t[0] += [5]           # 💥 TypeError: tuple doesn't support item assignment
+print(t)              # ([1, 2, 5], [3, 4])  ← MUTATION HAPPENED despite error!
+```
+
+> The list mutation succeeds (`__iadd__` runs), then the tuple assignment fails. Object is partially modified. Silent corruption in prod.
+
+
+---
+
+## 🔥 Trap 2 — `is` vs `==`
+
+```python
+a = [1,2]
+b = [1,2]
+
+print(a == b)  # True
+print(a is b)  # False
+```
+
+* `==` → value equality
+* `is` → identity comparison
+
+---
+
+## 🔥 Trap 3 — List Copying
+
+```python
+a = [1,2,3]
+b = a
+
+b.append(4)
+
+print(a)
+# [1,2,3,4]
+```
+
+Need copy:
+
+```python
+b = a.copy()
+```
+
+---
+
+## 🔥 Trap 4 — Floating Precision
+
+```python
+0.1 + 0.2 == 0.3
+# False
+```
+
+Use:
+
+```python
+from decimal import Decimal
+```
+
+for financial calculations.
+
+---
+
+# ⚡ Python Data Types for DSA
+
+| Type    | DSA Usage                     |
+| ------- | ----------------------------- |
+| `int`   | Counters, indices, math       |
+| `list`  | Arrays, stacks, queues        |
+| `tuple` | Coordinates, immutable pairs  |
+| `set`   | Fast lookup, uniqueness       |
+| `dict`  | Hash maps, frequency counting |
+| `str`   | String algorithms             |
+| `bool`  | Visited arrays, flags         |
+
+---
+
+# 🔗 Primitive vs Reference? (Python Perspective)
+
+Python does NOT expose primitive/reference distinction like Java.
+
+But conceptually:
+
+| Java            | Python Equivalent             |
+| --------------- | ----------------------------- |
+| Primitive       | Immutable objects             |
+| Reference types | Mutable objects / all objects |
+
+Everything is still an object internally in Python.
+
+---
+
+# 🧠 Key Python Philosophy
+
+```python
+Everything is an object.
+```
+
+Even:
+
+```python
+x = 10
+
+print(type(x))
+# <class 'int'>
+```
+
+`10` itself is an object.
+
+---
+
+## ✅ SDE Relevance
+
+| Topic | Level |
+|-------|-------|
+| Float precision trap (`0.1 + 0.2`) | 🔴 MUST KNOW |
+| Mutable default argument trap | 🔴 MUST KNOW |
+| `bool` is subclass of `int` | 🔴 MUST KNOW |
+| Small int cache (`is` vs `==`) | 🔴 MUST KNOW |
+| `isinstance` vs `type()` | 🔴 MUST KNOW |
+| `str` join vs concatenation | 🔴 MUST KNOW |
+| `NoneType` singleton, use `is` | 🔴 MUST KNOW |
+| `memoryview` zero-copy | 🟡 GOOD TO KNOW |
+| CPython string flexible repr | 🟡 GOOD TO KNOW |
+| `PyLongObject` arbitrary precision | 🟡 GOOD TO KNOW |
+| `tuple` += partial mutation trap | 🔴 MUST KNOW |
+| `Decimal` for money calculations | 🔴 MUST KNOW |

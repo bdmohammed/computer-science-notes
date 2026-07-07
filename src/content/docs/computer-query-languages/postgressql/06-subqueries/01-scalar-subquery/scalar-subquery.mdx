@@ -1,0 +1,928 @@
+---
+title: PostgreSQL Scalar Subqueries
+slug: computer-query-languages/postgresql/subqueries/scalar-subqueries
+description: Master scalar subqueries in PostgreSQL — execution behavior, correlated vs non-correlated performance, NULL handling, and real-world optimization patterns.
+sidebar:
+  label: "Scalar Subqueries"
+  badge:
+    text: Advanced SQL
+    variant: tip
+tags: [postgresql, subqueries, scalar, correlated, performance, explain, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 Scalar Subqueries — Complete Guide
+
+> **A scalar subquery returns exactly one row and one column — acting as a single value anywhere an expression is valid. It silently returns `NULL` if it finds zero rows, and crashes with an error if it finds more than one.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of a scalar subquery as a **function call** that queries the database instead of computing in memory.  
+- `0 rows` → returns `NULL` (silent!)  
+- `1 row` → returns that value ✅  
+- `2+ rows` → throws `ERROR: more than one row returned` 💀
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where They Live
+
+Scalar subqueries can appear in almost any clause. They are evaluated **at the step where they appear**.
+
+```
+Scalar subqueries can appear in almost any clause:
+
+SELECT   ← scalar subquery as a computed column ✅
+FROM     ← scalar subquery as a derived table ✅
+WHERE    ← scalar subquery as a comparison value ✅
+HAVING   ← scalar subquery as a threshold ✅
+ORDER BY ← scalar subquery as a sort key ✅
+```
+
+<Code lang="sql" title="Scalar subquery as a computed column" code={`
+SELECT
+  name,
+  salary,
+  (SELECT AVG(salary) FROM employees) AS company_avg
+FROM employees;
+--         ↑
+-- Must return exactly 1 row, 1 column
+-- Acts exactly like typing: 95000.00`} />
+
+---
+
+## 1️⃣ The Scalar Contract — Shape & Behavior
+
+### Subquery Types by Shape
+
+<table>
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Returns</th>
+      <th>Used As</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Scalar Subquery</strong></td><td>1 row, 1 col</td><td>Single value / expression</td></tr>
+    <tr><td>Row Subquery</td><td>1 row, N col</td><td>Row comparison (`= (col1, col2)`)</td></tr>
+    <tr><td>Table Subquery</td><td>N rows, N col</td><td>Virtual table (`FROM`, `IN`, `EXISTS`)</td></tr>
+  </tbody>
+</table>
+
+```
+This topic: Scalar subquery only.
+
+Scalar contract:
+  Returns 0 rows → result is NULL   (silent! no error)
+  Returns 1 row  → result is that value ✅
+  Returns 2+ rows → ERROR: more than one row returned by subquery 💀
+```
+
+### The Three Outcomes
+
+```sql
+-- ✅ Returns 1 row → works
+SELECT (SELECT COUNT(*) FROM orders);           -- 1 row, 1 col
+
+-- ⚠️ Returns 0 rows → NULL (no error, silent!)
+SELECT (SELECT MAX(amount) FROM orders WHERE 1=0); -- NULL
+
+-- ❌ Returns 2+ rows → CRASH
+SELECT (SELECT name FROM users LIMIT 2);        -- ERROR! ← LIMIT doesn't help
+SELECT (SELECT name FROM users WHERE id = 1);   -- OK if id is PK (1 row)
+SELECT (SELECT name FROM users);                -- ERROR if users has > 1 row
+```
+
+<Aside type="danger">
+**🚨 Interview Trap**: A scalar subquery returning 0 rows gives `NULL`, not `0` or an error.  
+This silently breaks calculations: `salary > (SELECT MAX(sal) FROM ... WHERE status='ghost')` → `salary > NULL` → `NULL` → **entire WHERE clause filters out ALL rows**. Always wrap in `COALESCE()` when used in comparisons.
+</Aside>
+
+---
+
+## 2️⃣ Scalar Subquery in SELECT — Computed Column
+
+```sql
+-- Add a global reference value alongside each row
+SELECT
+  e.name,
+  e.salary,
+  (SELECT AVG(salary) FROM employees)              AS company_avg,
+  e.salary - (SELECT AVG(salary) FROM employees)   AS diff_from_avg,
+  ROUND(
+    e.salary * 100.0
+    / NULLIF((SELECT SUM(salary) FROM employees), 0)
+  , 2)                                             AS pct_of_payroll
+FROM employees e
+ORDER BY diff_from_avg DESC;
+```
+
+```
+How it executes:
+
+SELECT computes for each row:
+  (SELECT AVG(salary) FROM employees)
+  ↑ this runs once per output row
+
+For 1000 employees → runs 1000 times!
+But Postgres is smart — caches the result if subquery
+is NOT correlated (doesn't reference outer query) ✅
+```
+
+```sql
+-- Correlated vs Non-correlated scalar subquery
+
+-- Non-correlated: same result every row → Postgres caches it ✅
+SELECT
+  name,
+  (SELECT MAX(amount) FROM orders)   AS global_max  -- cached ✅
+FROM users;
+
+-- Correlated: depends on current outer row → reruns per row ⚠️
+SELECT
+  u.name,
+  (SELECT MAX(o.amount)
+   FROM orders o
+   WHERE o.user_id = u.id)           AS user_max    -- reruns per user!
+FROM users u;
+-- ↑ references u.id from outer query → NOT cacheable → O(n) executions
+```
+
+> 🎯 **DSA connection:** Non-correlated scalar subquery = memoization — compute once, reuse N times. Correlated scalar subquery = no memoization — recompute for every outer row. Same performance distinction as recursive with/without memo in DP problems.
+
+---
+
+
+## 2️⃣ Correlated vs Non-Correlated — Performance Reality
+
+<Tabs>
+  <TabItem label="Non-Correlated (Fast)" icon="bolt">
+    ```sql
+    -- Does NOT reference outer query → computed ONCE, cached ✅
+    SELECT
+      name,
+      (SELECT MAX(amount) FROM orders) AS global_max
+    FROM users;
+    
+    -- DSA Connection: Memoization
+    -- Compute once, reuse N times. EXPLAIN shows: InitPlan
+    ```
+  </TabItem>
+  
+  <TabItem label="Correlated (Expensive)" icon="warning">
+    ```sql
+    -- References outer row → recomputed PER ROW ⚠️
+    SELECT
+      u.name,
+      (SELECT MAX(o.amount)
+       FROM orders o
+       WHERE o.user_id = u.id) AS user_max
+    
+    -- DSA Connection: No memoization
+    -- Recompute for every outer row. EXPLAIN shows: SubPlan
+    -- O(n) executions → needs index on correlated column!
+    ```
+  </TabItem>
+</Tabs>
+
+---
+
+## 3️⃣ Scalar in WHERE — Dynamic Comparison
+
+<Code lang="sql" title="Finding outliers using scalar thresholds" code={`
+-- Find employees earning more than company average
+SELECT name, salary, department
+FROM   employees
+WHERE  salary > (SELECT AVG(salary) FROM employees);
+--              ↑ scalar subquery returns one number
+--              WHERE salary > 95000.00 (effectively)
+
+-- Find the most expensive order
+SELECT id, user_id, amount, created_at
+FROM   orders
+WHERE  amount = (SELECT MAX(amount) FROM orders);
+
+-- Find orders above category average
+SELECT p.name, oi.unit_price, p.category
+FROM   order_items oi
+JOIN   products    p ON oi.product_id = p.id
+WHERE  oi.unit_price > (
+  SELECT AVG(oi2.unit_price)
+  FROM   order_items oi2
+  JOIN   products    p2 ON oi2.product_id = p2.id
+  WHERE  p2.category = p.category        -- correlated: same category
+);
+`} />
+
+### ⚠️ The NULL Danger & Fix
+
+```sql
+-- ❌ Silent failure when scalar subquery returns NULL
+SELECT * FROM orders
+WHERE  amount > (SELECT MAX(amount) FROM orders WHERE status = 'ghost');
+--                                        ↑ no 'ghost' status → returns NULL
+-- amount > NULL → NULL → WHERE excludes ALL rows
+-- Returns 0 rows silently 💀
+
+-- ✅ Guard with COALESCE
+SELECT * FROM orders
+WHERE  amount > COALESCE(
+  (SELECT MAX(amount) FROM orders WHERE status = 'ghost'),
+  0          -- fallback if subquery returns NULL
+);
+```
+
+
+---
+
+## 4️⃣ Scalar Subquery in HAVING — Dynamic Threshold
+
+```sql
+-- Keep only departments whose avg salary > company avg
+SELECT   department, AVG(salary) AS dept_avg
+FROM     employees
+GROUP BY department
+HAVING   AVG(salary) > (SELECT AVG(salary) FROM employees);
+--                      ↑ scalar subquery runs once as threshold
+
+-- Keep categories with more products than average category has
+SELECT   category, COUNT(*) AS product_count
+FROM     products
+WHERE    is_active = true
+GROUP BY category
+HAVING   COUNT(*) > (
+  SELECT AVG(cat_count)
+  FROM (
+    SELECT COUNT(*) AS cat_count
+    FROM   products
+    WHERE  is_active = true
+    GROUP BY category
+  ) cat_counts
+);
+```
+
+---
+
+## 5️⃣ Scalar Subquery in ORDER BY — Dynamic Sorting
+
+```sql
+-- Sort users by how much they've spent (without JOIN)
+SELECT id, name, email
+FROM   users
+ORDER BY (
+  SELECT COALESCE(SUM(amount), 0)
+  FROM   orders
+  WHERE  user_id = users.id           -- correlated: per user ← expensive!
+    AND  status = 'delivered'
+) DESC;
+
+-- ⚠️ Correlated in ORDER BY = runs once per output row
+-- For 10K users → 10K subquery executions 💀
+-- Better: JOIN + aggregate → single pass ✅
+
+-- ✅ Better version
+SELECT u.id, u.name, u.email,
+       COALESCE(SUM(o.amount), 0) AS total_spent
+FROM   users u
+LEFT JOIN orders o
+  ON  u.id = o.user_id AND o.status = 'delivered'
+GROUP BY u.id, u.name, u.email
+ORDER BY total_spent DESC;
+```
+
+---
+
+## 6️⃣ Correlated Scalar Subquery — Deep Dive
+
+**The most important variant — and the most dangerous for performance.**
+
+```sql
+-- Correlated: references outer query's current row
+
+SELECT
+  u.id,
+  u.name,
+  -- Runs once per user: finds their order count
+  (SELECT COUNT(*)
+   FROM   orders o
+   WHERE  o.user_id = u.id)          AS order_count,
+
+  -- Runs once per user: finds their last order date
+  (SELECT MAX(o.created_at)
+   FROM   orders o
+   WHERE  o.user_id = u.id)          AS last_order_date,
+
+  -- Runs once per user: finds their most expensive order
+  (SELECT MAX(o.amount)
+   FROM   orders o
+   WHERE  o.user_id = u.id)          AS max_order
+FROM users u
+WHERE u.deleted_at IS NULL;
+```
+
+```
+Execution for correlated scalar subquery:
+
+For user_id = 1:
+  → SELECT COUNT(*) FROM orders WHERE user_id = 1  → 5
+  → SELECT MAX(created_at) FROM orders WHERE user_id = 1 → '2024-06-01'
+  → SELECT MAX(amount) FROM orders WHERE user_id = 1 → 2500
+
+For user_id = 2:
+  → SELECT COUNT(*) FROM orders WHERE user_id = 2  → 0
+  → SELECT MAX(created_at) FROM orders WHERE user_id = 2 → NULL
+  → SELECT MAX(amount) FROM orders WHERE user_id = 2 → NULL
+
+For 10,000 users → 30,000 subquery executions total 💀
+
+Each with index on orders.user_id → O(log n) each → manageable
+Without index → O(n) each → disaster
+```
+
+### Correlated Scalar vs JOIN — The Rewrite
+
+```sql
+-- ❌ Correlated scalar (3 subqueries × N users = expensive)
+SELECT
+  u.name,
+  (SELECT COUNT(*)    FROM orders o WHERE o.user_id = u.id) AS cnt,
+  (SELECT SUM(amount) FROM orders o WHERE o.user_id = u.id) AS total,
+  (SELECT MAX(amount) FROM orders o WHERE o.user_id = u.id) AS max_order
+FROM users u;
+
+-- ✅ JOIN + aggregate (single pass over orders table)
+SELECT
+  u.name,
+  COUNT(o.id)    AS cnt,
+  SUM(o.amount)  AS total,
+  MAX(o.amount)  AS max_order
+FROM   users u
+LEFT JOIN orders o ON u.id = o.user_id
+GROUP BY u.id, u.name;
+
+-- ✅ Even better: CTE pre-aggregate
+WITH order_stats AS (
+  SELECT
+    user_id,
+    COUNT(*)    AS cnt,
+    SUM(amount) AS total,
+    MAX(amount) AS max_order
+  FROM   orders
+  GROUP BY user_id
+)
+SELECT
+  u.name,
+  COALESCE(s.cnt,       0) AS cnt,
+  COALESCE(s.total,     0) AS total,
+  COALESCE(s.max_order, 0) AS max_order
+FROM   users       u
+LEFT JOIN order_stats s ON u.id = s.user_id;
+```
+
+```
+Performance comparison (10K users, 100K orders):
+
+Correlated scalar (3 subqueries):
+  30,000 index lookups on orders
+  Even with index: ~300ms
+
+JOIN + aggregate:
+  1 scan of orders (100K rows) → group → join
+  ~15ms ← 20× faster ✅
+
+Rule:
+  Correlated scalar in SELECT is fine for:
+    → Small outer result (few rows)
+    → One subquery per column
+    → Index on correlated column
+
+  Replace with JOIN when:
+    → Large outer result (many rows)
+    → Multiple correlated subqueries (N×M executions)
+    → No index available
+```
+
+> 🎯 **Interview Q:** *"When would you rewrite a correlated subquery as a JOIN?"*
+> **A:** When the outer query returns many rows — each row triggers a subquery execution. With N outer rows and M correlated subqueries per row, you get N×M executions. A single JOIN + GROUP BY replaces this with one pass. The crossover point: roughly when N > 100 rows and no index exists.
+
+
+---
+
+## 4️⃣ Internals — EXPLAIN Signals (`InitPlan` vs `SubPlan`)
+
+The query planner reveals exactly how your scalar subquery will execute.
+
+<Code lang="sql" title="Reading EXPLAIN output" code={`-- Non-correlated → runs once
+EXPLAIN SELECT name, (SELECT AVG(salary) FROM employees) FROM employees;
+-- Output: InitPlan 1 (returns $0) ← computed ONCE, cached ✅
+
+-- Correlated → runs per row
+EXPLAIN SELECT u.name, (SELECT COUNT(*) FROM orders WHERE user_id = u.id) FROM users u;
+-- Output: SubPlan 1 ← computed per outer row ⚠️`} />
+
+<CardGrid>
+  <Card title="EXPLAIN Keywords" icon="search">
+    ```text
+    InitPlan → Non-correlated → Cached → Fast ✅
+    SubPlan  → Correlated → Per-row → Check indexing! ⚠️
+    ```
+  </Card>
+  
+  <Card title="Index Requirement" icon="database">
+    ```sql
+    -- For correlated scalar subqueries, you MUST have an index
+    -- on the correlated column:
+    CREATE INDEX idx_orders_user_id ON orders(user_id);
+    
+    -- Without it: O(n) per row → O(n²) total → disaster 💀
+    -- With it: O(log n) per row → manageable ✅
+    ```
+  </Card>
+</CardGrid>
+
+```
+Non-correlated scalar subquery:
+
+SELECT name, (SELECT AVG(salary) FROM employees) FROM employees;
+
+Plan:
+  InitPlan 1 (returns $0)           ← subquery executed ONCE
+    -> Aggregate
+         -> Seq Scan on employees
+  Seq Scan on employees (outer)     ← outer scan uses $0 cached value
+       Output: name, $0             ← plugs in cached value ✅
+
+Cost: 1 subquery execution regardless of outer row count ✅
+```
+
+```
+Correlated scalar subquery:
+
+SELECT u.name, (SELECT COUNT(*) FROM orders WHERE user_id = u.id) FROM users u;
+
+Plan:
+  SubPlan 1                         ← runs once PER outer row
+    -> Aggregate
+         -> Index Scan on orders
+              Index Cond: (user_id = u.id)   ← outer ref
+  Seq Scan on users u               ← outer scan
+
+Cost: 1 subquery execution PER user row
+EXPLAIN shows: "SubPlan" (bad) vs "InitPlan" (good)
+```
+
+```sql
+-- Spot the difference in EXPLAIN
+EXPLAIN SELECT name,
+  (SELECT AVG(salary) FROM employees)  AS avg_sal  -- non-correlated
+FROM employees;
+-- InitPlan 1 (returns $0)   ← computed ONCE ✅
+
+EXPLAIN SELECT u.name,
+  (SELECT COUNT(*) FROM orders WHERE user_id = u.id) AS cnt  -- correlated
+FROM users u;
+-- SubPlan 1   ← computed per row ⚠️
+```
+
+```
+Key EXPLAIN signals:
+  InitPlan → non-correlated → cached → fast ✅
+  SubPlan  → correlated → per-row → check index! ⚠️
+```
+
+---
+
+## 5️⃣ Correlated Scalar vs JOIN vs Window Function
+
+Three ways to attach aggregates to rows. Pick the right one.
+
+```
+Three ways to get "user's order count alongside user data":
+
+Method 1: Correlated scalar subquery
+  SELECT u.name,
+    (SELECT COUNT(*) FROM orders WHERE user_id = u.id) AS cnt
+  FROM users u;
+  Performance: O(n) subquery calls
+  Readable: ✅ very clear intent
+  Use when: small result, one metric needed
+
+Method 2: LEFT JOIN + GROUP BY
+  SELECT u.name, COUNT(o.id) AS cnt
+  FROM users u LEFT JOIN orders o ON u.id = o.user_id
+  GROUP BY u.id, u.name;
+  Performance: O(n + m) single pass ✅
+  Readable: ✅
+  Use when: multiple metrics, large tables
+
+Method 3: Window function (no GROUP BY needed)
+  SELECT DISTINCT u.name,
+    COUNT(o.id) OVER (PARTITION BY u.id) AS cnt
+  FROM users u LEFT JOIN orders o ON u.id = o.user_id;
+  Performance: O(n + m) single pass ✅
+  Readable: ✅ when already joining
+  Use when: need row-level + aggregate in same query
+```
+
+| Feature | Correlated Scalar | `JOIN` + `GROUP BY` | Window Function |
+|---------|-------------------|---------------------|-----------------|
+| **Multiple Metrics** | ❌ `N × M` executions | ✅ 1 pass | ✅ 1 pass |
+| **Large Outer Table** | ❌ Slow | ✅ Fast | ✅ Fast |
+| **Code Clarity** | ✅ Very clear | ✅ Clear | ⚠️ Verbose |
+| **GROUP BY Needed?** | ✅ No | ❌ Yes | ✅ No |
+| **Best For** | Small result sets, 1 metric | Bulk reporting, many metrics | Row-level + aggregate mix |
+
+### 🔄 When to Rewrite Correlated as JOIN
+
+<Code lang="sql" title="❌ Correlated (3 subqueries × N users)" code={`SELECT
+  u.name,
+  (SELECT COUNT(*)    FROM orders WHERE user_id = u.id) AS cnt,
+  (SELECT SUM(amount) FROM orders WHERE user_id = u.id) AS total
+FROM users u;`} />
+
+<Code lang="sql" title="✅ JOIN + GROUP BY (Single pass)" code={`SELECT
+  u.name,
+  COUNT(o.id)    AS cnt,
+  COALESCE(SUM(o.amount), 0) AS total
+FROM   users u
+LEFT JOIN orders o ON u.id = o.user_id
+GROUP BY u.id, u.name;
+
+-- Crossover rule: If N > 100 rows or multiple subqueries, rewrite as JOIN.`} />
+
+---
+
+## 6️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Global Metric Comparison" icon="chart">
+    ```sql
+    -- Flag products priced above category average
+    SELECT p.name, p.price,
+      CASE WHEN p.price > (
+        SELECT AVG(price) FROM products p2 
+        WHERE p2.category = p.category
+      ) THEN 'Above' ELSE 'Below' END AS position
+    FROM products p;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Latest Record Lookup" icon="clock">
+    ```sql
+    -- ⚠️ Slow: 3 correlated subqueries per user
+    -- ✅ Better: Use DISTINCT ON (see DISTINCT topic)
+    -- Scalar works fine for small datasets:
+    SELECT u.name,
+      (SELECT o.id FROM orders o 
+       WHERE o.user_id = u.id ORDER BY o.created_at DESC LIMIT 1) AS last_order_id
+    FROM users u;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Threshold Filtering" icon="shield">
+    ```sql
+    -- Fraud detection: orders > 2 std deviations from mean
+    SELECT id, amount
+    FROM   orders
+    WHERE  amount > (
+      SELECT AVG(amount) + 2 * STDDEV(amount)
+      FROM   orders WHERE status = 'delivered'
+    );
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Config / Settings Lookup" icon="settings">
+    ```sql
+    -- Non-correlated → fetched ONCE, cached across all rows
+    SELECT id, amount,
+      amount * (SELECT value::NUMERIC/100 
+                FROM app_settings WHERE key='tax_rate') AS tax
+    FROM orders WHERE status = 'pending';
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Dynamic Rank (Pre-Window)" icon="trophy">
+    ```sql
+    -- What rank is this product by price in its category?
+    SELECT name, price,
+      (SELECT COUNT(*) + 1 FROM products p2
+       WHERE p2.category = p.category AND p2.price > p.price) AS rank
+    FROM products p;
+    -- ✅ Modern alternative: RANK() OVER(...)
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Existence as Boolean Flag" icon="check">
+    ```sql
+    -- Show users with active subscription flag
+    SELECT u.name,
+      CASE WHEN (SELECT COUNT(*) FROM subscriptions s 
+                 WHERE s.user_id = u.id AND s.expires_at > NOW()) > 0
+        THEN 'Active' ELSE 'Inactive' END AS status
+    FROM users u;
+    ```
+  </Card>
+</CardGrid>
+
+### Pattern 1 — Comparison Against Global Metric
+
+```sql
+-- Flag products priced above category average
+SELECT
+  p.id,
+  p.name,
+  p.price,
+  p.category,
+  ROUND((SELECT AVG(price) FROM products p2
+         WHERE p2.category = p.category), 2)   AS category_avg,
+  CASE
+    WHEN p.price > (SELECT AVG(price) FROM products p2
+                    WHERE p2.category = p.category)
+    THEN '⬆️ above avg'
+    ELSE '⬇️ below avg'
+  END                                           AS price_position
+FROM products p
+WHERE p.is_active = true
+ORDER BY p.category, p.price DESC;
+```
+
+### Pattern 2 — Latest Record Lookup (Common Pattern)
+
+```sql
+-- Show each user with their most recent order details
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  (SELECT o.id
+   FROM   orders o
+   WHERE  o.user_id = u.id
+   ORDER BY o.created_at DESC
+   LIMIT  1)                  AS last_order_id,
+  (SELECT o.amount
+   FROM   orders o
+   WHERE  o.user_id = u.id
+   ORDER BY o.created_at DESC
+   LIMIT  1)                  AS last_order_amount,
+  (SELECT o.status
+   FROM   orders o
+   WHERE  o.user_id = u.id
+   ORDER BY o.created_at DESC
+   LIMIT  1)                  AS last_order_status
+FROM users u
+WHERE u.deleted_at IS NULL;
+
+-- ⚠️ Three separate correlated subqueries — index on (user_id, created_at DESC) needed
+-- ✅ Better: DISTINCT ON (covered in DISTINCT topic)
+SELECT DISTINCT ON (u.id)
+  u.id, u.name, u.email,
+  o.id AS last_order_id, o.amount, o.status
+FROM   users u
+LEFT JOIN orders o ON u.id = o.user_id
+ORDER BY u.id, o.created_at DESC;
+```
+
+### Pattern 3 — Threshold-Based Filtering
+
+```sql
+-- Find orders that are outliers (> 2 standard deviations from mean)
+SELECT id, user_id, amount, created_at
+FROM   orders
+WHERE  amount > (
+  SELECT AVG(amount) + 2 * STDDEV(amount)
+  FROM   orders
+  WHERE  status = 'delivered'
+)
+AND status = 'delivered'
+ORDER BY amount DESC;
+-- Fraud detection / anomaly flagging ✅
+```
+
+### Pattern 4 — Existence Check as Value
+
+```sql
+-- Show users with a flag for whether they have active subscription
+SELECT
+  u.id,
+  u.name,
+  u.email,
+  -- Scalar subquery returning boolean-like value
+  CASE WHEN (
+    SELECT COUNT(*) FROM subscriptions s
+    WHERE  s.user_id   = u.id
+      AND  s.expires_at > NOW()
+      AND  s.is_active  = true
+  ) > 0
+    THEN '✅ active'
+    ELSE '❌ inactive'
+  END AS subscription_status,
+
+  -- Subscription tier if exists
+  (SELECT s.plan
+   FROM   subscriptions s
+   WHERE  s.user_id   = u.id
+     AND  s.expires_at > NOW()
+     AND  s.is_active  = true
+   ORDER BY s.expires_at DESC
+   LIMIT  1)           AS current_plan
+
+FROM users u
+WHERE u.deleted_at IS NULL
+ORDER BY u.name;
+```
+
+### Pattern 5 — Dynamic Row Numbering / Rank Lookup
+
+```sql
+-- For each product: what rank does it have in its category by price?
+SELECT
+  p.name,
+  p.category,
+  p.price,
+  (SELECT COUNT(*) + 1
+   FROM   products p2
+   WHERE  p2.category = p.category
+     AND  p2.price    > p.price
+     AND  p2.is_active = true)     AS price_rank_in_category
+FROM products p
+WHERE p.is_active = true
+ORDER BY p.category, price_rank_in_category;
+
+-- ✅ Better alternative: window function RANK()
+SELECT
+  name, category, price,
+  RANK() OVER (PARTITION BY category ORDER BY price DESC) AS price_rank
+FROM products
+WHERE is_active = true
+ORDER BY category, price_rank;
+```
+
+### Pattern 6 — Config / Settings Lookup
+
+```sql
+-- Apply global config values from a settings table
+SELECT
+  o.id,
+  o.amount,
+  o.amount * (
+    SELECT value::NUMERIC / 100
+    FROM   app_settings
+    WHERE  key = 'tax_rate'
+  )                                   AS tax_amount,
+  o.amount * (1 + (
+    SELECT value::NUMERIC / 100
+    FROM   app_settings
+    WHERE  key = 'tax_rate'
+  ))                                  AS total_with_tax
+FROM orders o
+WHERE o.status = 'pending';
+
+-- Non-correlated → tax_rate fetched ONCE, cached ✅
+-- No need to JOIN settings table across all orders
+```
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE t_emps (
+  id     INT,
+  name   TEXT,
+  dept   TEXT,
+  salary INT
+);
+INSERT INTO t_emps VALUES
+  (1,'Raj',  'Eng',  120000),
+  (2,'Priya','Eng',  110000),
+  (3,'Sam',  'Sales', 80000),
+  (4,'Ankit','Sales', 75000),
+  (5,'Meera','HR',    70000);
+
+-- 1. Non-correlated scalar in SELECT (cached ✅)
+SELECT name, salary,
+  (SELECT AVG(salary) FROM t_emps) AS company_avg
+FROM t_emps;
+-- Same avg for every row, computed once ✅
+
+-- 2. Correlated scalar in SELECT (per row)
+SELECT name, dept, salary,
+  (SELECT AVG(salary) FROM t_emps e2
+   WHERE e2.dept = e1.dept) AS dept_avg    -- runs per employee
+FROM t_emps e1;
+
+-- 3. Scalar in WHERE
+SELECT name, salary FROM t_emps
+WHERE salary > (SELECT AVG(salary) FROM t_emps);
+-- Only Raj and Priya (both > avg of 91000) ✅
+
+-- 4. NULL behavior — 0 rows returns NULL
+SELECT name FROM t_emps
+WHERE salary > (SELECT MAX(salary) FROM t_emps WHERE dept = 'Ghost');
+-- (SELECT MAX...) returns NULL
+-- salary > NULL → NULL → 0 rows returned 💀
+
+-- 5. COALESCE guard
+SELECT name FROM t_emps
+WHERE salary > COALESCE(
+  (SELECT MAX(salary) FROM t_emps WHERE dept = 'Ghost'),
+  0    -- fallback ✅
+);
+-- Now returns all employees (salary > 0) ✅
+
+-- 6. Too many rows → error
+SELECT (SELECT name FROM t_emps);  -- ERROR: more than one row ✅
+SELECT (SELECT name FROM t_emps LIMIT 1);  -- still ERROR!
+-- LIMIT inside scalar subquery still errors if > 1 row without ORDER BY
+SELECT (SELECT name FROM t_emps ORDER BY id LIMIT 1);  -- OK ✅ ('Raj')
+
+-- 7. EXPLAIN: InitPlan vs SubPlan
+EXPLAIN SELECT name, (SELECT AVG(salary) FROM t_emps) FROM t_emps;
+-- InitPlan 1 → computed ONCE ✅
+
+EXPLAIN SELECT e1.name,
+  (SELECT AVG(salary) FROM t_emps e2 WHERE e2.dept = e1.dept)
+FROM t_emps e1;
+-- SubPlan 1 → computed per row ⚠️
+
+-- 8. Scalar in HAVING
+SELECT dept, AVG(salary) AS avg_sal
+FROM   t_emps
+GROUP BY dept
+HAVING AVG(salary) > (SELECT AVG(salary) FROM t_emps);
+-- Only Eng dept (avg=115000 > company avg=91000) ✅
+
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|----------|--------|
+| What is a scalar subquery? | Returns exactly 1 row, 1 column. Acts as a single value. |
+| Returns 0 rows? | `NULL` — silent, no error. Wrap in `COALESCE()`. |
+| Returns 2+ rows? | `ERROR: more than one row returned by subquery` |
+| `InitPlan` vs `SubPlan`? | `InitPlan` = non-correlated (cached once). `SubPlan` = correlated (runs per row). |
+| When to use vs `JOIN`? | Scalar: small outer set, clear intent. `JOIN`: large tables, multiple metrics. |
+| Correlated performance? | `O(N × M)` executions. Needs index on correlated column. Rewrite as `JOIN` if `N > 100`. |
+| `EXISTS` vs Scalar? | `EXISTS` checks for existence (boolean, stops at 1). Scalar retrieves a value. |
+| Best index? | Index on the column referenced in the inner `WHERE` clause of the scalar subquery. |
+
+---
+
+## 🧠 Full Mental Model
+
+```text
+SCALAR SUBQUERY — Complete Picture
+
+Shape: returns exactly (1 row × 1 column) = single value
+
+  SELECT  (subquery)  →  plug in value as column
+  WHERE col > (subquery) → plug in value for comparison
+  HAVING AGG > (subquery) → plug in threshold
+  ORDER BY (subquery) → sort by computed value
+
+Execution types:
+
+  Non-correlated:               Correlated:
+  ┌──────────────────┐          ┌──────────────────────────────┐
+  │ SELECT AVG(...)  │          │ SELECT COUNT(*)              │
+  │ FROM employees   │          │ FROM orders                  │
+  └──────────────────┘          │ WHERE user_id = outer.id ←──┼── references outer
+  Runs ONCE → cached            └──────────────────────────────┘
+  EXPLAIN: InitPlan ✅          Runs PER outer row
+                                EXPLAIN: SubPlan ⚠️
+
+NULL contract:
+  0 rows returned → NULL (not error, not 0)
+  1 row returned  → that value ✅
+  2+ rows returned → ERROR 💀
+
+  Always:
+  COALESCE((scalar subquery), fallback_value)
+  when result feeds into comparison or calculation
+
+When to replace with JOIN:
+  ┌────────────────────────────────────────────┐
+  │ Outer table large (N rows)?                │
+  │ Multiple correlated subqueries (N×M)?      │
+  │ No index on correlated column?             │
+  │    → YES to any → rewrite as JOIN/CTE ✅  │
+  │                                            │
+  │ Small outer result + clear intent?         │
+  │    → scalar subquery fine ✅              │
+  └────────────────────────────────────────────┘
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always check `EXPLAIN` for `SubPlan` vs `InitPlan`
+2. ✅ Use `COALESCE()` when scalar subqueries feed into `WHERE` comparisons
+3. ✅ Add indexes on correlated columns (`WHERE outer_col = inner_col`)
+4. ✅ Rewrite correlated scalars as `JOIN` + `GROUP BY` for reporting queries
+5. ✅ Prefer `EXISTS` for existence checks, `Scalar` for value retrieval
+
+Mastering scalar subqueries turns verbose application logic into elegant, set-based SQL. 🐘✨
+</Aside>

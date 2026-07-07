@@ -1,0 +1,1564 @@
+---
+title: JavaScript Command Line Arguments
+slug: computer-languages/javascript/language-fundamentals/command-line-args
+description: Complete guide to Node.js argv, argument parsing libraries, type conversion, and production patterns for JS CLI apps.
+sidebar:
+  label: "CLI Arguments"
+  badge:
+    text: Runtime
+    variant: tip
+tags: [javascript, nodejs, command-line, argv, parsing, interview, dsa, astro6]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 💻 Command Line Arguments in JavaScript — Complete Guide
+
+> **Command Line Arguments** are values passed to your script **at runtime** from the terminal — before execution begins.
+
+<Aside type="tip" title="🎯 MUST KNOW">
+**JS CLI Superpowers vs Java**:  
+✅ `process.argv` gives full control — you see node path, script path, AND your args  
+✅ Rich ecosystem: `yargs`, `commander`, `cac` for professional CLI apps  
+✅ Works with npm scripts, build tools, test runners  
+✅ Environment variables via `process.env` complement CLI args  
+✅ Deno/Bun have modern alternatives to Node's `process.argv`  
+</Aside>
+
+---
+
+## 📌 How It Works: Node.js (Most Common)
+
+```js
+// 📦 your-script.js
+console.log(process.argv);
+```
+
+```text
+Terminal:
+node your-script.js Alice 25 true
+
+process.argv = [
+  "/usr/local/bin/node",      // [0] Node.js executable path
+  "/path/to/your-script.js",  // [1] Your script file path  
+  "Alice",                    // [2] ← Your first argument
+  "25",                       // [3] ← Your second argument
+  "true"                      // [4] ← Your third argument
+]
+
+// ✅ Your actual CLI args start at index 2!
+const cliArgs = process.argv.slice(2);  // ["Alice", "25", "true"]
+```
+
+<Aside type="note">
+**Key Rule**: Arguments are **space-separated** by default. Use **quotes** to pass values containing spaces as a single argument — same as Java!
+</Aside>
+
+---
+
+## 🔬 Runtime Comparison: Node.js vs Deno vs Bun vs Browser
+
+<Tabs>
+  <TabItem label="Node.js ✅ (Most Common)">
+    <Code lang="js" title="process.argv — full control" code={`// 📦 script.js
+console.log('All argv:', process.argv);
+console.log('Your args only:', process.argv.slice(2));
+
+// Access individual args safely:
+const [name, age] = process.argv.slice(2);
+console.log(\`\${name} is \${age} years old\`);
+
+// Environment variables complement CLI args:
+console.log('NODE_ENV:', process.env.NODE_ENV);  // "production", "development", etc.`} />
+
+    <Aside type="tip">
+      **Pro Pattern**: Create a helper to avoid repeating `slice(2)`:
+      ```js
+      const args = process.argv.slice(2);
+      // Or with destructuring:
+      const [command, ...params] = process.argv.slice(2);
+      ```
+    </Aside>
+  </TabItem>
+
+  <TabItem label="Deno 🦕 (Modern Alternative)">
+    <Code lang="ts" title="Deno.args — cleaner API" code={`// 📦 script.ts
+console.log('CLI args:', Deno.args);  // ✅ No node/script path!
+
+// Direct access — no slice needed:
+const [name, age] = Deno.args;
+console.log(\`\${name} is \${age} years old\`);
+
+// Permissions via flags (Deno security model):
+// deno run --allow-read --allow-net script.ts data.json
+
+// Environment variables:
+console.log('DENO_ENV:', Deno.env.get('DENO_ENV'));`} />
+
+    <Aside type="note">
+      Deno's `Deno.args` is cleaner than Node's `process.argv` — no need to slice off executable paths! 🎯
+    </Aside>
+  </TabItem>
+
+  <TabItem label="Bun 🥟 (Fast Alternative)">
+    <Code lang="js" title="Bun.args — same as Deno" code={`// 📦 script.js
+console.log('CLI args:', Bun.args);  // ✅ Clean, no slicing needed
+
+// Also supports process.argv for Node compatibility:
+console.log('Compat mode:', process.argv.slice(2));
+
+// Environment variables:
+console.log('BUN_ENV:', process.env.BUN_ENV);`} />
+  </TabItem>
+
+  <TabItem label="Browser 🌐 (No CLI Args!)">
+    <Code lang="js" title="Browser alternatives to CLI args" code={`// ❌ No process.argv in browser!
+
+// ✅ Use URL query parameters instead:
+// https://mysite.com/app?user=Alice&age=25
+const params = new URLSearchParams(window.location.search);
+const name = params.get('user');   // "Alice"
+const age = params.get('age');     // "25"
+
+// ✅ Or use data attributes / localStorage for config:
+const config = JSON.parse(localStorage.getItem('appConfig') || '{}');
+
+// ✅ For build-time config: use environment variables via bundler
+// Vite: import.meta.env.VITE_API_URL
+// Webpack: process.env.API_URL (via DefinePlugin)`} />
+
+    <Aside type="caution">
+      **Browser apps cannot receive CLI arguments** — they run in a sandboxed environment. Use URL params, localStorage, or build-time env vars instead.
+    </Aside>
+  </TabItem>
+</Tabs>
+
+---
+
+## 💻 Basic Example: Node.js
+
+<Code lang="js" title="Iterating through arguments" code={`// 📦 greet.js
+const args = process.argv.slice(2);  // Get only user-provided args
+
+console.log('Total args:', args.length);
+
+// Classic for loop
+for (let i = 0; i < args.length; i++) {
+    console.log(\`args[\${i}] = \${args[i]}\`);
+}
+
+// Modern style: for...of with index
+for (const [idx, arg] of args.entries()) {
+    console.log(\`Arg \${idx}: \${arg}\`);
+}
+
+// Functional style
+args.forEach((arg, idx) => console.log(\`\${idx}: \${arg}\`));`} />
+
+```text
+Run:  node greet.js Alice 25 Engineer
+
+Output:
+Total args: 3
+args[0] = Alice
+args[1] = 25
+args[2] = Engineer
+```
+
+---
+
+## 🔄 Type Conversion — Always String First
+
+⚠️ **Same as Java**: All CLI arguments arrive as **strings**. Convert explicitly!
+
+<Code lang="js" title="Parsing different types safely" code={`const args = process.argv.slice(2);
+
+// Always check length before accessing indices!
+if (args.length < 4) {
+    console.error('Usage: node app.js <name> <age> <salary> <flag>');
+    process.exit(1);  // ✅ Exit with error code for scripts
+}
+
+const name = args[0];                              // "Alice" → String ✅
+const age = Number(args[1]);                       // "25" → 25 number ✅
+const salary = parseFloat(args[2]);                // "99.5" → 99.5 ✅
+const flag = args[3] === 'true';                   // "true" → boolean ✅
+
+// ✅ Modern validation with fallbacks:
+const safeAge = Number(args[1]) || 0;              // NaN → 0
+const verified = ['true', '1', 'yes'].includes(args[3].toLowerCase());
+
+console.log(\`\${name}, age \${age}, salary $\${salary.toFixed(2)}, active: \${flag}\`);`} />
+
+<Aside type="danger" title="⚠️ NaN Trap">
+```js
+const age = Number("abc");  // NaN (Not a Number)
+console.log(age + 10);      // NaN — silent failure!
+
+// ✅ Always validate:
+if (isNaN(age)) {
+    console.error("Age must be a valid number");
+    process.exit(1);
+}
+
+// ✅ Or use fallback:
+const safeAge = Number(args[1]) || 18;  // NaN || 18 → 18
+```
+</Aside>
+
+<Code lang="js" title="Safe parsing with try-catch (for strict validation)" code={`const args = process.argv.slice(2);
+
+function parsePositiveInt(str, fieldName) {
+    const num = Number(str);
+    if (!Number.isInteger(num) || num < 0) {
+        throw new Error(\`\${fieldName} must be a positive integer, got: \${str}\`);
+    }
+    return num;
+}
+
+try {
+    const name = args[0];
+    const age = parsePositiveInt(args[1], 'Age');
+    console.log(\`\${name} is \${age} years old\`);
+} catch (error) {
+    console.error('❌ Error:', error.message);
+    console.error('Usage: node app.js <name> <age>');
+    process.exit(1);
+}`} />
+
+---
+
+## ⚠️ Common Mistakes
+
+<CardGrid>
+  <Card title="Mistake 1 — Forgetting to slice process.argv" icon="error">
+    ```js
+    // ❌ Wrong: includes node path and script path!
+    const args = process.argv;
+    console.log(args[0]);  // "/usr/bin/node" 😱
+
+    // ✅ Correct: slice off first two elements
+    const args = process.argv.slice(2);
+    console.log(args[0]);  // Your first actual argument ✅
+    ```
+  </Card>
+  
+  <Card title="Mistake 2 — Accessing without length check" icon="error">
+    ```js
+    const args = process.argv.slice(2);
+    console.log(args[0]);  // 💥 undefined if no args passed!
+
+    // ✅ Always check:
+    if (args.length === 0) {
+        console.error('No arguments provided!');
+        process.exit(1);
+    }
+    // Or use optional chaining / nullish coalescing:
+    const name = args[0] ?? 'Guest';  // Default to 'Guest' if missing
+    ```
+  </Card>
+  
+  <Card title="Mistake 3 — Spaces in arguments" icon="error">
+    ```text
+    node greet.js Hello World   
+    // args = ["Hello", "World"] → 2 arguments!
+
+    node greet.js "Hello World" 
+    // args = ["Hello World"] ✅ → 1 argument with space
+
+    # Linux/Mac alternative with single quotes:
+    node greet.js 'Hello World'  # Also ✅
+    ```
+  </Card>
+
+  <Card title="Mistake 4 — Assuming process.argv is mutable" icon="information">
+    ```js
+    const args = process.argv.slice(2);
+    args[0] = "Modified";  // ✅ Works — you're modifying your copy
+
+    // But modifying process.argv directly is confusing:
+    process.argv[2] = "New";  // ⚠️ Technically works but don't do this!
+    // It mutates the global process object — can cause subtle bugs
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: What is the type of CLI arguments in JS?" icon="information">
+    **Always `string[]`** — even numbers, booleans, or dates arrive as strings.  
+    You must explicitly parse them: `Number()`, `parseFloat()`, `Boolean()`, etc.  
+  </Card>
+  
+  <Card title="Q: What if no arguments passed — is process.argv null?" icon="approve-check">
+    **NO ❌** — `process.argv` is **never null or undefined**.  
+    It always contains at least 2 elements: `[nodePath, scriptPath]`.  
+    Your actual args start at index 2 — if none passed, `slice(2)` returns `[]`.
+    ```js
+    // node script.js (no args)
+    console.log(process.argv.length);  // 2 (node + script paths)
+    console.log(process.argv.slice(2)); // [] — empty array, not null ✅
+    ```
+  </Card>
+
+  <Card title="Q: Can we pass spaces in a single argument?" icon="approve-check">
+    **YES ✅** — wrap in quotes (same as Java!):
+    ```text
+    node script.js "Hello World" → args[0] = "Hello World"
+    node script.js 'Path/To/File' → args[0] = "Path/To/File"
+    ```
+  </Card>
+
+  <Card title="Q: How do you access the script name itself?" icon="information">
+    ```js
+    const scriptPath = process.argv[1];  // Full path to your .js file
+    const scriptName = scriptPath.split('/').pop();  // Just filename
+
+    // ✅ Modern alternative (ES modules):
+    import { fileURLToPath } from 'url';
+    import { dirname } from 'path';
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    ```
+  </Card>
+
+  <Card title="Q: Can we modify process.argv?" icon="caution">
+    **Technically YES ✅** — it's a mutable array.  
+    **But DON'T ❌** — it's a global object; mutating it can cause confusing bugs.  
+    Always work with a copy: `const args = process.argv.slice(2);`
+  </Card>
+
+  <Card title="Q: What about environment variables vs CLI args?" icon="information">
+    ```js
+    // CLI args: node app.js --port 3000
+    const port = process.argv[3];  // "3000" (string)
+
+    // Env vars: PORT=3000 node app.js  OR via .env file
+    const port = process.env.PORT;   // "3000" (string) or undefined
+
+    // ✅ Best practice: CLI args override env vars for flexibility
+    const finalPort = Number(process.argv[3] || process.env.PORT || 8080);
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧩 DSA Angle: Testing Algorithms via CLI
+
+<CardGrid>
+  <Card title="Pattern: Passing test input via CLI" icon="rocket">
+    Quickly test algorithms with different inputs without modifying code:
+    ```js
+    // node solution.js 5 3 → n=5, k=3
+    const [n, k] = process.argv.slice(2).map(Number);
+    
+    if (isNaN(n) || isNaN(k)) {
+        console.error('Usage: node solution.js <n> <k>');
+        process.exit(1);
+    }
+    
+    console.log(solve(n, k));  // Your DSA function
+    
+    function solve(n, k) {
+        // Your algorithm here
+        return n * k;  // Example
+    }
+    ```
+  </Card>
+  
+  <Card title="Pattern: Passing array elements" icon="shield">
+    Convert CLI args directly into arrays for algorithm testing:
+    ```js
+    // node solution.js 1 2 3 4 5
+    const arr = process.argv.slice(2).map(Number);
+    // arr = [1, 2, 3, 4, 5] ✅
+    
+    console.log('Input:', arr);
+    console.log('Max subarray sum:', maxSubarraySum(arr));
+    
+    function maxSubarraySum(nums) {
+        // Kadane's algorithm
+        let max = nums[0], current = nums[0];
+        for (let i = 1; i < nums.length; i++) {
+            current = Math.max(nums[i], current + nums[i]);
+            max = Math.max(max, current);
+        }
+        return max;
+    }
+    ```
+  </Card>
+
+  <Card title="Pattern: Flag-based test selection" icon="backspace">
+    Use arguments to toggle test cases or modes:
+    ```js
+    const args = process.argv.slice(2);
+    let verbose = false;
+    let testId = 1;
+    
+    for (const arg of args) {
+        if (arg === '-v' || arg === '--verbose') verbose = true;
+        else if (/^\\d+$/.test(arg)) testId = Number(arg);
+    }
+    
+    runTest(testId, { verbose });
+    
+    // node solution.js 3 -v  → runs test 3 with verbose output
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Competitive Coding Pro Tip**: Most online judges (LeetCode, Codeforces) read from `stdin`, not CLI args. Design your solution to support both:
+```js
+import * as readline from 'readline';
+
+const args = process.argv.slice(2);
+const input = args.length > 0 
+    ? args  // Use CLI args for local testing
+    : await readFromStdin();  // Fallback for judges
+
+async function readFromStdin() {
+    const rl = readline.createInterface({ input: process.stdin });
+    const lines = [];
+    for await (const line of rl) lines.push(line);
+    return lines;
+}
+```
+</Aside>
+
+---
+
+## 🛠️ Professional CLI Parsing Libraries
+
+For anything beyond simple scripts, use a library — don't parse manually!
+
+<Tabs>
+  <TabItem label="yargs ✅ (Most Popular)">
+    <Code lang="js" title="yargs — expressive, feature-rich" code={`import yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
+
+const argv = yargs(hideBin(process.argv))
+  .option('name', {
+    alias: 'n',
+    type: 'string',
+    description: 'User name',
+    demandOption: true  // Required!
+  })
+  .option('age', {
+    alias: 'a',
+    type: 'number',
+    description: 'User age',
+    default: 18
+  })
+  .option('verbose', {
+    alias: 'v',
+    type: 'boolean',
+    description: 'Enable verbose output'
+  })
+  .help()
+  .argv;
+
+console.log(\`Hello \${argv.name}, age \${argv.age}\`);
+if (argv.verbose) console.log('Verbose mode enabled');
+
+// Usage:
+// node app.js -n Alice -a 25 -v
+// node app.js --name Bob --age 30
+// node app.js --help  # Auto-generated help! ✅`} />
+
+    <Aside type="tip">
+      **yargs superpowers**:  
+      ✅ Auto-generated `--help` and `--version`  
+      ✅ Type coercion (string → number/boolean)  
+      ✅ Default values, required fields, aliases  
+      ✅ Subcommands for complex CLIs (`app.js build`, `app.js deploy`)  
+    </Aside>
+  </TabItem>
+
+  <TabItem label="commander.js ✅ (Minimalist)">
+    <Code lang="js" title="commander — simple, intuitive" code={`import { Command } from 'commander';
+const program = new Command();
+
+program
+  .name('greet')
+  .description('Greet a user')
+  .argument('<name>', 'user name')
+  .option('-a, --age <number>', 'user age', '18')
+  .option('-v, --verbose', 'enable verbose output')
+  .action((name, options) => {
+    console.log(\`Hello \${name}, age \${options.age}\`);
+    if (options.verbose) console.log('Verbose mode');
+  });
+
+program.parse();  // Parses process.argv automatically
+
+// Usage:
+// node app.js Alice -a 25 -v
+// node app.js --help  # Clean auto-generated help ✅`} />
+  </TabItem>
+
+  <TabItem label="cac ✅ (Modern, TypeScript-first)">
+    <Code lang="ts" title="cac — type-safe, modern" code={`import cac from 'cac';
+
+const cli = cac('myapp');
+
+cli
+  .command('greet <name>', 'Greet a user')
+  .option('-a, --age <number>', 'User age', { default: 18 })
+  .option('-v, --verbose', 'Enable verbose output')
+  .action((name, options) => {
+    console.log(\`Hello \${name}, age \${options.age}\`);
+    if (options.verbose) console.log('Verbose mode');
+  });
+
+cli.help();  // Auto-generated help
+cli.parse();
+
+// ✅ Full TypeScript support — options are typed!
+// Usage: node app.js greet Alice -a 25 -v`} />
+
+    <Aside type="note">
+      **cac** is great for TypeScript projects — your CLI options get proper types automatically! 🎯
+    </Aside>
+  </TabItem>
+</Tabs>
+
+<Aside type="caution">
+**When to use a library vs manual parsing**:  
+✅ Use library when:  
+- Your CLI has multiple flags/options  
+- You need `--help` auto-generation  
+- You want type coercion and validation  
+- Building a public CLI tool (npm package)  
+
+✅ Manual parsing OK when:  
+- Simple script with 1-2 positional args  
+- Learning/experimenting  
+- Zero-dependency requirement  
+</Aside>
+
+---
+
+## 🏢 Real-Life SDE Usage
+
+<CardGrid>
+  <Card title="npm scripts — CLI args in package.json" icon="rocket">
+    Pass arguments through npm scripts:
+    ```json
+    {
+      "scripts": {
+        "dev": "node server.js",
+        "dev:port": "node server.js --port",
+        "test": "jest",
+        "test:file": "jest --"
+      }
+    }
+    ```
+    ```bash
+    # Pass args through npm:
+    npm run dev:port 3001        # → node server.js 3001
+    npm run test:file -- user    # → jest user (note the -- separator!)
+    
+    # Inside server.js:
+    const port = process.argv[2] || 3000;  // 3001 if passed via npm
+    ```
+  </Card>
+  
+  <Card title="Build tools — Vite/Webpack config via CLI" icon="shield">
+    Modern build tools accept CLI flags:
+    ```bash
+    # Vite development server
+    vite --port 3001 --host --open
+    
+    # Vite build with config override
+    vite build --mode production --outDir dist-prod
+    
+    # Jest testing
+    jest --coverage --watchAll=false --testNamePattern="login"
+    
+    # Inside vite.config.js, access via process.env or custom parsing:
+    export default defineConfig({
+      server: {
+        port: Number(process.env.PORT) || 3000  // Env var fallback
+      }
+    });
+    ```
+  </Card>
+
+  <Card title="Database migration CLI pattern" icon="information">
+    Real-world pattern for operational tools:
+    ```js
+    // 📦 migrate.js
+    const [command, ...params] = process.argv.slice(2);
+    
+    const commands = {
+      async up() {
+        console.log('🔄 Running migrations...');
+        await runMigrations();
+        console.log('✅ Migrations complete');
+      },
+      async down() {
+        console.log('↩️ Rolling back last migration...');
+        await rollbackMigration();
+      },
+      help() {
+        console.log(\`
+    Usage: node migrate.js <command>
+    
+    Commands:
+      up      Run pending migrations
+      down    Rollback last migration
+      help    Show this help
+        \`);
+      }
+    };
+    
+    const cmd = commands[command] || commands.help;
+    cmd().catch(err => {
+      console.error('❌ Migration failed:', err.message);
+      process.exit(1);
+    });
+    
+    // Usage:
+    // node migrate.js up
+    // node migrate.js down
+    // node migrate.js help
+    ```
+  </Card>
+</CardGrid>
+
+<Code lang="js" title="Advanced: Combining CLI args + env vars + config file" code={`// 📦 config.js — Production-ready config loading pattern
+import fs from 'fs';
+import path from 'path';
+
+function loadConfig() {
+  // Priority order: CLI args > env vars > config file > defaults
+  const args = process.argv.slice(2);
+  
+  // 1. Parse CLI flags (simple manual parser for demo)
+  const cli = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i+1]) {
+      cli.port = Number(args[++i]);
+    } else if (args[i] === '--env' && args[i+1]) {
+      cli.env = args[++i];
+    }
+  }
+  
+  // 2. Load env vars
+  const env = {
+    port: Number(process.env.PORT),
+    env: process.env.NODE_ENV
+  };
+  
+  // 3. Load config file (if exists)
+  let file = {};
+  const configPath = path.join(process.cwd(), 'config.json');
+  if (fs.existsSync(configPath)) {
+    file = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  }
+  
+  // 4. Merge with priority: CLI > env > file > defaults
+  return {
+    port: cli.port ?? env.port ?? file.port ?? 3000,
+    env: cli.env ?? env.env ?? file.env ?? 'development',
+    // ... other config
+  };
+}
+
+export const config = loadConfig();
+console.log(\`Running in \${config.env} mode on port \${config.port}\`);`} />
+
+<Aside type="tip">
+**Production Checklist** for JS CLI apps:  
+1. ✅ Always slice `process.argv.slice(2)` to get user args  
+2. ✅ Validate argument count/types before using  
+3. ✅ Use libraries (`yargs`, `commander`) for complex CLIs  
+4. ✅ Print helpful `--help` output  
+5. ✅ Exit with `process.exit(1)` on errors for script integration  
+6. ✅ Document expected arguments in README + `--help`  
+7. ✅ Support both CLI args AND env vars for deployment flexibility 🛡️
+</Aside>
+
+---
+
+## 🧪 Testing CLI Arguments Locally
+
+<Code lang="bash" title="Terminal commands for testing" code={`# Basic test
+node greet.js Alice 25
+
+# Argument with space
+node greet.js "Alice Smith" 25
+
+# Passing special characters (escape or quote)
+node greet.js 'user@example.com' '$100'
+
+# No arguments (test empty array handling)
+node greet.js
+
+# Redirecting output
+node greet.js Alice 25 > output.txt
+
+# Piping arguments from another command
+echo "Alice 25" | xargs node greet.js
+
+# With environment variables
+PORT=4000 node server.js
+
+# Using npm script passthrough
+npm run dev -- --port 3001  # Note the -- separator!`} />
+
+<Code lang="js" title="Debug: Print args for verification" code={`console.log('=== DEBUG: CLI Args ===');
+console.log('process.argv length:', process.argv.length);
+console.log('Node path:', process.argv[0]);
+console.log('Script path:', process.argv[1]);
+console.log('Your args:', process.argv.slice(2));
+
+for (const [i, arg] of process.argv.slice(2).entries()) {
+    console.log(\`arg[\${i}] = "\${arg}" (type: \${typeof arg}, length: \${arg.length})\`);
+}
+console.log('=== Environment ===');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('===================');`} />
+
+<Aside type="tip">
+**VS Code Tip**: Use `.vscode/launch.json` to debug CLI apps without terminal:
+```json
+{
+  "type": "node",
+  "request": "launch",
+  "name": "Debug CLI",
+  "runtimeArgs": ["script.js", "Alice", "25"],
+  "console": "integratedTerminal"
+}
+```
+Press F5 to debug with arguments! 🎯
+</Aside>
+
+---
+
+## 🚨 JavaScript-Specific Traps
+
+<CardGrid>
+  <Card title="Trap 1 — process.argv includes node + script paths" icon="error">
+    ```js
+    // ❌ Common beginner mistake:
+    const name = process.argv[0];  // "/usr/bin/node" 😱
+    
+    // ✅ Always slice:
+    const [name] = process.argv.slice(2);  // Your first actual arg ✅
+    ```
+  </Card>
+  
+  <Card title="Trap 2 — Number() returns NaN silently" icon="caution">
+    ```js
+    const age = Number("abc");  // NaN
+    console.log(age > 18);      // false (NaN comparisons are always false!)
+    
+    // ✅ Validate explicitly:
+    const age = Number(args[1]);
+    if (isNaN(age)) {
+        console.error("Age must be a number");
+        process.exit(1);
+    }
+    // Or use fallback:
+    const safeAge = Number(args[1]) || 18;  // NaN || 18 → 18
+    ```
+  </Card>
+  
+  <Card title="Trap 3 -- separator in npm scripts" icon="error">
+    ```bash
+    # ❌ Wrong: args not passed through
+    npm run test user
+    
+    # ✅ Correct: use -- to separate npm args from script args
+    npm run test -- user
+    
+    # Inside script.js:
+    // process.argv = [..., "user"] ✅
+    ```
+  </Card>
+  
+  <Card title="Trap 4 — ES modules vs CommonJS path handling" icon="information">
+    ```js
+    // CommonJS (require):
+    const path = require('path');
+    console.log(__filename);  // ✅ Works
+    
+    // ES Modules (import):
+    import { fileURLToPath } from 'url';
+    import { dirname } from 'path';
+    const __filename = fileURLToPath(import.meta.url);  // ✅ Modern way
+    const __dirname = dirname(__filename);
+    
+    // ⚠️ __dirname/__filename don't exist in ES modules by default!
+    ```
+  </Card>
+  
+  <Card title="Trap 5 — Async CLI apps need proper error handling" icon="error">
+    ```js
+    // ❌ Top-level await without error handling:
+    const data = await fetch(args[0]);  // Unhandled rejection if fails!
+    
+    // ✅ Wrap in try-catch or use .catch():
+    async function main() {
+        try {
+            const data = await fetch(args[0]);
+            // ... process
+        } catch (error) {
+            console.error('❌ Failed:', error.message);
+            process.exit(1);  // Important for CI/CD scripts!
+        }
+    }
+    main();
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 DSA Connection: CLI for Algorithm Testing
+
+<CardGrid>
+  <Card title="Pattern: Benchmark Different Inputs" icon="code">
+    ```js
+    // node benchmark.js 100 1000 10000
+    const sizes = process.argv.slice(2).map(Number).filter(n => !isNaN(n));
+    
+    for (const size of sizes) {
+        const input = generateTestInput(size);
+        const start = performance.now();
+        const result = solve(input);
+        const end = performance.now();
+        
+        console.log(\`Size \${size}: \${(end-start).toFixed(2)}ms\`);
+    }
+    
+    // 🎯 Quickly compare algorithm performance across input sizes!
+    ```
+  </Card>
+  
+  <Card title="Pattern: Toggle Algorithm Variants" icon="code">
+    ```js
+    // node solve.js --algo dp --input data.json
+    const args = process.argv.slice(2);
+    const algo = args.includes('--algo') 
+        ? args[args.indexOf('--algo') + 1] 
+        : 'brute';
+    
+    const solutions = {
+        brute: bruteForceSolve,
+        dp: dynamicProgramSolve,
+        greedy: greedySolve
+    };
+    
+    const result = solutions[algo]?.(loadInput()) 
+        ?? bruteForceSolve(loadInput());
+    
+    // 🎯 Test different approaches without code changes!
+    ```
+  </Card>
+  
+  <Card title="Pattern: Generate Test Cases via CLI" icon="code">
+    ```js
+    // node generate.js --count 100 --range 1-1000
+    const count = Number(args[args.indexOf('--count') + 1]) || 10;
+    const [min, max] = (args[args.indexOf('--range') + 1] || '1-100')
+        .split('-').map(Number);
+    
+    const testCases = Array.from({length: count}, () => 
+        Math.floor(Math.random() * (max - min + 1)) + min
+    );
+    
+    console.log(JSON.stringify(testCases));  // Pipe to solver: | node solve.js
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**Pro Tip**: Combine CLI args with `console.time()` for quick performance testing:
+```js
+console.time('solve');
+const result = solve(largeInput);
+console.timeEnd('solve');  // "solve: 42.35ms"
+// Pipe output to file for analysis: node bench.js > results.txt
+```
+</Aside>
+
+---
+
+## 📌 Quick Revision Cheat Sheet <Badge text="MUST KNOW" variant="tip" />
+
+```js
+// 🎯 ACCESSING CLI ARGS (Node.js)
+const args = process.argv.slice(2);  // ✅ Always slice first 2 elements!
+const [cmd, ...params] = args;       // Destructure command + params
+
+// 🎯 TYPE CONVERSION (always strings!)
+const num = Number(str);              // "123" → 123, "abc" → NaN
+const int = parseInt(str, 10);        // Explicit base-10 parsing
+const float = parseFloat(str);        // "3.14" → 3.14
+const bool = str === 'true';          // "true" → true, else false
+const safeNum = Number(str) || 0;     // NaN fallback to 0
+
+// 🎯 VALIDATION PATTERNS
+if (args.length < 2) { 
+    console.error('Usage: node app.js <x> <y>'); 
+    process.exit(1); 
+}
+if (isNaN(num)) { 
+    console.error('Must be a number'); 
+    process.exit(1); 
+}
+
+// 🎯 ENVIRONMENT VARIABLES (complement CLI args)
+const port = process.env.PORT || 3000;  // Fallback chain
+const isProd = process.env.NODE_ENV === 'production';
+
+// 🎯 POPULAR LIBRARIES
+// yargs: expressive, auto-help, type coercion
+// commander: minimalist, intuitive API  
+// cac: TypeScript-first, modern syntax
+
+// 🎯 SAFE PATTERNS
+const config = {
+    port: cli.port ?? env.port ?? 3000,  // Nullish coalescing chain
+    verbose: args.includes('-v')         // Flag detection
+};
+
+// 🎯 ERROR HANDLING FOR CLI
+try {
+    // ... your logic
+} catch (error) {
+    console.error('❌ Error:', error.message);
+    process.exit(1);  // Non-zero exit for scripts/CI
+}
+
+// 🎯 INTERVIEW GOLD
+// "JS CLI args are strings in process.argv — slice(2) to get user args"
+// "Number() returns NaN silently — always validate with isNaN()"
+// "Use yargs/commander for complex CLIs — don't parse manually in production"
+// "CLI args > env vars > config file > defaults" — priority order for config
+```
+
+---
+
+## 🔗 Related Topics
+
+<CardGrid columns={2}>
+  <LinkCard
+    title="Node.js Process Object"
+    href="/computer-languages/javascript/nodejs/process"
+    description="process.argv, process.env, process.exit, event loop"
+  />
+  <LinkCard
+    title="JavaScript Type Conversion"
+    href="/computer-languages/javascript/topics/type-conversion"
+    description="Number(), parseInt(), coercion, NaN, nullish coalescing"
+  />
+  <LinkCard
+    title="Building CLI Tools"
+    href="/computer-languages/javascript/guides/cli-tools"
+    description="yargs, commander, cac, publishing npm packages"
+  />
+  <LinkCard
+    title="Environment Variables"
+    href="/computer-languages/javascript/topics/environment-variables"
+    description="process.env, dotenv, config management, deployment"
+  />
+</CardGrid>
+
+<Aside type="note">
+🎯 **Production Pro Tips**  
+1. Always use `process.argv.slice(2)` — never access raw `process.argv` indices directly  
+2. Prefer libraries (`yargs`, `commander`) for any CLI with flags/options — auto-help is worth it  
+3. Validate and sanitize all CLI input — never trust user-provided strings  
+4. Use `process.exit(1)` on errors for proper script/CI integration  
+5. Document your CLI interface in `--help` AND your README  
+6. Support both CLI args AND environment variables for deployment flexibility 🛡️
+</Aside>
+
+> 💡 **Final Wisdom**: JavaScript CLI handling is **more flexible but less standardized** than Java — you get raw `process.argv` access plus a rich library ecosystem. Master the patterns above, and you'll build robust, interview-ready CLI tools that scale from quick scripts to production npm packages! 🚀✨
+
+*Converted for Astro 6 + Starlight • Optimized for interview prep + production use • Quality >>>> Quantity* 🎯
+```
+
+---
+
+## 🔄 Java CLI Args → JS CLI Args Conversion Summary
+
+| Java Feature | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| `main(String[] args)` | `process.argv.slice(2)` | ✅ JS includes node+script paths — must slice! |
+| All args as `String` | All args as `string` | ✅ Same — explicit parsing required |
+| `Integer.parseInt()` | `Number()` / `parseInt()` | ⚠️ JS `Number("abc")` → `NaN` (silent), Java throws exception |
+| `args.length` check | `args.length` check | ✅ Same pattern |
+| Space-separated args | Space-separated args | ✅ Same — use quotes for spaces |
+| No null args possible | No null args possible | ✅ Same — empty array, not null |
+| Manual parsing only | Manual OR libraries (`yargs`, `commander`) | ✅ JS has richer CLI ecosystem |
+| No env var integration | `process.env` complements CLI args | ✅ JS: CLI > env > config > defaults pattern |
+| `System.exit(1)` | `process.exit(1)` | ✅ Same — non-zero exit for errors |
+| JVM handles array creation | Node.js creates `process.argv` | ✅ Same — always valid array |
+| No built-in help generation | Libraries auto-generate `--help` | ✅ JS libraries provide professional CLI UX |
+
+---
+
+🧠 **Interview Power Move**: When asked about CLI arguments, always mention:  
+1. **Node.js**: `process.argv.slice(2)` — never forget to slice!  
+2. **Type safety**: All args are strings — validate with `isNaN()`, not just `Number()`  
+3. **Libraries**: Use `yargs`/`commander` for complex CLIs — auto-help is production-ready  
+4. **Fallback chain**: CLI args > env vars > config file > defaults (flexible deployment)  
+5. **Error handling**: `process.exit(1)` on failures for CI/CD integration  
+
+This shows you understand JS's *practical* CLI model — not just syntax! 🎯✨
+
+---
+
+# 🖥️ Command Line Arguments in JavaScript (Node.js)
+
+---
+
+## 🔰 What Are Command Line Arguments?
+
+Command line arguments = **values passed to a Node.js program at launch** from the terminal. Node exposes them via the global `process.argv` array.
+
+```bash
+node app.js hello 42 --env=prod
+```
+
+```js
+// Inside app.js:
+console.log(process.argv);
+// [
+//   '/usr/bin/node',   ← process.argv[0] — node binary path
+//   '/home/user/app.js', ← process.argv[1] — script path
+//   'hello',           ← process.argv[2] — first real arg
+//   '42',              ← process.argv[3]
+//   '--env=prod'       ← process.argv[4]
+// ]
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Command Line Arguments in Node.js
+│
+├── 🔷 process.argv
+│   ├── raw array of strings
+│   ├── argv[0] = node binary
+│   ├── argv[1] = script path
+│   └── argv[2+] = your actual args
+│
+├── 🔶 process.argv.slice(2)
+│   └── clean args without node + script
+│
+├── 🔧 Manual Parsing
+│   ├── positional args
+│   ├── flags  (--verbose)
+│   └── key=value (--port=3000)
+│
+├── ⚙️ process object (related)
+│   ├── process.env        → environment variables
+│   ├── process.exit()     → exit with code
+│   ├── process.stdin      → input stream
+│   └── process.stdout     → output stream
+│
+└── 📦 Parsing Libraries
+    ├── minimist          → lightweight
+    ├── yargs             → full-featured
+    └── commander         → Express-style CLI
+```
+
+---
+
+## 1️⃣ `process.argv` — Raw Access
+
+```js
+// Launch: node app.js alice 30 --admin
+
+const args = process.argv;
+
+console.log(args[0]); // "/usr/bin/node"    — always node
+console.log(args[1]); // "/home/user/app.js" — always script
+console.log(args[2]); // "alice"
+console.log(args[3]); // "30"
+console.log(args[4]); // "--admin"
+
+// ALL VALUES ARE STRINGS — always:
+typeof args[3]; // "string" — NOT number
+Number(args[3]); // 30 ← must convert manually
+```
+
+### Always slice(2) first
+```js
+// Clean real args — skip node + script path:
+const args = process.argv.slice(2);
+// ["alice", "30", "--admin"]
+
+// Now index from 0 like a normal array
+console.log(args[0]); // "alice"
+console.log(args[1]); // "30"
+```
+
+---
+
+## 2️⃣ Manual Argument Parsing
+
+### Positional Arguments
+```js
+// Launch: node greet.js Alice Engineer 5
+
+const [name, role, experience] = process.argv.slice(2);
+
+console.log(`Name: ${name}`);         // Name: Alice
+console.log(`Role: ${role}`);         // Role: Engineer
+console.log(`Exp:  ${Number(experience)} years`); // Exp: 5 years
+```
+
+### Flag Parsing (`--flag`)
+```js
+// Launch: node server.js --verbose --debug
+
+const args = process.argv.slice(2);
+
+const flags = {
+  verbose: args.includes("--verbose"),
+  debug:   args.includes("--debug"),
+  help:    args.includes("--help") || args.includes("-h")
+};
+
+if (flags.verbose) console.log("[VERBOSE] mode on");
+if (flags.debug)   console.log("[DEBUG] mode on");
+```
+
+### Key=Value Parsing (`--key=value`)
+```js
+// Launch: node server.js --port=3000 --host=localhost --env=prod
+
+const args = process.argv.slice(2);
+
+function parseArgs(args) {
+  return args.reduce((acc, arg) => {
+    // Handle --key=value
+    if (arg.startsWith("--") && arg.includes("=")) {
+      const [key, value] = arg.slice(2).split("=");
+      acc[key] = value;
+      return acc;
+    }
+    // Handle --flag (boolean)
+    if (arg.startsWith("--")) {
+      acc[arg.slice(2)] = true;
+      return acc;
+    }
+    // Handle positional
+    acc._ = acc._ || [];
+    acc._.push(arg);
+    return acc;
+  }, {});
+}
+
+const parsed = parseArgs(args);
+// { port: "3000", host: "localhost", env: "prod" }
+
+const PORT = Number(parsed.port) || 8080;
+const HOST = parsed.host || "0.0.0.0";
+const ENV  = parsed.env  || "development";
+```
+
+### Space-Separated Key Value (`--key value`)
+```js
+// Launch: node app.js --port 3000 --host localhost
+
+function parseArgs(args) {
+  const result = { _: [] };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
+      const next = args[i + 1];
+
+      // If next arg exists and is not a flag:
+      if (next && !next.startsWith("-")) {
+        result[key] = next;
+        i++; // skip next — already consumed
+      } else {
+        result[key] = true; // boolean flag
+      }
+    } else {
+      result._.push(arg); // positional
+    }
+  }
+
+  return result;
+}
+
+const opts = parseArgs(process.argv.slice(2));
+// --port 3000 → { port: "3000" }
+// --verbose   → { verbose: true }
+// file.txt    → { _: ["file.txt"] }
+```
+
+---
+
+## ⚙️ Deep Dive — `process` Object Internals
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                  process OBJECT IN V8                    │
+│                                                          │
+│  Node.js startup:                                        │
+│                                                          │
+│  OS Shell → execve("node", ["node","app.js","arg1"])     │
+│                   │                                      │
+│                   ▼                                      │
+│  libuv + V8 bootstrap:                                   │
+│    → argc / argv from OS passed to node's main()        │
+│    → Node builds process.argv JS array from C argv[]    │
+│    → process object injected into global scope           │
+│                                                          │
+│  process.argv is built ONCE at startup                   │
+│  It is a plain JS Array — immutable at OS level          │
+│  but YOU can mutate it (bad idea in prod)                │
+└──────────────────────────────────────────────────────────┘
+```
+
+```
+C level (Node internals):
+  int main(int argc, char* argv[]) {
+    // argc = argument count
+    // argv = ["node", "app.js", "hello", "42"]
+    //         ↑       ↑          ↑        ↑
+    //         C strings converted to JS strings
+    //         → pushed into V8 Array → process.argv
+  }
+```
+
+---
+
+## 3️⃣ `process.env` — Environment Variables
+
+```bash
+# Set at launch:
+PORT=3000 NODE_ENV=production node server.js
+
+# Or in .env file via dotenv:
+node -r dotenv/config server.js
+```
+
+```js
+// Access inside Node:
+const PORT    = process.env.PORT    || 8080;
+const NODE_ENV = process.env.NODE_ENV || "development";
+const DB_URL  = process.env.DATABASE_URL;
+
+if (!DB_URL) {
+  console.error("DATABASE_URL is required");
+  process.exit(1); // exit with error code
+}
+```
+
+### `process.argv` vs `process.env`
+
+```
+┌────────────────┬────────────────────────────────────────┐
+│                │  process.argv   │  process.env         │
+├────────────────┼─────────────────┼──────────────────────┤
+│ Set by         │ CLI caller      │ Shell / .env file    │
+│ Visibility     │ Anyone who runs │ Server config only   │
+│ Use case       │ Script options  │ Secrets / config     │
+│ Example        │ --port=3000     │ DATABASE_URL=...      │
+│ Type           │ Always string   │ Always string        │
+│ Sensitive data │ ❌ Never        │ ✅ Yes (passwords)   │
+└────────────────┴─────────────────┴──────────────────────┘
+```
+
+---
+
+## 4️⃣ `process.exit()` — Exit Codes
+
+```js
+// Exit codes are a UNIX convention:
+process.exit(0);  // success ✅
+process.exit(1);  // general error ❌
+process.exit(2);  // misuse of shell command
+
+// Real pattern:
+function validateArgs(args) {
+  if (args.length === 0) {
+    console.error("Usage: node app.js <filename> [--verbose]");
+    process.exit(1); // caller (CI/CD, shell script) sees failure
+  }
+}
+
+// Exit code used by shell scripts:
+// node app.js && echo "success" || echo "failed"
+// if process.exit(1) → prints "failed"
+```
+
+---
+
+## 🏭 Real Production Pattern — Full CLI Tool
+
+```js
+#!/usr/bin/env node
+// file: db-migrate.js
+// Usage: node db-migrate.js --env=prod --dry-run --steps=5
+
+const args = process.argv.slice(2);
+
+// ── Parse ──────────────────────────────────────────────
+function parse(args) {
+  return args.reduce((acc, arg) => {
+    if (arg.startsWith("--") && arg.includes("=")) {
+      const [k, v] = arg.slice(2).split("=");
+      acc[k] = v;
+    } else if (arg.startsWith("--")) {
+      acc[arg.slice(2)] = true;
+    } else {
+      (acc._ ??= []).push(arg);
+    }
+    return acc;
+  }, {});
+}
+
+const opts = parse(args);
+
+// ── Validate ────────────────────────────────────────────
+const VALID_ENVS = ["dev", "staging", "prod"];
+
+if (!opts.env || !VALID_ENVS.includes(opts.env)) {
+  console.error(`❌ --env must be one of: ${VALID_ENVS.join(", ")}`);
+  process.exit(1);
+}
+
+const steps = opts.steps ? Number(opts.steps) : Infinity;
+
+if (Number.isNaN(steps) || steps <= 0) {
+  console.error("❌ --steps must be a positive number");
+  process.exit(1);
+}
+
+// ── Run ─────────────────────────────────────────────────
+const isDryRun = Boolean(opts["dry-run"]);
+
+console.log(`🔧 Migrating: env=${opts.env} steps=${steps} dry=${isDryRun}`);
+
+async function migrate() {
+  try {
+    const pending = await getPendingMigrations(opts.env, steps);
+
+    if (isDryRun) {
+      console.log("📋 Would run:", pending.map(m => m.name));
+      process.exit(0);
+    }
+
+    for (const migration of pending) {
+      console.log(`▶ Running: ${migration.name}`);
+      await migration.run();
+      console.log(`✅ Done: ${migration.name}`);
+    }
+
+    process.exit(0); // explicit success
+  } catch (err) {
+    console.error("❌ Migration failed:", err.message);
+    process.exit(1); // CI/CD sees failure
+  }
+}
+
+migrate();
+```
+
+---
+
+## 📦 Production Libraries (When to Use)
+
+### `minimist` — Lightweight
+```js
+// npm install minimist
+const minimist = require("minimist");
+
+const args = minimist(process.argv.slice(2), {
+  string: ["env", "host"],
+  boolean: ["verbose", "dry-run"],
+  default: { host: "localhost", port: 8080 },
+  alias: { v: "verbose", h: "help" }
+});
+
+// node app.js --env=prod -v --port 3000
+// args = { env: "prod", verbose: true, port: 3000, host: "localhost" }
+// args._ = [] (positional args)
+```
+
+### `commander` — Express-style CLI
+```js
+// npm install commander
+const { program } = require("commander");
+
+program
+  .name("db-tool")
+  .description("Database management CLI")
+  .version("1.0.0");
+
+program
+  .command("migrate")
+  .description("Run pending migrations")
+  .requiredOption("--env <env>", "target environment")
+  .option("--steps <n>", "max steps", parseInt)
+  .option("--dry-run", "preview only")
+  .action((options) => {
+    console.log("migrating", options.env);
+  });
+
+program.parse(process.argv);
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: All `process.argv` values are STRINGS
+
+```js
+// Launch: node app.js 42 true
+
+const [num, bool] = process.argv.slice(2);
+
+typeof num;   // "string" — NOT number 😱
+typeof bool;  // "string" — NOT boolean 😱
+
+num === 42;   // false 😱
+bool === true; // false 😱
+
+// In prod — comparison without conversion = silent wrong logic:
+if (num > 10) { ... }   // "42" > 10 → true (coercion saves you here)
+if (num === 42) { ... } // false 😱 — strict equality fails
+
+// Always convert explicitly:
+const port = Number(process.argv[2]);
+const debug = process.argv[3] === "true"; // string → boolean
+```
+
+---
+
+### Trap 2: `process.argv[1]` changes with different runners
+
+```js
+// Direct node:
+node app.js
+// argv[1] = "/absolute/path/to/app.js"
+
+// npm script (package.json: "start": "node app.js"):
+npm start
+// argv[1] = same — "/absolute/path/to/app.js"
+
+// npx / global CLI tool:
+npx my-tool
+// argv[1] = path to npx-installed script — NOT your file 😱
+
+// ts-node:
+ts-node app.ts
+// argv[1] = path to ts-node, NOT app.ts 😱
+
+// Fix — never rely on argv[1] for logic:
+// Use __filename instead:
+console.log(__filename); // always your actual file
+```
+
+---
+
+### Trap 3: Mutating `process.argv` affects all requires
+
+```js
+// process.argv is a SHARED global — mutation visible everywhere:
+process.argv.push("--injected");
+
+// Any module that reads process.argv LATER sees this:
+require("./someLib"); // reads process.argv → sees your injected arg 😱
+
+// Never mutate process.argv — always work with a copy:
+const args = process.argv.slice(2); // your own copy
+```
+
+---
+
+### Trap 4: `process.exit()` skips `finally` and `async` cleanup
+
+```js
+async function shutdown() {
+  try {
+    await db.close();
+    console.log("DB closed");
+  } finally {
+    process.exit(0); // ← skips nothing in finally — OK here
+  }
+}
+
+// BUT:
+async function badShutdown() {
+  await db.close();    // async — not awaited if exit called elsewhere
+  process.exit(0);     // runs BEFORE db.close() resolves 😱
+}
+
+// Real prod pattern — graceful shutdown:
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received");
+  await server.close();    // stop accepting connections
+  await db.disconnect();   // close DB pool
+  process.exit(0);         // NOW exit
+});
+```
+
+---
+
+### Trap 5: `=` inside value breaks naive `split("=")`
+
+```js
+// Launch: node app.js --query=SELECT * FROM users WHERE id=1
+
+const arg = "--query=SELECT * FROM users WHERE id=1";
+
+// BAD — splits on FIRST = only:
+const [key, value] = arg.slice(2).split("=");
+// key   = "query"
+// value = "SELECT * FROM users WHERE id" 😱 — rest lost
+
+// FIX — split on first = only:
+const eqIndex = arg.indexOf("=");
+const key   = arg.slice(2, eqIndex);
+const value = arg.slice(eqIndex + 1);
+// key   = "query"
+// value = "SELECT * FROM users WHERE id=1" ✅
+```
+
+---
+
+## 📊 DSA / Internals Connection
+
+> `process.argv` is built from the OS-level `argv[]` array — a **null-terminated array of C strings** passed to `main()`. Node's bootstrap converts each C string into a V8 `String` object and pushes them into a JS `Array`. This is a direct **array of pointers** at the OS level — same data structure as `char* argv[]` in C. Each pointer points to a string in the process's memory segment. Understanding this explains why all values are strings — OS doesn't know types.
+
+---
+
+## 🎖️ SDE/SRE Relevance
+
+| Topic | Level |
+|---|---|
+| `process.argv` structure (argv[0], argv[1], argv[2+]) | 🔴 MUST KNOW |
+| `process.argv.slice(2)` | 🔴 MUST KNOW |
+| All args are strings — must convert | 🔴 MUST KNOW |
+| Parsing `--key=value` and `--flag` | 🔴 MUST KNOW |
+| `process.env` vs `process.argv` | 🔴 MUST KNOW |
+| `process.exit()` codes | 🔴 MUST KNOW |
+| Graceful shutdown with `process.on("SIGTERM")` | 🟡 GOOD TO KNOW |
+| Mutation of `process.argv` trap | 🟡 GOOD TO KNOW |
+| `minimist` / `commander` libraries | 🟡 GOOD TO KNOW |
+| argv[1] changes with different runners | 🟡 GOOD TO KNOW |
+
+---

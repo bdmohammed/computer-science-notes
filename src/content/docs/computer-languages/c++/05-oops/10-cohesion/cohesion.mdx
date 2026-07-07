@@ -1,0 +1,1121 @@
+---
+title: C++ Cohesion & Single Responsibility
+slug: computer-languages/cpp/design/cohesion
+description: Master cohesion in C++ — high vs low cohesion, Single Responsibility Principle (SRP), header organization, PIMPL for focus, and architectural patterns for maintainable code.
+sidebar:
+  label: "Cohesion"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [cpp, cohesion, srp, clean-code, architecture, interview, pimpl]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🧲 Cohesion in C++ — Complete Guide
+
+> **Cohesion** measures how strongly related the responsibilities inside a single class or module are. In C++, cohesion is critical not just for logic, but for **Compilation Efficiency**. High cohesion means a class does one thing well. Low cohesion leads to "God Classes" that trigger massive recompilation cascades.
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of cohesion as **Focus**.
+- **High Cohesion**: A Scalpel — precise, specialized, effective.
+- **Low Cohesion**: A Swiss Army Knife — tries to do everything, master of none, hard to maintain.
+**Goal**: "High Cohesion, Low Coupling."
+</Aside>
+
+---
+
+## 📋 Types of Cohesion — The Spectrum
+
+| Type | Description | Verdict | C++ Example |
+|------|-------------|---------|-------------|
+| **Coincidental** | Methods grouped randomly | 🔴 Worst | `Utils.h` with `sendEmail()`, `calcTax()`, `resizeImg()` |
+| **Logical** | Grouped by category but unrelated | 🔴 Bad | `InputHandler` handling Mouse, Network, File I/O |
+| **Temporal** | Grouped by lifecycle phase | 🟠 Moderate | `AppInit` loading Config, DB, Cache |
+| **Communicational** | Methods operate on same data | 🟡 Good | Class manipulating a specific `User` struct |
+| **Functional** | Every method contributes to ONE task | 🟢 Best | `PasswordHasher` (hash, verify, rehash) |
+
+<CardGrid>
+  <Card title="Low Cohesion (God Class)" icon="error">
+    ```cpp
+    // UserManager.h
+    class UserManager {
+    public:
+        void saveUser(const User& u);
+        void sendEmail(const std::string& to); // ❌ Unrelated
+        void generatePDF(const Report& r);     // ❌ Unrelated
+        void connectDB();                      // ❌ Unrelated
+    };
+    
+    // Problem: Changing PDF logic requires recompiling UserManager users.
+    ```
+  </Card>
+  
+  <Card title="High Cohesion (Focused)" icon="approve-check">
+    ```cpp
+    // AuthService.h
+    class AuthService { /* Login/Token logic */ };
+    
+    // NotificationService.h
+    class NotificationService { /* Email/SMS logic */ };
+    
+    // PdfGenerator.h
+    class PdfGenerator { /* PDF creation logic */ };
+    
+    // Benefit: Changing PDF logic only affects PdfGenerator users.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+### 🔬 Each Type — Real C++ Examples
+
+**🔴 Coincidental — The "Utils" Trap**
+
+```cpp
+// Utils.h
+namespace Utils {
+    void sendEmail(const std::string& to);
+    double calculateTax(const Order& o);
+    void resizeImage(const std::filesystem::path& f);
+    std::string formatDate(std::chrono::system_clock::time_point t);
+}
+// Nothing relates. This header becomes a compilation bottleneck.
+```
+
+**🟢 Functional — Single Responsibility**
+
+```cpp
+// PasswordHasher.h
+class PasswordHasher {
+public:
+    std::string hash(const std::string& plaintext);
+    bool verify(const std::string& plaintext, const std::string& hashed);
+    bool needsRehash(const std::string& hashed);
+private:
+    static constexpr int BCRYPT_ROUNDS = 12;
+};
+// Every method serves one purpose: Password Security.
+```
+
+---
+
+### 💻 Real-World Code — Low vs High Cohesion
+
+**❌ Low Cohesion — God Class**
+
+```cpp
+// UserManager.h
+#include <map>
+#include <string>
+// Includes for Email, PDF, DB, Analytics... huge dependency list!
+
+class UserManager {
+    std::map<long, User> users;
+    
+public:
+    // Auth
+    bool login(const std::string& user, const std::string& pass);
+    std::string generateToken(long id);
+    
+    // Billing
+    void chargeUser(long id, double amount);
+    
+    // Notifications
+    void sendWelcomeEmail(long id);
+    
+    // Analytics
+    void trackLogin(long id);
+};
+```
+
+🔴 **Prod Consequence**: `UserManager.h` includes headers for SMTP, Payment Gateways, and Analytics. Changing the Email library forces a recompile of every file that includes `UserManager.h`.
+
+**✅ High Cohesion — Split by Responsibility**
+
+```cpp
+// AuthService.h
+class AuthService {
+public:
+    bool login(const std::string& user, const std::string& pass);
+    std::string generateToken(long id);
+};
+
+// BillingService.h
+class BillingService {
+public:
+    void chargeUser(long id, double amount);
+};
+
+// NotificationService.h
+class NotificationService {
+public:
+    void sendWelcomeEmail(long id);
+};
+
+// Usage: Composition
+class UserFacade {
+    AuthService auth;
+    BillingService billing;
+    NotificationService notifier;
+public:
+    void registerUser(const User& u) {
+        auth.create(u);
+        notifier.sendWelcome(u.id);
+    }
+};
+```
+
+---
+
+### 📊 Detecting Low Cohesion in C++
+
+| Symptom | What It Signals |
+|---------|----------------|
+| Header includes unrelated libraries (e.g., `<smtp>` and `<pdf>`) | God Class |
+| Class name contains `Manager`, `Helper`, `Utils` | Dumping ground |
+| Methods don't access `this` members | Function belongs elsewhere |
+| Large `.cpp` file with unrelated sections | Low Cohesion |
+| Hard to describe class purpose in one sentence | Low Cohesion |
+
+---
+
+### 🔁 Cohesion and Single Responsibility Principle (SRP)
+
+SRP in C++ means a class should have **one reason to change**.
+
+```text
+❌ UserManager changes when:
+   ├── Auth team changes Token format
+   ├── Billing team changes Invoice structure
+   └── Marketing team changes Email templates
+   → 3 reasons to change = Low Cohesion
+
+✅ AuthService changes when:
+   └── Auth team changes Token format
+   → 1 reason to change = High Cohesion
+```
+
+---
+
+### 🔁 Method-Level Cohesion
+
+Cohesion applies inside functions too. Keep functions small and focused.
+
+```cpp
+// ❌ Low Cohesion Method
+void processOrder(Order& order) {
+    // 1. Validate
+    if (order.items.empty()) throw std::invalid_argument("Empty");
+    
+    // 2. Persist
+    db.save(order);
+    
+    // 3. Notify
+    email.send(order.customerId);
+}
+
+// ✅ High Cohesion Method
+void processOrder(Order& order) {
+    validate(order);
+    db.save(order);
+    notifyCustomer(order);
+}
+
+private:
+void validate(const Order& order) {
+    if (order.items.empty()) throw std::invalid_argument("Empty");
+}
+```
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — High Cohesion ≠ Small Class**
+
+```cpp
+// ❌ Small but Low Cohesion
+class MathAndEmail {
+    double sqrt(double n);
+    void sendEmail(const std::string& to);
+};
+
+// ✅ Large but High Cohesion
+class JwtTokenService {
+    std::string generate(Claims c);
+    Claims parse(const std::string& token);
+    bool isExpired(const std::string& token);
+    bool isValid(const std::string& token);
+    std::string refresh(const std::string& token);
+    void revoke(const std::string& token);
+};
+```
+Size is irrelevant. **Relatedness of purpose** is everything.
+
+**🪤 Trap 2 — Utility Namespaces are not automatically bad**
+
+```cpp
+// ❌ Low Cohesion Utility
+namespace Utils {
+    std::string formatDate(Date d);
+    double calcTax(Order o);
+}
+
+// ✅ High Cohesion Utility
+namespace DateUtils {
+    std::string toISO(Date d);
+    std::string toDisplay(Date d);
+    std::string toFilename(Date d);
+}
+```
+A utility namespace is fine if all functions serve the **same domain**.
+
+**🪤 Trap 3 — Over-Splitting (Anemic Domain)**
+
+```cpp
+// ❌ Too split
+class OrderValidator { bool validate(Order& o); };
+class OrderSaver { void save(Order& o); };
+class OrderNotifier { void notify(Order& o); };
+
+// This is procedural code wrapped in classes. 
+// Better: Order knows how to validate itself.
+class Order {
+public:
+    void validate() const;
+    // ...
+};
+```
+
+**🪤 Trap 4 — Private Methods don't hide Low Cohesion**
+
+```cpp
+class ReportService {
+    void generate() {
+        fetchData();
+        renderPdf();
+        chargeUser(); // ❌ Billing logic inside Report Service
+    }
+private:
+    void chargeUser(); // Making it private doesn't fix the responsibility issue
+};
+```
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying Primitive: Set Intersection**
+
+Cohesion can be measured via **LCOM (Lack of Cohesion in Methods)**.
+
+```text
+LCOM = |Pairs of methods sharing NO fields| - |Pairs sharing fields|
+
+If LCOM > 0 → Class should likely be split.
+If LCOM = 0 → All methods share state → High Cohesion.
+```
+
+In C++, static analysis tools (Clang-Tidy, SonarQube) use this to flag large, disjointed classes.
+
+---
+
+### 📊 Cohesion vs Coupling in C++
+
+| | High Cohesion | Low Cohesion |
+|--|--------------|-------------|
+| **Header Size** | Small, few includes | Large, many includes |
+| **Compile Time** | Fast (isolated changes) | Slow (cascade recompilation) |
+| **Testability** | Easy (mock one interface) | Hard (mock everything) |
+| **Coupling** | Naturally Low | Naturally High |
+
+```text
+High Cohesion → Small Headers → Fewer #includes → Faster Builds
+```
+
+---
+
+### 🏭 SDE/SRE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| God Class = Compilation Bottleneck | 🔴 MUST KNOW |
+| SRP = One Reason to Change | 🔴 MUST KNOW |
+| `Utils.h` = Anti-Pattern | 🔴 MUST KNOW |
+| PIMPL = Enforcing Cohesion | 🟡 GOOD TO KNOW |
+| Anemic Domain Model | 🔴 MUST KNOW |
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit headers for unrelated `#includes`.
+2. ✅ Break up `Manager` classes into focused services.
+3. ✅ Use PIMPL to hide implementation details and reduce header dependencies.
+4. ✅ Keep methods small and single-purpose.
+</Aside>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Core Concepts" icon="information">
+    ```text
+    Q: What is Cohesion?
+    A: How closely related the responsibilities of a class are.
+    
+    Q: High vs Low Cohesion?
+    A: High = One job. Low = Many unrelated jobs.
+    
+    Q: Why does Cohesion matter in C++?
+    A: It directly impacts Compile Times and Binary Stability.
+    ```
+  </Card>
+  
+  <Card title="Patterns & Fixes" icon="rocket">
+    ```text
+    Q: How to fix a God Class?
+    A: Extract unrelated methods into new, focused classes.
+    
+    Q: What is the relationship between Cohesion and Coupling?
+    A: Inverse. High Cohesion usually leads to Low Coupling.
+    
+    Q: Is a class with 100 methods always low cohesion?
+    A: No. If all 100 methods relate to one complex task (e.g. Compiler), it's high cohesion.
+    ```
+  </Card>
+
+  <Card title="C++ Specifics" icon="shield">
+    ```text
+    Q: How does PIMPL help Cohesion?
+    A: It hides private members, ensuring the header only exposes the public interface.
+    
+    Q: Why are 'Utils' namespaces dangerous?
+    A: They often become dumping grounds for unrelated functions, creating compilation dependencies.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Cohesion Decision Tree
+
+```text
+Does this class do more than one thing?
+│
+├─ Yes → Can I split it?
+│  ├─ Yes → Extract new class ✅
+│  └─ No  → Is it a Facade? (Coordinating others) ✅
+│
+├─ Do methods share no data?
+│  └─ Yes → Move methods to where the data lives ✅
+│
+└─ Is the header including unrelated libraries?
+   └─ Yes → Use Forward Declarations or PIMPL ✅
+```
+
+### Cohesion Anti-Patterns & Fixes
+
+| Anti-Pattern | Symptom | Fix |
+|-------------|---------|-----|
+| `Utils.h` | Random functions | Split into domain-specific namespaces |
+| `Manager` Class | Does Auth, DB, Email | Split into `AuthService`, `Repo`, `Notifier` |
+| Large Header | Many `#includes` | Use PIMPL or Forward Declarations |
+| Method doesn't use `this` | Static-like behavior | Move to relevant class or make free function |
+
+<Aside type="caution">
+**Final Checklist for High Cohesion**:
+1. ✅ Each class has one clear purpose.
+2. ✅ Methods within a class share state or purpose.
+3. ✅ Headers include only what is necessary.
+4. ✅ Avoid "God Classes" that know everything.
+5. ✅ Use Composition to combine cohesive units.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict Cohesion" code={`
+// Q1: What is the cohesion level?
+class FileHelper {
+public:
+    void saveImage(const std::string& path);
+    void sendEmail(const std::string& to);
+};
+
+// Q2: How to fix this?
+class Database {
+public:
+    void connect();
+    void query();
+    void renderHTML(); // ❌
+};
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Low Cohesion. Image saving and Email sending are unrelated.
+    Fix: Split into ImageService and EmailService.
+
+Q2: Low Cohesion. HTML rendering doesn't belong in Database.
+    Fix: Move renderHTML to a View or TemplateEngine class.
+```
+</details>
+
+<Aside type="tip">
+**Pro Tip**: In C++, **Header Hygiene** is a key part of Cohesion. If your header includes `<iostream>`, `<vector>`, `<map>`, and `<smtp>`, you have a cohesion problem. Clean headers lead to fast builds. 🚀
+</Aside>
+
+---
+
+# 🧲 C++ Cohesion — Complete Deep Dive
+
+---
+
+## 📌 What Is Cohesion?
+
+The **degree to which elements inside a module belong together** — how focused and related a class/function/module's responsibilities are.
+
+```
+Low Cohesion:                        High Cohesion:
+┌─────────────────────────────┐      ┌──────────────────────┐
+│  DatabaseManager            │      │  UserRepository      │
+│  ─────────────────────────  │      │  ────────────────── │
+│  connect_to_db()            │      │  find_user(id)       │
+│  send_email()    ← unrelated│      │  save_user(user)     │
+│  parse_json()    ← unrelated│      │  delete_user(id)     │
+│  render_html()   ← unrelated│      │  list_users()        │
+│  calculate_tax() ← unrelated│      └──────────────────────┘
+│  compress_image()← unrelated│      Everything related to
+└─────────────────────────────┘      user data persistence
+Responsible for everything
+= responsible for nothing
+```
+
+---
+
+## 🧭 Cohesion vs Coupling
+
+```
+Cohesion  = how related things ARE within a module  (internal)
+Coupling  = how dependent modules ARE on each other (external)
+
+Goal: HIGH cohesion + LOW coupling
+
+They are complementary:
+  High cohesion → each module has one clear purpose
+               → easier to change without affecting others
+               → naturally leads to lower coupling
+
+  Low cohesion  → module does many unrelated things
+               → harder to reuse parts of it
+               → changes affect unrelated functionality
+               → forces coupling on unrelated consumers
+```
+
+---
+
+## 🗺️ Types of Cohesion (Worst → Best)
+
+```
+COHESION SPECTRUM
+│
+├── Coincidental  (WORST) → elements grouped arbitrarily
+├── Logical                → elements do similar things (grouped by category)
+├── Temporal               → elements run at the same time
+├── Procedural             → elements run in sequence
+├── Communicational        → elements share same data
+├── Sequential             → output of one is input of next
+└── Functional  (BEST)    → single, well-defined purpose
+```
+
+---
+
+## 🔴 Coincidental Cohesion — Worst
+
+Elements grouped with **no meaningful relationship** — utility dumping ground.
+
+```cpp
+// ❌ Coincidental cohesion — random collection
+class Utils {
+public:
+    static int    fibonacci(int n);
+    static void   send_email(const std::string& to, const std::string& msg);
+    static Image  compress_jpeg(const Image& img);
+    static bool   validate_credit_card(const std::string& number);
+    static double calculate_bmi(double weight, double height);
+    static void   play_sound(const std::string& file);
+    static int    parse_roman_numeral(const std::string& s);
+    static void   rotate_matrix(std::vector<std::vector<int>>& m);
+};
+// Why are these together? They're NOT.
+// This class will grow forever — every new function with no home lands here.
+// Impossible to test, impossible to reuse, impossible to reason about.
+```
+
+```cpp
+// ✅ Split into focused units
+class MathUtils      { static int fibonacci(int n); };
+class EmailService   { void send(const std::string&, const std::string&); };
+class ImageProcessor { Image compress_jpeg(const Image&); };
+class PaymentValidator{ bool validate_card(const std::string&); };
+class HealthCalc     { double bmi(double weight, double height); };
+```
+
+---
+
+## 🔴 Logical Cohesion — Same Category
+
+Elements do **similar things but are logically unrelated**.
+
+```cpp
+// ❌ Logical cohesion — "all I/O" grouped together
+class IOManager {
+public:
+    void write_to_file(const std::string& path, const std::string& data);
+    void write_to_database(const std::string& sql);
+    void write_to_network(const std::string& host, const std::string& data);
+    void read_from_file(const std::string& path);
+    void read_from_database(const std::string& query);
+    void read_from_network(const std::string& host);
+    // All are "I/O" — but file I/O and network I/O have nothing in common
+    // internally. Grouping them = false cohesion.
+};
+
+// ✅ Split by actual responsibility
+class FileStore    { void write(const std::string&, const std::string&);
+                    std::string read(const std::string&); };
+class DbRepository { void execute(const std::string&);
+                    ResultSet query(const std::string&); };
+class NetworkIO    { void send(const std::string&, const std::string&);
+                    std::string receive(const std::string&); };
+```
+
+---
+
+## 🟡 Temporal Cohesion — Same Time
+
+Elements run **at the same time** (startup, shutdown, etc.).
+
+```cpp
+// ❌ Temporal cohesion — "all startup things"
+class ApplicationStartup {
+public:
+    void initialize_database();
+    void initialize_cache();
+    void initialize_logger();
+    void initialize_auth();
+    void initialize_network();
+    void load_config();
+    void seed_random();
+    // Related only by timing — not by purpose
+};
+
+// ✅ Better — each subsystem initializes itself; orchestrator coordinates
+class DatabaseManager { void initialize(); };
+class CacheManager    { void initialize(); };
+class AuthService     { void initialize(); };
+
+class Application {
+    DatabaseManager db_;
+    CacheManager    cache_;
+    AuthService     auth_;
+public:
+    void start() {
+        db_.initialize();
+        cache_.initialize();
+        auth_.initialize();
+    }
+};
+```
+
+---
+
+## 🟡 Procedural Cohesion — Same Sequence
+
+Elements **run in order** — procedural steps grouped.
+
+```cpp
+// ❌ Procedural cohesion — steps in a process
+class OrderProcessor {
+public:
+    void validate_order(Order& o);         // step 1
+    void reserve_inventory(Order& o);      // step 2
+    void charge_payment(Order& o);         // step 3
+    void send_confirmation(Order& o);      // step 4
+    void update_analytics(Order& o);       // step 5
+    // Grouped by being steps in ONE process
+    // validate_order and send_confirmation share no data or purpose
+};
+
+// ✅ Each step = own cohesive unit, orchestrated separately
+class OrderValidator   { bool validate(const Order&); };
+class InventoryService { bool reserve(const Order&); };
+class PaymentService   { bool charge(const Order&); };
+class NotificationSvc  { void confirm(const Order&); };
+class AnalyticsService { void record(const Order&); };
+
+class OrderOrchestrator {
+    void process(Order& o) {
+        if (!validator_.validate(o)) throw InvalidOrder{};
+        if (!inventory_.reserve(o))  throw OutOfStock{};
+        if (!payment_.charge(o))     throw PaymentFailed{};
+        notification_.confirm(o);
+        analytics_.record(o);
+    }
+};
+```
+
+---
+
+## 🟢 Communicational Cohesion — Shared Data
+
+Elements operate on the **same data**.
+
+```cpp
+// ✅ Communicational cohesion — all about User
+class UserManager {
+    UserRepository& repo_;
+
+public:
+    User     find(int id);
+    void     save(const User& u);
+    void     delete_(int id);
+    User     update_email(int id, const std::string& email);
+    bool     authenticate(const std::string& username,
+                          const std::string& password);
+    void     reset_password(int id);
+};
+// All functions operate on User data — good cohesion
+// BUT: authentication + CRUD in same class is borderline
+```
+
+---
+
+## 🟢 Sequential Cohesion — Pipeline
+
+**Output of one step = input of next**.
+
+```cpp
+// ✅ Sequential cohesion — pipeline stages
+class ImagePipeline {
+    RawImage raw_;
+public:
+    ImagePipeline& decode(const std::vector<uint8_t>& bytes) {
+        raw_ = jpeg_decode(bytes);    // stage 1 output
+        return *this;
+    }
+    ImagePipeline& resize(int w, int h) {
+        raw_ = bilinear_scale(raw_, w, h);  // uses stage 1 output
+        return *this;
+    }
+    ImagePipeline& enhance_contrast(float factor) {
+        raw_ = contrast(raw_, factor);  // uses stage 2 output
+        return *this;
+    }
+    std::vector<uint8_t> encode_png() {
+        return png_encode(raw_);         // uses stage 3 output
+    }
+};
+
+// Usage — natural pipeline
+auto output = ImagePipeline{}
+    .decode(raw_bytes)
+    .resize(800, 600)
+    .enhance_contrast(1.2f)
+    .encode_png();
+```
+
+---
+
+## 🟢 Functional Cohesion — Best
+
+**Single, well-defined purpose** — every element contributes to exactly one task.
+
+```cpp
+// ✅ Functional cohesion — does exactly ONE thing: manage a circular buffer
+template<typename T, size_t Capacity>
+class CircularBuffer {
+    std::array<T, Capacity> buf_;
+    size_t head_ = 0;
+    size_t tail_ = 0;
+    size_t count_= 0;
+
+public:
+    bool push(const T& val) noexcept {
+        if (full()) return false;
+        buf_[tail_] = val;
+        tail_ = (tail_ + 1) % Capacity;
+        ++count_;
+        return true;
+    }
+
+    bool pop(T& out) noexcept {
+        if (empty()) return false;
+        out = std::move(buf_[head_]);
+        head_ = (head_ + 1) % Capacity;
+        --count_;
+        return true;
+    }
+
+    bool   empty()    const noexcept { return count_ == 0; }
+    bool   full()     const noexcept { return count_ == Capacity; }
+    size_t size()     const noexcept { return count_; }
+    size_t capacity() const noexcept { return Capacity; }
+};
+// Every method serves one purpose: circular buffer management
+// Nothing in here is unrelated — perfect functional cohesion
+```
+
+---
+
+## 🔷 LCOM — Lack of Cohesion in Methods Metric
+
+```
+LCOM (Lack of Cohesion in Methods):
+  Count method pairs that share NO instance variables.
+  Subtract count that DO share variables.
+  Higher LCOM = lower cohesion.
+
+LCOM = max(0, P - Q)
+  P = pairs of methods sharing NO member
+  Q = pairs of methods sharing AT LEAST ONE member
+
+LCOM = 0 → perfectly cohesive (good)
+LCOM = high → low cohesion → split the class
+```
+
+```cpp
+class Low Cohesion Example {
+    int a_, b_, c_, d_;
+public:
+    void f1() { a_++; }              // uses a
+    void f2() { b_++; }              // uses b
+    void f3() { c_++; }              // uses c
+    void f4() { d_++; }              // uses d
+
+    // Pairs sharing variables: NONE
+    // P = 6 (f1,f2), (f1,f3), (f1,f4), (f2,f3), (f2,f4), (f3,f4)
+    // Q = 0
+    // LCOM = 6 — horrible — 4 separate classes needed
+};
+
+class High Cohesion Example {
+    int x_, y_;
+public:
+    void scale(double s)    { x_ *= s; y_ *= s; }    // uses x_, y_
+    double magnitude()const { return std::sqrt(x_*x_ + y_*y_); }
+    void normalize()        { double m = magnitude(); x_/=m; y_/=m; }
+
+    // All methods use both x_ and y_
+    // P = 0 (every pair shares members)
+    // Q = 3
+    // LCOM = max(0, 0-3) = 0 — excellent cohesion
+};
+```
+
+---
+
+## 🔷 Single Responsibility Principle Connection
+
+```
+SRP (SOLID's S) = "A class should have only ONE reason to change"
+               = maximally functional cohesion
+
+Violation = class has multiple reasons to change
+          = multiple concerns mixed = low cohesion
+```
+
+```cpp
+// ❌ Low cohesion — multiple reasons to change
+class Report {
+    std::vector<ReportLine> data_;
+public:
+    void add_line(ReportLine line);      // data management
+    void print_to_console();             // presentation: reason 1
+    void save_to_pdf(const std::string& path); // persistence: reason 2
+    void email_to(const std::string& addr);    // communication: reason 3
+    void calculate_totals();             // business logic: reason 4
+};
+// Changes for: new PDF library, new email provider,
+//              new display format, new total formula
+// = 4 reasons to change = 4 classes needed
+
+// ✅ High cohesion — one reason to change each
+class ReportData    { void add_line(ReportLine); /* data */ };
+class ConsoleView   { void render(const ReportData&); };
+class PDFExporter   { void save(const ReportData&, const std::string&); };
+class EmailSender   { void send(const ReportData&, const std::string&); };
+class ReportCalcs   { Totals calculate(const ReportData&); };
+```
+
+---
+
+## 🔷 Signs of Low Cohesion in C++ Code
+
+```cpp
+// 🚩 Sign 1: "And" in the class name
+class DatabaseAndEmailManager { };         // two responsibilities
+
+// 🚩 Sign 2: Unrelated private members
+class UserService {
+    std::vector<User>      users_;         // user data
+    std::queue<EmailTask>  email_queue_;   // email infrastructure — unrelated
+    std::mutex             log_mutex_;     // logging infrastructure — unrelated
+    boost::asio::io_context io_ctx_;       // network — unrelated
+};
+
+// 🚩 Sign 3: Methods split into unrelated groups
+class ProcessManager {
+    // Group A: process lifecycle
+    void start();   void stop();   void restart();
+
+    // Group B: monitoring (different concern)
+    void log_metrics();   void send_alert();
+
+    // Group C: configuration (different concern)
+    void load_config();   void save_config();
+};
+
+// 🚩 Sign 4: God class — hundreds of methods
+class Application {
+    // 200 methods spanning: UI, networking, DB, auth, payments, reports...
+    // Knows everything, depends on everything
+};
+
+// 🚩 Sign 5: Methods don't use 'this' members
+class Foo {
+    int data_;
+public:
+    // Uses data_ — cohesive
+    void process() { data_ *= 2; }
+
+    // Uses nothing — shouldn't be a member
+    static int helper(int x, int y) { return x + y; }  // free function!
+
+    // Operates on unrelated type — wrong class
+    void format_date(const Date& d) { /* nothing to do with data_ */ }
+};
+```
+
+---
+
+## 🔷 Improving Cohesion — Patterns
+
+### Extract Class
+
+```cpp
+// ❌ Before: Order handles too much
+class Order {
+    int           order_id_;
+    Customer      customer_;
+    Product       product_;
+    double        total_;
+
+    // Order management
+    void add_item(Product p);
+    void remove_item(int id);
+    double calculate_total();
+
+    // Payment — different concern
+    bool   charge_card(const std::string& card_num);
+    bool   process_refund(double amount);
+    void   send_receipt();
+
+    // Shipping — different concern
+    Address get_shipping_address();
+    void    schedule_pickup();
+    void    track_shipment();
+};
+
+// ✅ After: extract cohesive classes
+class Order {
+    int     order_id_;
+    Customer customer_;
+    std::vector<OrderItem> items_;
+    double  total_;
+
+public:
+    void   add_item(Product p);
+    void   remove_item(int id);
+    double calculate_total() const;
+    int    id() const { return order_id_; }
+};
+
+class PaymentProcessor {
+    void charge(const Order&, const std::string& card);
+    void refund(const Order&, double amount);
+    void send_receipt(const Order&);
+};
+
+class ShippingService {
+    Address get_address(const Order&);
+    void    schedule(const Order&);
+    void    track(const Order&);
+};
+```
+
+---
+
+## 🔬 Under the Hood — Cohesion Impacts Build
+
+```
+Low cohesion class → many includes → large compilation unit
+
+class GodClass {
+    #include "database.hpp"    // needs db
+    #include "network.hpp"     // needs network
+    #include "graphics.hpp"    // needs graphics
+    #include "audio.hpp"       // needs audio
+};
+
+Every file that uses GodClass.hpp:
+  Transitively includes all four heavy headers
+  Build: 60s per TU
+
+High cohesion class → minimal includes:
+class UserRepository {
+    #include "user.hpp"        // only user types
+};
+// Build: 2s per TU
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Monitoring service refactored from low to high cohesion:**
+
+```cpp
+// ❌ Before: MonitoringService does everything
+class MonitoringService {
+    // Data collection (concern 1)
+    std::vector<Metric> collect_cpu_metrics();
+    std::vector<Metric> collect_memory_metrics();
+    std::vector<Metric> collect_disk_metrics();
+
+    // Storage (concern 2)
+    void store_to_db(const std::vector<Metric>& m);
+    void store_to_file(const std::vector<Metric>& m);
+
+    // Alerting (concern 3)
+    void check_thresholds(const Metric& m);
+    void send_pagerduty_alert(const std::string& msg);
+    void send_slack_notification(const std::string& msg);
+
+    // Visualization (concern 4)
+    std::string render_dashboard();
+    void        export_csv();
+    void        generate_report();
+
+    // Scheduling (concern 5)
+    void schedule_collection(int interval_ms);
+    void run_event_loop();
+};
+// Every developer touches MonitoringService → merge conflicts constantly
+// Testing: impossible to test alerting without running collectors
+// Adding Datadog integration: modify MonitoringService → risk everything
+
+// ✅ After: decomposed by cohesion
+class MetricCollector {           // concern 1: collection only
+    MetricBatch collect() const;
+};
+
+class MetricStorage {             // concern 2: persistence only
+    void store(const MetricBatch&);
+};
+
+class AlertManager {              // concern 3: alerting only
+    void evaluate(const MetricBatch&);
+};
+
+class DashboardRenderer {         // concern 4: visualization only
+    std::string render(const MetricBatch&);
+};
+
+class MonitoringOrchestrator {    // concern 5: coordination only
+    MetricCollector& collector_;
+    MetricStorage&   storage_;
+    AlertManager&    alerts_;
+    DashboardRenderer& dashboard_;
+
+    void run(int interval_ms) {
+        auto metrics = collector_.collect();
+        storage_.store(metrics);
+        alerts_.evaluate(metrics);
+    }
+};
+// Each class: one reason to change
+// Test MetricCollector without Storage: trivial
+// Add Datadog: new MetricStorage impl, zero other changes
+// 5 developers work in parallel, zero conflicts
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```
+"High cohesion always means small classes — agree?"
+```
+> **Disagree.** Cohesion is about **relatedness**, not size. A large class with 50 methods all related to matrix operations is highly cohesive. A tiny class with 3 unrelated methods is not. Size is a symptom — not the definition. That said, low cohesion usually produces large classes because unrelated things accumulate.
+
+**Trap 2:**
+```cpp
+class StringUtils {
+    static std::string trim(const std::string& s);
+    static std::string to_upper(const std::string& s);
+    static std::string to_lower(const std::string& s);
+    static std::vector<std::string> split(const std::string&, char);
+    static std::string join(const std::vector<std::string>&, char);
+};
+// What type of cohesion?
+```
+> **Communicational cohesion** — all methods operate on `std::string` data. Not coincidental (they're related to strings) and not functional (multiple operations). This is a common and acceptable pattern for stateless utility namespaces. In modern C++: prefer free functions in a namespace over static methods in a class.
+
+**Trap 3:**
+```
+"Is a class with only one public method always highly cohesive?"
+```
+> **Not necessarily.** A class with one public method that internally does 10 unrelated things (database + email + logging + payment + UI) is not cohesive — the low cohesion is hidden inside. Cohesion applies at all levels: class, method, and function body. A 200-line method with 10 responsibilities is low cohesion at the function level.
+
+**Trap 4:**
+```
+"Can you have high cohesion and high coupling simultaneously?"
+```
+> **Yes.** A class can be internally focused (high cohesion) but depend on many external modules (high coupling). Example: a `ReportGenerator` that only generates reports (high cohesion) but directly imports `Database`, `EmailService`, `PDFLibrary`, `FileSystem` (high coupling). Goal: high cohesion AND low coupling — they're orthogonal properties.
+
+**Trap 5:**
+```cpp
+namespace config {
+    constexpr int MAX_CONNECTIONS = 100;
+    constexpr int TIMEOUT_MS      = 5000;
+    constexpr int RETRY_COUNT     = 3;
+    constexpr std::string_view LOG_LEVEL = "INFO";
+}
+// High or low cohesion?
+```
+> **High cohesion** — all constants are configuration values for the same system. They're related by purpose (application configuration). This is communicational cohesion elevated to temporal/organizational cohesion — all serve as compile-time configuration for one application. No concerns mixed.
+
+---
+
+## 📊 Cohesion Types Quick Reference
+
+| Type | Key Characteristic | Cohesion Level | C++ Example |
+|---|---|---|---|
+| Coincidental | No relationship | ❌ Worst | `class Utils` dump |
+| Logical | Same category | 🔴 Poor | `class IOManager` |
+| Temporal | Same time | 🟡 Fair | Startup/shutdown class |
+| Procedural | Same sequence | 🟡 Fair | Step-based processor |
+| Communicational | Same data | 🟢 Good | `UserRepository` |
+| Sequential | Pipeline | 🟢 Good | `ImagePipeline` |
+| Functional | Single purpose | ✅ Best | `CircularBuffer<T>` |
+
+---

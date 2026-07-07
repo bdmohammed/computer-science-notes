@@ -1,0 +1,969 @@
+---
+title: PostgreSQL Join Internals
+slug: computer-query-languages/postgresql/joins/join-internals
+description: Master Hash Join, Merge Join, and Nested Loop — how the planner chooses algorithms, memory constraints, and how to optimize slow queries using EXPLAIN.
+sidebar:
+  label: "Join Internals"
+  badge:
+    text: Performance
+    variant: tip
+tags: [postgresql, join-algorithms, hash-join, merge-join, nested-loop, explain-analyze, optimization]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 Join Internals — Hash, Merge, Nested Loop
+
+> **Every JOIN you write becomes one of three physical algorithms: Nested Loop for small/indexed data, Hash Join for large unsorted data, or Merge Join for large pre-sorted data. The planner picks the cheapest one using statistics.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of Join Algorithms as **DSA strategies**:
+- **Nested Loop** = Brute Force $O(N \times M)$ (or $O(N \log M)$ with index)
+- **Hash Join** = HashMap Lookup $O(N + M)$
+- **Merge Join** = Two-Pointer Merge on Sorted Arrays $O(N + M)$
+</Aside>
+
+---
+
+## ⚙️ The Decision Process
+
+PostgreSQL doesn't pick randomly. It estimates I/O + CPU cost for each strategy using table statistics (`pg_statistics`).
+
+```
+Your SQL:                     What Postgres actually runs:
+                              
+SELECT *                      ┌─────────────────────────┐
+FROM   users u                │   QUERY PLANNER         │
+JOIN   orders o               │   reads pg_statistics   │
+  ON u.id = o.user_id         │   estimates costs       │
+                              │   picks algorithm       │
+                              └──────────┬──────────────┘
+                                         │
+                              ┌──────────▼──────────────┐
+                              │  one of three:          │
+                              │  Nested Loop?           │
+                              │  Hash Join?             │
+                              │  Merge Join?            │
+                              └─────────────────────────┘
+
+[Query with JOIN]
+        ↓
+   [Cost-Based Optimizer checks: stats, indexes, row estimates, work_mem]
+        ├── Small outer + Index on inner? → 🔄 NESTED LOOP
+        ├── Large tables, unsorted, enough RAM? → 🔑 HASH JOIN
+        └── Both inputs pre-sorted (index/ORDER BY)? → 🔗 MERGE JOIN
+        ↓
+   [Executor runs algorithm → streams results]
+```
+
+<Aside type="caution">
+**Key Insight**: Stale statistics → Wrong row estimates → Wrong algorithm choice → Production slowdown.  
+Always run `ANALYZE` after bulk data changes.
+</Aside>
+
+---
+
+## 1️⃣ The Big Three — Comparison
+
+```
+┌─────────────────┬──────────────────┬───────────────────┬──────────────────┐
+│                 │  NESTED LOOP     │  HASH JOIN        │  MERGE JOIN      │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ DSA equivalent  │ Brute force O(n²)│ HashMap probe     │ Merge sort step  │
+│                 │ → O(n log m)     │ O(n+m)            │ O(n+m) sorted    │
+│                 │ with index       │                   │                  │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ Needs index?    │ ✅ best with one │ ❌ no             │ ❌ no            │
+│                 │ ❌ slow without  │                   │ (but needs sort) │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ Needs sort?     │ ❌ no            │ ❌ no             │ ✅ yes           │
+│                 │                  │                   │ (or index)       │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ Memory usage    │ O(1)             │ O(smaller table)  │ O(n log n)       │
+│                 │ (streams rows)   │ for hash table    │ if sort needed   │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ Best for        │ Small outer +    │ Large tables,     │ Large tables,    │
+│                 │ indexed inner    │ no index,         │ already sorted   │
+│                 │                  │ equality join     │ or indexed       │
+├─────────────────┼──────────────────┼───────────────────┼──────────────────┤
+│ Supports        │ ✅ all           │ ❌ equality only  │ ✅ all           │
+│ non-equality?   │ (<, >, BETWEEN)  │ (= only)          │ (<, >, ranges)   │
+└─────────────────┴──────────────────┴───────────────────┴──────────────────┘
+```
+
+---
+
+## 2️⃣ Nested Loop Join — The Brute Force
+
+### How It Works
+For every row in the **Outer** table, scan the **Inner** table.
+
+```text
+FOR each row in outer_table:         ← outer loop: O(n)
+  FOR each row in inner_table:       ← inner loop: O(m)
+    IF join_condition matches:
+      emit combined row
+
+Total: O(n × m) without index
+       O(n × log m) with index on inner table
+```
+
+```
+Without index:
+                                        inner table scan
+outer row 1 ──────────────────────────► [scan all m rows]
+outer row 2 ──────────────────────────► [scan all m rows]
+outer row 3 ──────────────────────────► [scan all m rows]
+...
+outer row n ──────────────────────────► [scan all m rows]
+Cost: n × m comparisons 💀
+
+With index on inner table join column:
+outer row 1 ──► B-Tree lookup ──► [jump to matching rows] O(log m)
+outer row 2 ──► B-Tree lookup ──► [jump to matching rows] O(log m)
+...
+outer row n ──► B-Tree lookup ──► [jump to matching rows] O(log m)
+Cost: n × log m ✅ much better
+```
+
+### When Postgres Picks Nested Loop
+
+```
+✅ Outer table is SMALL (few rows)
+✅ Inner table has INDEX on join column
+✅ Query has LIMIT (can stop early)
+✅ Non-equality join condition (>, <, BETWEEN)
+✅ After filtering, very few rows remain
+```
+
+<Code lang="sql" title="When Postgres picks Nested Loop" code={`
+-- Typical Nested Loop scenario
+SELECT u.name, o.amount
+FROM   users u                           -- small outer (1 user)
+JOIN   orders o ON u.id = o.user_id      -- indexed inner
+WHERE  u.id = 42;                        -- outer filtered to 1 row
+
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id
+WHERE u.id = 42;
+
+-- Output:
+-- Nested Loop
+--   -> Index Scan on users u          ← outer: 1 row
+--        Index Cond: (id = 42)
+--   -> Index Scan on orders o         ← inner: index lookup
+--        Index Cond: (user_id = 42)
+`} />
+
+### Nested Loop Memory — Why It's Lean
+
+```
+Nested Loop processes ONE outer row at a time.
+No need to load either table into memory.
+Memory footprint: O(1) — just current rows being compared.
+
+This is why Nested Loop + index is preferred for:
+    → OLTP queries (single user's data)
+    → Queries with tight WHERE filters
+    → Queries with LIMIT (stops after k rows found)
+```
+
+
+<Aside type="note">
+**Memory Footprint**: $O(1)$. It streams rows one by one. This is why it's preferred for OLTP queries with tight `WHERE` filters or `LIMIT`.
+</Aside>
+
+<Aside type="tip">
+> 🎯 **DSA connection:** Nested Loop = two nested for-loops. Brute force O(n²). With index = binary search for each outer row → O(n log m). Classic interview: "how do you optimize a nested loop?" → replace inner linear scan with hash map or binary search. That's exactly what Hash Join and Merge Join do at the database level
+</Aside>
+---
+
+## 3️⃣ Hash Join — The Workhorse for Large Tables
+
+### How It Works
+```
+Phase 1 — BUILD (one-time cost):
+    Read SMALLER table (build side)
+    For each row: hash(join_column) → store in hash table
+    
+    hash_table = {
+        user_id=1 → [row data for user 1],
+        user_id=2 → [row data for user 2],
+        ...
+    }
+    Cost: O(m) — one scan of smaller table
+    Memory: O(m) — entire smaller table in RAM
+
+Phase 2 — PROBE (per-row cost):
+    Read LARGER table (probe side) row by row
+    For each row: hash(join_column) → lookup in hash table
+    If found → emit combined row
+    If not → skip (INNER JOIN) or emit NULL (LEFT JOIN)
+    
+    Cost: O(n) — one scan of larger table
+    Lookup: O(1) per row — hash table lookup
+
+Total: O(n + m) ✅
+```
+
+```
+Visual:
+
+Build phase (orders → hash table):
+    orders table          hash table in RAM
+    ┌────┬─────────┐      ┌──────────────────────────────┐
+    │ id │ user_id │      │ bucket[hash(1)] → order rows │
+    │  1 │    1    │ ──►  │ bucket[hash(2)] → order rows │
+    │  2 │    1    │ ──►  │ bucket[hash(9)] → order rows │
+    │  3 │    2    │ ──►  └──────────────────────────────┘
+    │  4 │    9    │ ──►
+    └────┴─────────┘
+
+Probe phase (users → lookup):
+    user id=1 → hash(1) → hit bucket → emit matches ✅
+    user id=2 → hash(2) → hit bucket → emit match  ✅
+    user id=3 → hash(3) → miss       → skip (INNER) ✅
+    user id=4 → hash(4) → miss       → skip (INNER) ✅
+```
+
+### When Postgres Picks Hash Join
+
+```
+✅ Both tables are LARGE
+✅ No index on join column
+✅ Equality join condition (= only)
+✅ Smaller table fits in work_mem
+✅ No useful sort order available
+```
+
+```sql
+-- Typical Hash Join scenario
+SELECT u.name, o.amount
+FROM   users  u                 -- 1M rows
+JOIN   orders o ON u.id = o.user_id  -- 5M rows, no index on user_id
+
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id;
+
+-- Output:
+-- Hash Join
+--   Hash Cond: (o.user_id = u.id)
+--   -> Seq Scan on orders o        ← probe side (larger)
+--   -> Hash                        ← build phase
+--        -> Seq Scan on users u    ← build side (smaller)
+```
+
+### Hash Join Memory — The Critical Constraint
+
+```
+Hash table must fit in work_mem (default 4MB).
+
+If smaller table > work_mem:
+    Hash table SPILLS TO DISK
+    Postgres splits into BATCHES:
+    
+    Batch 1: hash rows with hash % 4 == 0 → disk
+    Batch 2: hash rows with hash % 4 == 1 → disk
+    Batch 3: hash rows with hash % 4 == 2 → disk
+    Batch 4: hash rows with hash % 4 == 3 → disk
+    
+    Process one batch at a time in memory
+    Cost: multiple disk I/O passes 💀 much slower
+
+EXPLAIN output reveals spilling:
+    Hash
+        Buckets: 1024  Batches: 8  ← Batches > 1 = disk spill! ❌
+        Memory Usage: 4096kB
+```
+
+```sql
+-- Fix: increase work_mem for this session
+SET work_mem = '256MB';
+
+-- Re-run query
+EXPLAIN (ANALYZE, BUFFERS) SELECT ...;
+-- Hash
+--   Buckets: 32768  Batches: 1  ← Batches=1 = all in RAM ✅
+--   Memory Usage: 128MB
+```
+
+```text
+Build Phase (Orders → Hash Table):
+Hash Table in RAM:
+{
+  user_id=1: [Order A, Order B],
+  user_id=2: [Order C]
+}
+
+Probe Phase (Users → Lookup):
+User 1 → Hash(1) → Hit! → Emit Orders A, B
+User 2 → Hash(2) → Hit! → Emit Order C
+User 3 → Hash(3) → Miss! → Skip
+```
+
+<Code lang="sql" title="When Postgres picks Hash Join" code={`-- Scenario: Large tables, NO index on join column
+SELECT u.name, o.amount
+FROM   users  u                 -- 1M rows
+JOIN   orders o ON u.id = o.user_id;  -- 5M rows, no index
+
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id;
+
+-- Output:
+-- Hash Join
+--   Hash Cond: (o.user_id = u.id)
+--   -> Seq Scan on orders o        ← Probe side (Larger)
+--   -> Hash                        ← Build phase
+--        -> Seq Scan on users u    ← Build side (Smaller)`} />
+
+### ⚠️ The Memory Trap: Spilling to Disk
+The hash table **must** fit in `work_mem` (default 4MB). If it doesn't, Postgres splits it into **Batches** and writes to disk.
+
+```text
+EXPLAIN Output Warning:
+Hash
+  Buckets: 1024  Batches: 8  ← Batches > 1 means Disk I/O! 💀
+  Memory Usage: 4096kB
+```
+
+<Code lang="sql" title="Fixing Hash Join Spills" code={`-- Check current work_mem
+SHOW work_mem;
+
+-- Increase for THIS session only (don't change global default!)
+SET work_mem = '256MB';
+
+-- Re-run query
+EXPLAIN (ANALYZE, BUFFERS) SELECT ...;
+
+-- Look for:
+-- Hash
+--   Buckets: 32768  Batches: 1  ← Batches=1 means All in RAM ✅`} />
+
+<Aside type="danger">
+**Production Tip**: Hash Join spilling to disk is a top cause of slow analytics queries. If you see `Batches: > 1` in `EXPLAIN ANALYZE`, increase `work_mem` for that session or add an index to switch to Nested Loop/Merge Join.
+</Aside>
+
+---
+
+## 4️⃣ Merge Join — The Sorted Specialist
+
+### How It Works
+Requires **both** inputs to be sorted on the join key. Uses two pointers to scan both tables simultaneously.
+
+```
+Prerequisite: BOTH inputs must be sorted on join column.
+
+Two pointers scan both sorted inputs simultaneously:
+
+users (sorted by id):    1  2  3  4  5
+orders (sorted by uid):  1  1  2  3  9
+
+Pointer A →              ↑
+Pointer B →              ↑
+
+Step 1: A=1, B=1 → MATCH → emit, advance B
+Step 2: A=1, B=1 → MATCH → emit, advance B (same A, next B)
+Step 3: A=1, B=2 → B > A → advance A
+Step 4: A=2, B=2 → MATCH → emit, advance B
+Step 5: A=3, B=3 → MATCH → emit, advance both
+Step 6: A=4, B=9 → B > A → advance A
+Step 7: A=5, B=9 → B > A → advance A
+Step 8: end of A → DONE
+
+Cost: O(n + m) if already sorted ✅
+      O(n log n + m log m) if sort needed ⚠️
+```
+
+```
+Visual: two-pointer merge
+
+users:  [1]──[2]──[3]──[4]──[5]
+         ↑                        pointer A
+orders: [1]──[1]──[2]──[3]──[9]
+         ↑                        pointer B
+
+Rule:
+  A == B → emit, try advancing B (handle duplicates)
+  A  < B → advance A (A is behind, catch up)
+  A  > B → advance B (B is behind, catch up)
+  Either exhausted → stop
+```
+
+### When Postgres Picks Merge Join
+
+```
+✅ Both inputs already sorted (from index scan)
+✅ Both tables are large
+✅ Join column is indexed on both sides
+✅ Query needs sorted output anyway (ORDER BY same column)
+✅ Non-equality conditions (ranges, <=, >=)
+✅ Unique join keys (no many duplicates to handle)
+```
+
+```sql
+-- Typical Merge Join scenario
+-- Both tables indexed on join columns
+CREATE INDEX idx_users_id    ON users(id);      -- already PK
+CREATE INDEX idx_orders_user ON orders(user_id);
+
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id
+ORDER BY u.id;
+
+-- Output:
+-- Merge Join
+--   Merge Cond: (u.id = o.user_id)
+--   -> Index Scan on users u       ← sorted by id via index ✅
+--   -> Index Scan on orders o      ← sorted by user_id via index ✅
+--        (no sort step needed — index provides sort order)
+```
+
+### Merge Join With Explicit Sort
+
+```sql
+-- No index → Postgres must sort first
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id;
+
+-- Output (no index on orders.user_id):
+-- Merge Join
+--   Merge Cond: (u.id = o.user_id)
+--   -> Index Scan on users u          ← already sorted ✅
+--   -> Sort                           ← must sort orders first ⚠️
+--        Sort Key: o.user_id
+--        -> Seq Scan on orders o
+--
+-- Sort cost: O(m log m) added
+-- If sort spills to disk: even more expensive
+```
+
+### Merge Join Memory
+
+```
+Best case (both indexed):
+  Memory: O(1) — two pointers, streams both inputs
+  Fastest possible for large sorted data
+
+Sort needed:
+  Memory: O(m) for sort buffer (work_mem)
+  If m > work_mem → external merge sort to disk 💀
+
+Duplicate handling (one-to-many):
+  Postgres marks position in inner stream
+  Rewinds inner stream for each duplicate outer row
+  Memory: O(duplicates) — must buffer duplicate inner rows
+  Many duplicates → degrades toward O(n×m) 💀
+```
+
+
+```text
+Users (Sorted):   1   2   3   4
+Orders (Sorted):  1   1   2   3
+
+Ptr U=1, Ptr O=1 → Match! Emit. Advance O.
+Ptr U=1, Ptr O=1 → Match! Emit. Advance O.
+Ptr U=1, Ptr O=2 → U < O. Advance U.
+Ptr U=2, Ptr O=2 → Match! Emit. Advance both.
+...
+Cost: O(N + M) ✅
+```
+
+<Code lang="sql" title="When Postgres picks Merge Join" code={`-- Scenario: Both tables have indexes on join columns
+CREATE INDEX idx_orders_user ON orders(user_id);
+
+EXPLAIN SELECT u.name, o.amount
+FROM users u 
+JOIN orders o ON u.id = o.user_id
+ORDER BY u.id;  -- Hint: Output needs to be sorted
+
+-- Output:
+-- Merge Join
+--   Merge Cond: (u.id = o.user_id)
+--   -> Index Scan on users u       ← Sorted by PK
+--   -> Index Scan on orders o      ← Sorted by Index`} />
+
+<Aside type="note">
+**DSA Connection**: This is exactly the "Merge" step in Merge Sort. If the data isn't already sorted (via Index), Postgres must add a **Sort** node first, which costs $O(N \log N)$.
+</Aside>
+
+---
+
+## 5️⃣ How the Planner Decides — Cost Model
+
+```
+Postgres Query Planner uses COST-BASED OPTIMIZATION.
+It estimates the cost of each algorithm and picks cheapest.
+
+Cost formula (simplified):
+  cost = seq_page_cost × pages_read
+       + random_page_cost × random_reads
+       + cpu_tuple_cost × rows_processed
+       + cpu_operator_cost × comparisons
+
+Default cost constants:
+  seq_page_cost    = 1.0   (sequential disk read)
+  random_page_cost = 4.0   (random disk read = 4× more expensive)
+  cpu_tuple_cost   = 0.01  (CPU cost per row)
+  cpu_operator_cost= 0.0025
+
+SSD vs HDD tuning:
+  On SSD: random_page_cost should be ~1.1 (random ≈ sequential)
+  On HDD: random_page_cost = 4.0 (default — random is 4× slower)
+```
+
+```sql
+-- Check current cost settings
+SHOW seq_page_cost;
+SHOW random_page_cost;
+
+-- Tune for SSD (reduces preference for seq scans, allows more index scans)
+SET random_page_cost = 1.1;
+```
+
+### Statistics — What the Planner Reads
+
+```
+Planner reads pg_statistics for each table:
+  n_distinct    → how many unique values (cardinality)
+  correlation   → how sorted the data is on disk
+  most_common_vals → most frequent values + their frequency
+  histogram_bounds → value distribution (for range estimates)
+
+These stats determine:
+  → Estimated row count for each condition
+  → Which join algorithm is cheapest
+  → Which table is "smaller" for Hash Join build side
+  → Whether index scan beats seq scan
+```
+
+```sql
+-- See what planner knows about a column
+SELECT
+  attname,
+  n_distinct,
+  correlation,
+  most_common_vals,
+  most_common_freqs
+FROM pg_stats
+WHERE tablename = 'orders'
+  AND attname   = 'user_id';
+
+-- n_distinct > 0  → exact count of distinct values
+-- n_distinct < 0  → fraction of rows that are distinct (-1 = all unique)
+-- correlation ≈ 1 → data physically sorted on disk (index scan cheap)
+-- correlation ≈ 0 → data random on disk (random I/O = index less useful)
+```
+
+```sql
+-- Update statistics (run after bulk inserts)
+ANALYZE orders;
+ANALYZE users;
+
+-- Or analyze everything
+ANALYZE;
+
+-- Auto-analyze runs in background (autovacuum worker)
+-- But after massive data changes → manual ANALYZE helps immediately
+```
+
+---
+
+## 6️⃣ Reading EXPLAIN — Decode the Plan
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT u.name, o.amount
+FROM   users  u
+JOIN   orders o ON u.id = o.user_id
+WHERE  o.amount > 1000;
+```
+
+```
+-- Full EXPLAIN ANALYZE output breakdown:
+
+Hash Join                                    ← algorithm chosen
+  (cost=230.00..580.00                       ← estimated cost range
+   rows=1500                                 ← estimated output rows
+   width=36)                                 ← avg bytes per output row
+  (actual time=15.234..45.123               ← actual start..end time (ms)
+   rows=1423                                 ← actual rows returned
+   loops=1)                                  ← how many times node ran
+  Hash Cond: (o.user_id = u.id)             ← join condition
+  Buffers: shared hit=234 read=89            ← cache hits vs disk reads
+  →  Seq Scan on orders o                   ← probe side
+       (cost=0.00..310.00 rows=15000)
+       (actual time=0.012..12.34 rows=15000)
+       Filter: (amount > 1000)              ← WHERE applied here
+       Rows Removed by Filter: 35000        ← how many rows filtered out
+  →  Hash                                  ← build phase
+       Buckets: 4096  Batches: 1            ← Batches=1 ✅ in memory
+       Memory Usage: 2048kB                 ← hash table size
+       →  Seq Scan on users u              ← build side scan
+            (cost=0.00..180.00 rows=10000)
+```
+
+### Key Numbers to Watch
+
+```
+┌─────────────────────────┬──────────────────────────────────────────┐
+│ What to look at         │ What it means                           │
+├─────────────────────────┼──────────────────────────────────────────┤
+│ estimated vs actual rows│ Big difference = stale stats → ANALYZE  │
+│ Batches: > 1            │ Hash table spilling to disk → work_mem  │
+│ Sort Method: external   │ Sort spilling to disk → work_mem        │
+│ Buffers: read=high      │ Cache misses → data not in shared_buffers│
+│ Rows Removed by Filter  │ Index could help if very high           │
+│ loops=N on inner node   │ Nested Loop inner: ran N times          │
+│ actual time high        │ That node is the bottleneck             │
+└─────────────────────────┴──────────────────────────────────────────┘
+```
+
+```sql
+-- Quick diagnosis queries
+
+-- Find queries with bad row estimates (planner wrong)
+SELECT query, rows, plan_rows,
+  ABS(rows - plan_rows) AS estimate_error
+FROM pg_stat_statements
+JOIN ... -- join with plan data
+ORDER BY estimate_error DESC;
+
+-- Check if stats are stale
+SELECT relname, last_analyze, n_live_tup, n_dead_tup
+FROM   pg_stat_user_tables
+WHERE  last_analyze < NOW() - INTERVAL '1 day'
+  AND  n_live_tup > 100000;
+-- Large tables not analyzed recently → bad estimates → wrong plan
+```
+
+---
+
+
+## 7️⃣ Forcing Join Algorithms — When Planner Gets It Wrong
+
+```sql
+-- Disable specific algorithms to force planner's hand
+-- (use in testing/debugging — not in production code)
+
+SET enable_hashjoin   = OFF;    -- force Merge or Nested Loop
+SET enable_mergejoin  = OFF;    -- force Nested Loop or Hash
+SET enable_nestloop   = OFF;    -- force Hash or Merge
+
+-- Example: planner chose Hash Join but you think Merge is better
+SET enable_hashjoin = OFF;
+EXPLAIN SELECT u.name, o.amount
+FROM users u JOIN orders o ON u.id = o.user_id;
+-- Now shows Merge Join plan
+
+-- Reset after testing
+SET enable_hashjoin  = ON;
+SET enable_mergejoin = ON;
+SET enable_nestloop  = ON;
+
+-- Better approach: fix root cause
+-- Stale stats?  → ANALYZE
+-- Wrong estimate? → CREATE STATISTICS (for correlated columns)
+-- Bad random_page_cost? → tune for SSD
+```
+
+---
+
+## 8️⃣ Three Algorithms — Decision Flowchart
+
+```
+Query has JOIN condition?
+│
+├── Non-equality? (>, <, BETWEEN, !=)
+│     │
+│     ├── Inner table has index?   → Nested Loop + Index Scan ✅
+│     └── No index?                → Merge Join (sort first) or Nested Loop
+│
+└── Equality? (=)
+      │
+      ├── Outer table tiny? (< few hundred rows)
+      │     └── Inner table indexed?  → Nested Loop ✅
+      │
+      ├── Both tables large?
+      │     ├── Both indexed on join col? → Merge Join ✅
+      │     ├── One or both not indexed?  → Hash Join ✅
+      │     └── Hash table fits in work_mem? → Hash Join in-memory ✅
+      │                                        else Hash Join + batches ⚠️
+      │
+      └── Query has ORDER BY on join column?
+            └── Both indexed? → Merge Join (output already sorted) ✅
+```
+
+---
+
+## 9️⃣ Real-Life Optimization Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Speed Up Slow Hash Join (Missing FK Index)" icon="rocket">
+    ```sql
+    -- ❌ Slow: Hash Join because no index on FK
+    EXPLAIN ANALYZE
+    SELECT u.name, SUM(o.amount)
+    FROM users u JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.name;
+    -- Hash Join — Seq Scan on orders (500K rows) 💀
+
+    -- ✅ Fix: add FK index → switches to Nested Loop + Index Scan
+    CREATE INDEX idx_orders_user_id ON orders(user_id);
+
+    EXPLAIN ANALYZE
+    SELECT u.name, SUM(o.amount)
+    FROM users u JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.name;
+    -- Nested Loop — Index Scan on orders ✅ 10× faster
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Fix Hash Join Spilling to Disk" icon="shield">
+    ```sql
+    -- ❌ Slow: hash table spilling (Batches: 8)
+    EXPLAIN (ANALYZE, BUFFERS)
+    SELECT * FROM large_table_a a JOIN large_table_b b ON a.id = b.a_id;
+    -- Hash  Buckets: 4096  Batches: 8  ← spilling! 💀
+
+    -- ✅ Fix option 1: increase work_mem for this session
+    SET work_mem = '512MB';
+    -- Hash  Buckets: 65536  Batches: 1  ← in memory ✅
+
+    -- ✅ Fix option 2: add index (switches to Nested Loop or Merge Join)
+    CREATE INDEX idx_b_a_id ON large_table_b(a_id);
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Enable Merge Join with Covering Index" icon="information">
+    ```sql
+    -- Make Merge Join free (no sort needed — index provides order)
+    CREATE INDEX idx_orders_user_amount
+    ON orders(user_id, amount);    -- index sorted by user_id
+
+    CREATE INDEX idx_users_id
+    ON users(id);                  -- already PK, sorted
+
+    -- Query that benefits from Merge Join
+    SELECT u.name, o.amount
+    FROM   users u
+    JOIN   orders o ON u.id = o.user_id
+    ORDER BY u.id;                 -- same sort order as join + output ✅
+    -- Both index scans → Merge Join → output already sorted → no extra ORDER BY cost
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Small Lookup Table Hint" icon="information">
+    ```sql
+    -- When planner underestimates small table size
+    -- and incorrectly chooses Hash Join over Nested Loop
+
+    -- Check: is the small table really being treated as build side?
+    EXPLAIN SELECT u.name, c.code
+    FROM   users u
+    JOIN   country_codes c ON u.country = c.code;
+    -- Should be: Nested Loop, country_codes as inner (only 250 rows)
+    -- If planner picks Hash Join → stats stale on country_codes
+
+    ANALYZE country_codes;   -- update stats
+    -- Now planner sees correct row count → picks Nested Loop ✅
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Join Order Hint via CTE" icon="information">
+    ```sql
+    -- Postgres sometimes picks wrong join order for 3+ table joins
+    -- CTEs with MATERIALIZED force a specific order
+
+    -- Force orders filtered FIRST, then join to users
+    WITH filtered_orders AS MATERIALIZED (
+    SELECT user_id, SUM(amount) AS total
+    FROM   orders
+    WHERE  status = 'delivered'
+        AND  created_at >= '2024-01-01'
+    GROUP BY user_id
+    )
+    SELECT u.name, fo.total
+    FROM   users u
+    JOIN   filtered_orders fo ON u.id = fo.user_id
+    WHERE  fo.total > 10000;
+
+    -- MATERIALIZED forces CTE to execute independently first
+    -- Postgres can't "push down" conditions into it
+    -- Result: orders filtered to small set → cheap Nested Loop join ✅
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+```sql
+-- Setup: create tables with different sizes to trigger different algorithms
+CREATE TEMP TABLE t_small (id INT, val TEXT);
+CREATE TEMP TABLE t_large (id INT, small_id INT, data TEXT);
+
+INSERT INTO t_small
+SELECT i, 'val_' || i FROM generate_series(1, 100) i;
+
+INSERT INTO t_large
+SELECT i, (RANDOM() * 100)::INT, repeat('x', 50)
+FROM generate_series(1, 100000) i;
+
+-- 1. No index → Hash Join
+EXPLAIN SELECT s.val, l.data
+FROM t_small s JOIN t_large l ON s.id = l.small_id;
+-- Hash Join ✅ (no index, large table)
+
+-- 2. Add index → may switch to Nested Loop
+CREATE INDEX idx_large_small_id ON t_large(small_id);
+ANALYZE t_large;
+
+EXPLAIN SELECT s.val, l.data
+FROM t_small s JOIN t_large l ON s.id = l.small_id;
+-- Nested Loop or Hash Join depending on row estimates ✅
+
+-- 3. Force different algorithms
+SET enable_hashjoin = OFF;
+EXPLAIN SELECT s.val, l.data
+FROM t_small s JOIN t_large l ON s.id = l.small_id;
+-- Now Merge Join or Nested Loop
+
+SET enable_hashjoin = ON;   -- reset
+
+-- 4. See Hash Join spilling
+SET work_mem = '64kB';      -- artificially tiny
+EXPLAIN (ANALYZE) SELECT s.val, l.data
+FROM t_small s JOIN t_large l ON s.id = l.small_id;
+-- Hash  Batches: 4  ← spilling to disk 💀
+
+SET work_mem = '4MB';       -- reset to default
+
+-- 5. Check join order for 3 tables
+CREATE TEMP TABLE t_mid (id INT, large_id INT);
+INSERT INTO t_mid SELECT i, i * 1000 FROM generate_series(1, 1000) i;
+
+EXPLAIN SELECT s.val, m.id, l.data
+FROM t_small s
+JOIN t_mid   m ON s.id    = m.id
+JOIN t_large l ON m.large_id = l.id;
+-- Note which table is build side in Hash Join ✅
+-- Smallest table should be build side
+
+-- 6. Read actual vs estimated rows
+EXPLAIN (ANALYZE)
+SELECT s.val, l.data
+FROM t_small s JOIN t_large l ON s.id = l.small_id
+WHERE l.small_id BETWEEN 10 AND 20;
+-- Compare (rows=X) vs (actual rows=Y)
+-- Similar = good estimates ✅
+-- Very different = stale stats → run ANALYZE ✅
+```
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+```
+| Question | Answer |
+|---|---|
+| Three join algorithms? | Nested Loop, Hash Join, Merge Join |
+| Nested Loop complexity? | O(n×m) without index, O(n log m) with index on inner |
+| Hash Join complexity? | O(n+m) — build hash table + probe |
+| Merge Join complexity? | O(n+m) if sorted, O(n log n + m log m) if sort needed |
+| Which supports non-equality? | Nested Loop (all), Merge Join (all), Hash Join (equality = only) |
+| Hash Join memory issue? | Build table > work_mem → spills to disk → Batches > 1 |
+| How to fix Hash Join spill? | Increase work_mem or add index to switch algorithm |
+| How planner decides? | Cost-based: estimates row counts from pg_statistics, picks cheapest |
+| Stale stats → what happens? | Wrong row estimates → wrong algorithm → slow query |
+| Fix stale stats? | Run `ANALYZE table` or `ANALYZE` globally |
+| Merge Join needs? | Both inputs sorted on join column — from index or explicit Sort node |
+| Nested Loop best case? | Small outer table + index on inner join column |
+| Hash Join best case? | Large tables, no index, equality condition, fits in work_mem |
+| Merge Join best case? | Both tables large + indexed on join column + sorted output needed |
+| Force algorithm in testing? | `SET enable_hashjoin = OFF` etc. — never in production |
+| EXPLAIN Batches: 4 meaning? | Hash table spilled to disk in 4 batches — increase work_mem |
+```
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Algorithm Selection Flowchart
+```text
+Is Join Condition Equality (=)?
+├─ NO (> , <, BETWEEN)
+│  ├─ Inner has Index? → Nested Loop ✅
+│  └─ No Index?        → Merge Join (Sort first) or Nested Loop
+│
+└─ YES (=)
+   ├─ Outer Table Tiny? (< 100 rows)
+   │  └─ Inner Indexed? → Nested Loop ✅
+   │
+   ├─ Both Tables Large?
+   │  ├─ Both Indexed?  → Merge Join ✅
+   │  └─ No Index?      → Hash Join ✅
+   │     └─ Fits in work_mem? → In-Memory ✅
+   │     └─ Too Big?            → Disk Spill ⚠️
+```
+
+### Troubleshooting Checklist
+1. [ ] Run `EXPLAIN (ANALYZE, BUFFERS)`
+2. [ ] Check `Estimated Rows` vs `Actual Rows`. If different → `ANALYZE`.
+3. [ ] Check `Batches`. If `> 1` → Increase `work_mem`.
+4. [ ] Check `Rows Removed by Filter`. If high → Add Index.
+5. [ ] Check `Join Type`. If `Seq Scan` on large table → Add Index.
+
+<Aside type="caution">
+**Final Rule**: 
+- **OLTP** (User profiles, single orders) → Aim for **Nested Loop** (Indexes are king).
+- **Analytics** (Reports, aggregations) → Aim for **Hash Join** or **Merge Join** (Parallelism and throughput).
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: You see "Batches: 4" in a Hash Join EXPLAIN. What does it mean?
+A) The join failed
+B) The hash table spilled to disk 4 times
+C) There are 4 indexes used
+
+Q2: Which join algorithm supports non-equality conditions like "ON A.val > B.val"?
+A) Hash Join
+B) Nested Loop
+C) Both
+
+Q3: Why might a Nested Loop be faster than a Hash Join for a query returning 1 row?
+A) Nested Loop has less overhead (no build phase)
+B) Hash Join requires sorting
+C) Nested Loop uses more CPU
+
+Q4: How do you force Postgres to update its statistics?
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: B) The hash table exceeded work_mem and was split into 4 disk batches.
+   Fix: Increase work_mem.
+
+Q2: B) Nested Loop (and Merge Join). Hash Join ONLY supports equality (=).
+
+Q3: A) Hash Join has a "Build" phase where it scans the whole inner table 
+   to create the hash map. Nested Loop stops as soon as it finds the match.
+
+Q4: Run the ANALYZE command.
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice reading `EXPLAIN ANALYZE` output on your own tables.
+2. ✅ Identify queries with `Batches > 1` and tune `work_mem`.
+3. ✅ Ensure Foreign Keys have indexes to enable Nested Loops.
+4. ✅ Run `ANALYZE` after bulk imports.
+
+Mastering join internals turns you from a "SQL writer" into a **Database Engineer**. 🐘⚡
+</Aside>

@@ -1,0 +1,311 @@
+---
+title: JavaScript Advanced Error Rethrowing & Chaining
+slug: computer-languages/javascript/runtime/error-rethrowing
+description: Master JS error chaining, cause preservation, and layered architecture patterns for robust debugging.
+sidebar:
+  label: "Error Chaining"
+  badge:
+    text: Best Practices
+    variant: tip
+tags: [javascript, error-handling, rethrowing, cause-chain, interview]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🔄 Rethrowing Errors in JavaScript
+
+> In Java, you choose between `throw e` (preserve trace) and `throw new Ex(e)` (wrap).  
+> In **JavaScript**, the concept is similar, but we rely on the **`cause`** property (ES2022) to maintain the chain.  
+> Rethrowing allows you to add context (like "User ID 123 failed") while keeping the original technical error intact.
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+Think of Error Chaining as a **Breadcrumb Trail**.  
+1. Low-level error happens (e.g., Network Fail).  
+2. Mid-layer catches it, adds context ("API Call Failed"), and attaches the original as `cause`.  
+3. Top-layer catches it, maps to HTTP 500.  
+✅ **Key Goal**: Never lose the root cause.
+</Aside>
+
+---
+
+## 🔬 Four Forms of Rethrowing
+
+### 1. Rethrow Same Object
+Preserves the exact stack trace. Useful for logging/metrics without changing the error type.
+
+<Code lang="js" title="Rethrow Same" code={`
+try {
+    await db.query();
+} catch (error) {
+    metrics.increment('db.errors');
+    console.error('DB Error observed', error);
+    throw error; // ✅ Stack trace points to original db.query()
+}
+`} />
+
+### 2. Wrap with Cause (Best Practice)
+Creates a new error with more context, linking the old one via `cause`.
+
+<Code lang="js" title="Wrap with Cause" code={`
+try {
+    await db.query();
+} catch (error) {
+    // ES2022 Standard: { cause: error }
+    throw new RepositoryError('Failed to fetch user', { cause: error });
+}
+// Stack Trace shows:
+// 1. RepositoryError (Current line)
+// 2. Caused by: Original DB Error
+`} />
+
+### 3. Rethrow Without Cause (Anti-Pattern)
+Loses the original stack trace and message. **Avoid this.**
+
+<Code lang="js" title="Bad Rethrow" code={`
+try {
+    await db.query();
+} catch (error) {
+    // ❌ Original error is GONE. Debugging is impossible.
+    throw new Error('Database failed'); 
+}
+`} />
+
+### 4. Transform Type
+Common in layered architectures (e.g., converting a generic Error to a specific `ValidationError`).
+
+<Code lang="js" title="Transform" code={`
+try {
+    validateInput(data);
+} catch (error) {
+    if (error instanceof SyntaxError) {
+        throw new ValidationError('Invalid JSON format', { cause: error });
+    }
+    throw error; // Re-throw unknown errors as-is
+}
+`} />
+
+---
+
+## 🔬 The `cause` Property (ES2022)
+
+Before ES2022, developers used custom properties like `error.original`. Now, `cause` is standard.
+
+<Code lang="js" title="Using Cause" code={`
+const original = new Error('Disk full');
+const wrapped = new Error('Save failed', { cause: original });
+
+console.log(wrapped.cause.message); // "Disk full"
+console.log(wrapped.cause === original); // true
+
+// Stack traces in modern Node/Browsers automatically show causes:
+// Error: Save failed
+//     at app.js:10
+//     [cause]: Error: Disk full
+//         at fs.js:50
+`} />
+
+<Aside type="note">
+**Compatibility**: Supported in Node.js 16.9+, Chrome 93+, Firefox 91+. For older environments, you may need to attach `error.original` manually.
+</Aside>
+
+---
+
+## 💻 Real-World Code — Layered Architecture
+
+In a clean architecture, each layer translates errors into its own domain language.
+
+<Code lang="js" title="Layered Error Handling" code={`
+// 1. Infrastructure Layer (DB)
+async function findUser(id) {
+    try {
+        return await db.collection('users').findOne({ id });
+    } catch (err) {
+        // Wrap DB driver error
+        throw new DatabaseError('Connection failed', { cause: err });
+    }
+}
+
+// 2. Service Layer (Business Logic)
+async function getUserProfile(id) {
+    try {
+        const user = await findUser(id);
+        if (!user) throw new NotFoundError(\`User $\{id\} not found\`);
+        return transform(user);
+    } catch (err) {
+        if (err instanceof DatabaseError) {
+            // Wrap DB error into Service error
+            throw new ServiceUnavailableError('Profile service down', { cause: err });
+        }
+        throw err; // Pass through other errors (like NotFound)
+    }
+}
+
+// 3. Controller Layer (HTTP)
+app.get('/profile/:id', async (req, res) => {
+    try {
+        const profile = await getUserProfile(req.params.id);
+        res.json(profile);
+    } catch (err) {
+        if (err instanceof NotFoundError) {
+            res.status(404).json({ error: err.message });
+        } else if (err instanceof ServiceUnavailableError) {
+            res.status(503).json({ error: 'Try again later' });
+        } else {
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
+    }
+});
+`} />
+
+---
+
+## ⚡ Async/Await & Rethrowing
+
+Rethrowing works naturally with `async/await`. The `catch` block pauses execution, allowing you to log or wrap before throwing again.
+
+<Code lang="js" title="Async Rethrow" code={`
+async function processOrder(orderId) {
+    try {
+        await validate(orderId);
+        await chargeCard(orderId);
+    } catch (error) {
+        // Log context-specific info
+        logger.error(\`Order $\{orderId\} failed\`, error);
+        
+        // Rethrow with context
+        throw new OrderProcessingError(\`Failed to process order $\{orderId\}\`, { 
+            cause: error,
+            orderId 
+        });
+    }
+}
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Losing the Stack Trace" icon="error">
+    ```js
+    try {
+        riskyOp();
+    } catch (e) {
+        throw new Error("Failed"); // 😱 Original stack trace lost!
+    }
+    
+    // ✅ Fix: Use 'cause'
+    throw new Error("Failed", { cause: e });
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Swallowing Errors in Finally" icon="caution">
+    ```js
+    try {
+        throw new Error("Primary");
+    } finally {
+        cleanup(); // If this throws, it OVERWRITES the primary error!
+    }
+    // Fix: Wrap cleanup in try-catch inside finally
+    ```
+  </Card>
+
+  <Card title="Trap 3: Infinite Recursion in Cause" icon="shield">
+    ```js
+    // Don't do this:
+    const e1 = new Error("A");
+    const e2 = new Error("B", { cause: e1 });
+    e1.cause = e2; // Circular reference
+    
+    // JSON.stringify(e2) will crash or truncate.
+    // Keep chains linear.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you preserve the original error in JS?" icon="information">
+    Use the `cause` property in the Error constructor: `new Error("Msg", { cause: originalError })`.
+  </Card>
+  
+  <Card title="Q: What is the difference between `throw e` and `throw new Error(...)`?" icon="approve-check">
+    `throw e` keeps the original stack trace exactly as is. `throw new Error` creates a new trace starting from the current line. Use `cause` to link them.
+  </Card>
+
+  <Card title="Q: Why wrap errors in a layered architecture?" icon="rocket">
+    To decouple layers. The Controller shouldn't know about Database drivers. Wrapping allows each layer to speak its own language while preserving the root cause for debugging.
+  </Card>
+
+  <Card title="Q: Is `error.cause` standard?" icon="caution">
+    Yes, it's part of the ES2022 standard. For older environments, use libraries like `verror` or attach `.original` manually.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+JS ERROR RETHROWING CHECKLIST
+
+1. Preserve Cause:
+   throw new Error("Context", { cause: err })
+
+2. Stack Traces:
+   - Modern engines show "Caused by:" automatically
+   - Always log the full error object, not just .message
+
+3. Layering:
+   - Infra: Technical Errors (SQL, Network)
+   - Service: Domain Errors (NotFound, Validation)
+   - API: HTTP Errors (404, 500)
+
+4. Anti-Patterns:
+   - Never throw new Error("Msg") without cause
+   - Never swallow errors in finally
+
+⚠️ Key Differences from Java:
+- No Checked Exceptions to worry about
+- 'cause' is a property, not a constructor argument (historically)
+- Stack traces are V8/Engine dependent
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Adopt ` { cause: err } ` in all new code.
+2. ✅ Update global error handlers to print `error.cause`.
+3. ✅ Create custom Error classes for your domains.
+4. ✅ Avoid circular causes.
+
+Mastering error chaining makes your production logs actually useful. ☕✨
+</Aside>
+```
+
+---
+
+## 🔄 Java Rethrowing → JS Rethrowing Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **throw e** | `throw error` | Identical behavior. |
+| **throw new Ex(msg, e)** | `throw new Error(msg, { cause: e })` | JS uses options object for cause. |
+| **printStackTrace()** | `console.error(error)` | JS engines handle formatting. |
+| **getCause()** | `error.cause` | Direct property access. |
+| **Suppressed Exceptions** | ❌ None | JS doesn't have built-in suppression array. |
+| **Checked Rethrow** | ❌ N/A | JS doesn't enforce throws clauses. |
+
+---
+
+🧠 **Interview Power Move**: When asked about rethrowing, always mention:  
+1. **The `cause` Property**: The modern standard for chaining.  
+2. **Layered Architecture**: Why we wrap errors (decoupling).  
+3. **Stack Trace Preservation**: When to use `throw e` vs `new Error`.  
+4. **Logging**: Why logging the full object matters.  
+5. **Circular References**: A potential pitfall in manual chaining.  
+
+---

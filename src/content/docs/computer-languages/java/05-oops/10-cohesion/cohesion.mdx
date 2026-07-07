@@ -1,0 +1,466 @@
+---
+title: Java Cohesion
+slug: computer-languages/java/oops/cohesion
+description: Master cohesion in Java — high vs low cohesion, Single Responsibility Principle (SRP), LCOM metrics, and architectural patterns for maintainable code.
+sidebar:
+  label: "Cohesion"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [java, cohesion, srp, clean-code, architecture, interview, lcom]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🧲 Cohesion in Java — Complete Guide
+
+> **Cohesion is how strongly related the responsibilities inside a single class are. High cohesion = class does one thing, does it completely. Low cohesion = class does many unrelated things. Cohesion and coupling are inverses — high cohesion naturally produces low coupling.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of cohesion as **focus**.  
+- **High Cohesion**: A scalpel — precise, specialized, effective for one task.  
+- **Low Cohesion**: A Swiss Army Knife — tries to do everything, master of none, hard to maintain.  
+**Goal**: "High Cohesion, Low Coupling."
+</Aside>
+
+---
+
+## 📋 Types of Cohesion — The Spectrum
+
+| Type | Description | Verdict | Example |
+|------|-------------|---------|---------|
+| **Coincidental** | Methods grouped randomly, no relationship | 🔴 Worst | `Utils` class with `sendEmail()`, `calculateTax()`, `resizeImage()` |
+| **Logical** | Grouped by category but unrelated execution | 🔴 Bad | `InputHandler` handling mouse, network, and file inputs |
+| **Temporal** | Grouped because they run at same time | 🟠 Bad | `AppStartup` loading config, DB, and cache together |
+| **Procedural** | Grouped because they run in sequence | 🟠 Moderate | Steps in a specific algorithm |
+| **Communicational** | Methods operate on same data | 🟡 Better | Class manipulating a specific `User` object |
+| **Sequential** | Output of one method is input to next | 🟡 Better | Data processing pipeline steps |
+| **Functional** | Every method contributes to ONE single task | 🟢 Best | `PasswordHasher` (hash, verify, rehash) |
+
+<CardGrid>
+  <Card title="Low Cohesion (God Class)" icon="error">
+    ```text
+    +-------------------+
+    |      UserManager  |
+    |                   |
+    | - Save User       |
+    | - Send Email      |
+    | - Generate PDF    |
+    | - Connect DB      |
+    | - Validate UI     |
+    +-------------------+
+    
+    Problems:
+    • Does Everything
+    • Merge conflicts weekly
+    • Hard to test
+    ```
+  </Card>
+  
+  <Card title="High Cohesion (Focused)" icon="approve-check">
+    ```text
+    +-------------------+
+    |   AuthService     | → Handles login/token
+    +-------------------+
+    | NotificationSvc   | → Handles emails/SMS
+    +-------------------+
+    | PdfGenerator      | → Handles PDF creation
+    +-------------------+
+    
+    Benefits:
+    • Single Responsibility
+    • Easy to maintain
+    • Reusable components
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+### 🔬 Each Type — Real Java Examples
+
+**🔴 Coincidental — Random grouping**
+
+```java
+class Utils {
+    void sendEmail(String to) { }
+    double calculateTax(Order o) { }
+    void resizeImage(File f) { }
+    String formatDate(LocalDate d) { }
+    void writeToDatabase(Record r) { }
+}
+```
+
+Nothing relates. Adding any feature here is "correct." That's the problem — no boundary exists.
+
+---
+
+**🔴 Logical — Grouped by vague category**
+
+```java
+class InputHandler {
+    void handleMouseClick(Event e) { }
+    void handleKeyPress(Event e) { }
+    void handleTouchEvent(Event e) { }
+    void handleNetworkPacket(Packet p) { }  // ← "input" but completely unrelated
+    void handleFileUpload(File f) { }       // ← "input" but completely unrelated
+}
+```
+
+Looks organized. Isn't. "Input" is too broad. `handleNetworkPacket` and `handleMouseClick` share nothing except the word "handle."
+
+---
+
+**🟠 Temporal — Same lifecycle phase**
+
+```java
+class AppStartup {
+    void loadConfig() { }
+    void connectDatabase() { }
+    void startMetricsServer() { }
+    void warmCache() { }
+    // These run at startup but have ZERO logical relationship
+}
+```
+
+Temporal cohesion is common in `init()` / `cleanup()` methods. Acceptable only as an orchestrator — but each method should delegate to a highly cohesive class.
+
+---
+
+**🟢 Functional — Single responsibility**
+
+```java
+class PasswordHasher {
+    private static final int BCRYPT_ROUNDS = 12;
+
+    String hash(String plaintext) { }
+    boolean verify(String plaintext, String hashed) { }
+    boolean needsRehash(String hashed) { }
+}
+```
+
+Every method exists to serve one purpose: password hashing. Nothing else lives here.
+
+---
+
+### 💻 Real-World Code — Low vs High Cohesion
+
+**❌ Low Cohesion — God class**
+
+```java
+class UserManager {
+    // User data
+    private Map<Long, User> users = new HashMap<>();
+
+    // Authentication
+    boolean login(String username, String password) { }
+    void logout(long userId) { }
+    String generateToken(long userId) { }
+    boolean validateToken(String token) { }
+
+    // Profile
+    void updateEmail(long userId, String email) { }
+    void updateAddress(long userId, Address address) { }
+
+    // Billing
+    void addPaymentMethod(long userId, Card card) { }
+    void chargeUser(long userId, double amount) { }
+    Invoice generateInvoice(long userId) { }
+
+    // Notifications
+    void sendWelcomeEmail(long userId) { }
+    void sendPasswordResetEmail(long userId) { }
+    void sendInvoiceEmail(long userId, Invoice inv) { }
+
+    // Analytics
+    void trackLogin(long userId) { }
+    void trackPurchase(long userId, double amount) { }
+}
+```
+
+🔴 **Prod consequence:** Every feature touches `UserManager`. 10 engineers modify it simultaneously. Merge conflicts weekly. A billing bug requires understanding auth code. Test for one feature runs everything.
+
+---
+
+**✅ High Cohesion — Split by responsibility**
+
+```java
+class AuthService {
+    boolean login(String username, String password) { }
+    void logout(long userId) { }
+    String generateToken(long userId) { }
+    boolean validateToken(String token) { }
+}
+
+class UserProfileService {
+    void updateEmail(long userId, String email) { }
+    void updateAddress(long userId, Address address) { }
+}
+
+class BillingService {
+    void addPaymentMethod(long userId, Card card) { }
+    void chargeUser(long userId, double amount) { }
+    Invoice generateInvoice(long userId) { }
+}
+
+class NotificationService {
+    void sendWelcomeEmail(long userId) { }
+    void sendPasswordResetEmail(long userId) { }
+    void sendInvoiceEmail(long userId, Invoice inv) { }
+}
+
+class UserAnalyticsService {
+    void trackLogin(long userId) { }
+    void trackPurchase(long userId, double amount) { }
+}
+```
+
+Each class: one owner, one reason to change, independently testable, independently deployable.
+
+---
+
+### 📊 Detecting Low Cohesion
+
+| Symptom | What It Signals |
+|---------|----------------|
+| Class has 20+ methods | God class — multiple responsibilities |
+| Class name contains "Manager", "Helper", "Utils", "Handler" | Dumping ground — coincidental cohesion |
+| Methods don't use `this` fields — only params | Method belongs elsewhere |
+| Two unrelated groups of fields + methods | Should be two classes |
+| Changing feature X always touches class Y | Y has wrong responsibilities |
+| Hard to name the class in one sentence | Low cohesion |
+
+---
+
+### 🔁 Cohesion and Single Responsibility Principle
+
+SRP = one reason to change = functional cohesion applied at class level.
+
+```
+"One reason to change" means one ACTOR (business role) owns this class.
+
+❌ UserManager — changes when:
+   ├── Auth team changes token format
+   ├── Billing team changes invoice structure
+   ├── Marketing team changes email templates
+   └── Analytics team adds new events
+   → 4 actors = 4 reasons to change = low cohesion
+
+✅ AuthService — changes when:
+   └── Auth team changes token format
+   → 1 actor = 1 reason to change = high cohesion
+```
+
+---
+
+### 🔁 Method-Level Cohesion
+
+Cohesion applies inside methods too.
+
+```java
+// ❌ Low cohesion — method does three things
+void processOrder(Order order) {
+    // 1. validate
+    if (order.items().isEmpty()) throw new IllegalArgumentException();
+
+    // 2. persist
+    repository.save(order);
+
+    // 3. notify
+    emailService.sendConfirmation(order.customerId());
+
+    // 4. audit
+    auditLog.record("ORDER_PLACED", order.id());
+}
+
+// ✅ High cohesion — each method does one thing
+void processOrder(Order order) {
+    validate(order);
+    repository.save(order);
+    notifyCustomer(order);
+    audit(order);
+}
+
+private void validate(Order order) {
+    if (order.items().isEmpty()) throw new IllegalArgumentException("Empty order");
+}
+
+private void notifyCustomer(Order order) {
+    emailService.sendConfirmation(order.customerId());
+}
+
+private void audit(Order order) {
+    auditLog.record("ORDER_PLACED", order.id());
+}
+```
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — High cohesion does not mean small class**
+
+```java
+// This is NOT high cohesion just because it's small
+class MathAndEmail {
+    double sqrt(double n) { }
+    void sendEmail(String to) { }
+}
+
+// This IS high cohesion even though it's large
+class JwtTokenService {
+    String generate(Claims claims) { }
+    Claims parse(String token) { }
+    boolean isExpired(String token) { }
+    boolean isValid(String token) { }
+    String refresh(String token) { }
+    void revoke(String token) { }
+    boolean isRevoked(String token) { }
+}
+```
+
+Size is irrelevant. Relatedness of purpose is everything.
+
+---
+
+**🪤 Trap 2 — Utility classes are not automatically low cohesion**
+
+```java
+// ❌ Low cohesion utility — random dumping ground
+class Utils {
+    static String formatDate(LocalDate d) { }
+    static double calculateTax(Order o) { }
+    static boolean isValidEmail(String e) { }
+    static void resizeImage(File f) { }
+}
+
+// ✅ High cohesion utility — single domain
+class DateFormatter {
+    static String toISO(LocalDate d) { }
+    static String toDisplay(LocalDate d) { }
+    static String toFilename(LocalDate d) { }
+}
+```
+
+A utility class is fine if all its methods serve the **same domain**. The problem is using "Utils" as a catch-all.
+
+---
+
+**🪤 Trap 3 — Over-splitting destroys cohesion too**
+
+```java
+// Taken too far — anemic classes
+class OrderValidator { boolean validate(Order o) { } }
+class OrderSaver    { void save(Order o) { } }
+class OrderNotifier { void notify(Order o) { } }
+
+class OrderProcessor {
+    // Now this class is just temporal cohesion — coordinating unrelated things
+    void process(Order o) {
+        validator.validate(o);
+        saver.save(o);
+        notifier.notify(o);
+    }
+}
+```
+
+If each class has exactly one method and no shared state, you've created procedural code inside OOP wrappers. The behavior is split from the data — **anemic domain model**. `Order` should know how to validate itself. `OrderRepository` should handle persistence.
+
+---
+
+**🪤 Trap 4 — Private methods don't hide low cohesion**
+
+```java
+class ReportService {
+    void generateReport(ReportRequest req) {
+        fetchData(req);
+        transformData();
+        renderPdf();
+        sendEmail();
+        chargeUser();     // ← billing inside a report service
+        updateDashboard(); // ← analytics inside a report service
+    }
+
+    private void chargeUser() { ... }
+    private void updateDashboard() { ... }
+}
+```
+
+Making billing and analytics `private` doesn't fix low cohesion — it hides it. The class still has multiple reasons to change. Private methods are an implementation detail, not a cohesion boundary.
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Set intersection — measuring relatedness**
+
+Cohesion can be measured formally via **LCOM (Lack of Cohesion in Methods)**:
+
+```
+LCOM = |pairs of methods sharing NO fields|
+     - |pairs of methods sharing AT LEAST ONE field|
+
+If LCOM > 0 → class should be split
+If LCOM = 0 → all methods share fields → high cohesion
+
+Example:
+  Fields: {url, timeout, retries}
+
+  Method A uses: {url, timeout}
+  Method B uses: {url, retries}
+  Method C uses: {timeout, retries}
+
+  All pairs share at least one field → LCOM = 0 → high cohesion
+
+  Method D uses: {} (no fields — pure computation on params)
+  → D doesn't belong here
+```
+
+Static analysis tools (SonarQube, IntelliJ inspections) use LCOM variants to flag low-cohesion classes in CI pipelines.
+
+---
+
+### 📊 Cohesion vs Coupling
+
+| | High Cohesion | Low Cohesion |
+|--|--------------|-------------|
+| **Class focus** | Single responsibility | Multiple responsibilities |
+| **Change impact** | Isolated | Ripples across system |
+| **Testability** | Easy — one thing to test | Hard — must mock everything |
+| **Coupling effect** | Naturally reduces coupling | Forces tight coupling |
+| **Team ownership** | One team owns one class | Multiple teams fight one class |
+| **Naming** | Precise noun (`PasswordHasher`) | Vague (`UserManager`, `Utils`) |
+
+```
+The relationship:
+
+High Cohesion → small, focused interfaces → easier to depend on abstractions
+             → naturally LOW coupling
+
+Low Cohesion → fat classes → fat interfaces → forced to import everything
+            → naturally HIGH coupling
+```
+
+---
+
+### 🏭 SDE/SRE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| God class = merge conflict hotspot in prod | 🔴 MUST KNOW |
+| SRP = functional cohesion at class level | 🔴 MUST KNOW |
+| "Manager/Helper/Utils" = low cohesion signal | 🔴 MUST KNOW |
+| LCOM metric in static analysis tools | 🟡 GOOD TO KNOW |
+| Anemic domain model from over-splitting | 🔴 MUST KNOW |
+| Private methods don't fix low cohesion | 🔴 MUST KNOW |
+| Method-level cohesion — one method, one job | 🔴 MUST KNOW |
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Audit your codebase for classes named `*Manager`, `*Helper`, `*Utils`.
+2. ✅ Check LCOM metrics in your IDE (IntelliJ/Eclipse have plugins).
+3. ✅ Practice extracting unrelated methods into new classes.
+4. ✅ Remember: Cohesion is about **relatedness**, not size.
+
+Mastering cohesion turns spaghetti code into modular, maintainable systems. ☕✨
+</Aside>

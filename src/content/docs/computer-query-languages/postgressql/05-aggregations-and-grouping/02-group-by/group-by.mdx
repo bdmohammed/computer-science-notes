@@ -1,0 +1,838 @@
+---
+title: PostgreSQL GROUP BY
+slug: computer-query-languages/postgresql/aggregations-and-grouping/group-by
+description: Master data aggregation in PostgreSQL — execution order, the Golden Rule, Hash vs Group strategies, HAVING filters, and advanced patterns like pivots and gaps-and-islands.
+sidebar:
+  label: "GROUP BY"
+  badge:
+    text: Aggregation
+    variant: tip
+tags: [postgresql, group-by, aggregation, having, performance, hash-aggregate, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 GROUP BY — Complete Guide
+
+> **`GROUP BY` collapses rows that share the same value into a single group — turning a table of individual events into a summary of categories. Every column in `SELECT` must either be in `GROUP BY` or wrapped in an aggregate, and violating this rule is the most common `GROUP BY` mistake.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `GROUP BY` as a **HashMap reducer**.  
+Key = Grouping Column(s). Value = Accumulators (`count`, `sum`, `avg`).  
+For every row: `hash(key) → update accumulators`.  
+Final output = one row per unique key.
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Where It Lives
+
+The order of operations is **not negotiable**. Understanding this explains every `GROUP BY` confusion you'll ever have.
+
+```
+FROM
+WHERE     ← filters rows BEFORE grouping (cheap — removes rows early)
+GROUP BY  ← collapses rows into groups HERE ✅
+HAVING    ← filters groups AFTER grouping (uses aggregate results)
+SELECT    ← computes aggregates per group
+ORDER BY  ← sorts the grouped result
+LIMIT
+```
+
+<Code lang="sql" title="Visualizing the pipeline" code={`
+-- This order is not negotiable — understanding it
+-- explains every GROUP BY confusion you'll ever have
+
+SELECT   department, COUNT(*), AVG(salary)   -- 5. compute per group
+FROM     employees                           -- 1. load table
+WHERE    is_active = true                    -- 2. remove inactive rows early
+GROUP BY department                          -- 3. form groups
+HAVING   AVG(salary) > 80000                -- 4. remove groups with low avg salary
+ORDER BY AVG(salary) DESC;                  -- 6. sort result
+`} />
+
+---
+
+## 1️⃣ What GROUP BY Actually Does
+
+```
+Without GROUP BY:                 With GROUP BY department:
+
+orders table:                     Result:
+┌────┬──────────┬────────┐        ┌──────────────┬───────┬────────┐
+│ id │ dept     │ amount │        │ department   │ COUNT │ SUM    │
+├────┼──────────┼────────┤   →    ├──────────────┼───────┼────────┤
+│  1 │ Sales    │  500   │        │ Sales        │   3   │  1600  │
+│  2 │ Sales    │  700   │        │ Engineering  │   2   │  1700  │
+│  3 │ Eng      │  900   │        │ Marketing    │   1   │   300  │
+│  4 │ Eng      │  800   │        └──────────────┴───────┴────────┘
+│  5 │ Sales    │  400   │
+│  6 │ Marketing│  300   │
+└────┴──────────┴────────┘
+
+GROUP BY groups matching rows → aggregate reduces each group to 1 row
+6 rows → 3 groups → 3 output rows
+```
+
+```
+Internally Postgres does one of:
+
+Hash Grouping:                    Sort Grouping:
+Build hash table                  Sort rows by GROUP BY col
+group_key → accumulators          Scan sorted rows
+One entry per unique group        Detect boundary between groups
+O(n) time, O(groups) memory      O(n log n) time, O(1) memory
+→ HashAggregate in EXPLAIN        → GroupAggregate in EXPLAIN
+```
+
+
+### Internals: Hash vs Sort
+
+| Strategy | How it Works | Memory | When Used |
+|----------|-------------|--------|-----------|
+| **HashAggregate** | Build hash table: `{group_key → accumulators}`. One entry per unique group. | O(groups) | Unsorted input. Default for small/medium groups. |
+| **GroupAggregate** | Sort rows by `GROUP BY` col. Scan sorted rows, detect boundaries, emit group. | O(1) | Sorted input (via Index Scan or explicit Sort). |
+
+<Aside type="note">
+**🎯 DSA Connection**: 
+- `HashAggregate` = HashMap frequency counting. O(n) time, O(g) memory.
+- `GroupAggregate` = Sort + Linear Pass. O(n log n) time, O(1) memory.
+Postgres picks Hash when data fits in `work_mem`, falls back to Sort (or spills Hash to disk) otherwise.
+
+> 🎯 **DSA connection:** GROUP BY = HashMap\<GroupKey, Accumulators>. For each row: hash(group_key) → update \{count++, sum+=val, min=min(val, min)\}. Final output = one entry per HashMap bucket. Exactly like frequency counting in interview problems.
+</Aside>
+
+---
+
+## 2️⃣ The Golden Rule — Non-Aggregated Columns
+
+> **Every column in `SELECT` must be either:**
+> 1. Listed in `GROUP BY` clause
+> 2. Wrapped in an aggregate function (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
+
+If neither → **ERROR** in Postgres (unlike MySQL which guesses!).
+
+<Code lang="sql" title="❌ The Common Mistake" code={`-- ERROR: column "employees.name" must appear in GROUP BY
+-- or be used in an aggregate function
+SELECT department, name, COUNT(*)
+FROM   employees
+GROUP BY department;`} />
+
+<Code lang="sql" title="✅ The Fixes" code={`-- Fix 1: Add name to GROUP BY (creates granular groups)
+SELECT department, name, COUNT(*)
+FROM   employees
+GROUP BY department, name;     
+
+-- Fix 2: Wrap name in aggregate (pick one value per group)
+SELECT department, MAX(name) AS sample_name, COUNT(*)
+FROM   employees
+GROUP BY department;           
+
+-- Fix 3: The PRIMARY KEY Shortcut (Postgres Special Rule)
+SELECT u.id, u.name, u.email, COUNT(o.id) AS order_count
+FROM   users u
+JOIN   orders o ON u.id = o.user_id
+GROUP BY u.id;                 
+-- ✅ Allowed! Since u.id is PK, u.name/u.email are functionally dependent.`} />
+
+```
+The PRIMARY KEY shortcut:
+
+If GROUP BY includes the PRIMARY KEY of a table:
+  All other columns from that table are allowed in SELECT
+  without being in GROUP BY.
+
+Reason: PK uniquely identifies the row.
+  If u.id is unique → u.name, u.email are determined by u.id
+  → only one possible value per group → safe to select ✅
+
+GROUP BY u.id, u.name, u.email  ← verbose but always safe
+GROUP BY u.id                   ← Postgres allows (PK shortcut) ✅
+```
+
+<Aside type="caution">
+**Interview Trap**: MySQL silently picks a random value for non-aggregated, non-grouped columns. Postgres throws an error (correct SQL standard behavior). This is why MySQL code often breaks when migrated to Postgres.
+</Aside>
+
+---
+
+## 3️⃣ GROUP BY Multiple Columns
+
+<Code lang="sql" title="Granular grouping" code={`-- Each unique (department, status) pair = one group
+SELECT
+  department,
+  status,
+  COUNT(*)       AS employee_count,
+  AVG(salary)    AS avg_salary
+FROM   employees
+GROUP BY department, status     -- two-column grouping
+ORDER BY department, status;
+
+-- Result:
+-- ┌──────────────┬──────────┬───────┬────────────┐
+-- │ department   │ status   │ count │ avg_salary │
+-- ├──────────────┼──────────┼───────┼────────────┤
+-- │ Engineering  │ active   │   8   │  120000    │
+-- │ Engineering  │ inactive │   2   │   95000    │
+-- │ Sales        │ active   │   5   │   80000    │
+-- └──────────────┴──────────┴───────┴────────────┘`} />
+
+```text
+More columns in GROUP BY = more granular groups = more output rows
+
+GROUP BY dept              → N_dept rows
+GROUP BY dept, status      → N_dept × N_status rows (at most)
+GROUP BY dept, status, yr  → N_dept × N_status × N_yr rows (at most)
+
+Think of it as: each unique COMBINATION = one output row
+```
+
+---
+
+## 4️⃣ GROUP BY with Expressions — Dynamic Grouping
+
+<Code lang="sql" title="Grouping by computed values" code={`-- Group by month (expression in GROUP BY)
+SELECT
+  DATE_TRUNC('month', created_at)::DATE   AS month,
+  COUNT(*)                                AS orders,
+  SUM(amount)                             AS revenue
+FROM   orders
+GROUP BY DATE_TRUNC('month', created_at)  -- ✅ Must match SELECT expression
+ORDER BY month;
+
+-- Group by year
+SELECT
+  EXTRACT(YEAR FROM created_at)::INT      AS year,
+  COUNT(*)                                AS total_orders
+FROM   orders
+GROUP BY EXTRACT(YEAR FROM created_at)
+ORDER BY year;
+
+-- Group by CASE expression (dynamic bucketing)
+SELECT
+  CASE
+    WHEN amount < 500  THEN 'small'
+    WHEN amount < 2000 THEN 'medium'
+    ELSE                    'large'
+  END                     AS order_size,
+  COUNT(*)                AS count,
+  SUM(amount)             AS total
+FROM   orders
+GROUP BY
+  CASE                              -- same CASE in GROUP BY ✅
+    WHEN amount < 500  THEN 'small'
+    WHEN amount < 2000 THEN 'medium'
+    ELSE                    'large'
+  END
+ORDER BY total DESC;
+
+-- Cleaner: Use Column Position (1-indexed)
+SELECT
+  DATE_TRUNC('month', created_at) AS month,
+  COUNT(*)                         AS orders
+FROM orders
+GROUP BY 1         -- ✅ Refers to 1st SELECT column
+ORDER BY 1;        -- ✅ Same trick for sorting`} />
+
+<Aside type="tip">
+**Real-Life SDE**: `GROUP BY 1` is extremely common in analytics queries — it avoids repeating long expressions. It works by position, not name. `GROUP BY 1, 2` means group by the first two columns in the `SELECT` list.
+</Aside>
+
+---
+
+## 5️⃣ GROUP BY vs DISTINCT
+
+| Feature | `DISTINCT` | `GROUP BY` |
+|---------|------------|------------|
+| **Purpose** | Simple deduplication | Deduplication + Aggregation |
+| **Aggregates** | ❌ Cannot use `COUNT()`, `SUM()` | ✅ Required for aggregates |
+| **Performance** | Identical plan for simple cases | Identical plan for simple cases |
+| **Intent** | "I want unique rows" | "I want summaries per category" |
+
+<Code lang="sql" title="When to use which" code={`-- For simple deduplication: DISTINCT is cleaner
+SELECT DISTINCT city FROM users;
+SELECT city FROM users GROUP BY city;   -- identical result + plan
+
+-- For aggregation: GROUP BY is required
+SELECT city, COUNT(*) FROM users GROUP BY city;      -- ✅
+-- SELECT DISTINCT city, COUNT(*) FROM users;        -- ❌ Syntax Error`} />
+
+---
+
+## 6️⃣ GROUP BY with JOIN — The Dangerous Combination
+
+<CardGrid>
+  <Card title="❌ The Trap: Row Explosion" icon="error">
+    ```sql
+    -- Joining two one-to-many tables inflates counts
+    SELECT
+      u.id,
+      COUNT(o.id)      AS order_count,    -- Inflated! ❌
+      COUNT(r.id)      AS review_count    -- Inflated! ❌
+    FROM   users   u
+    LEFT JOIN orders  o ON u.id = o.user_id
+    LEFT JOIN reviews r ON u.id = r.user_id
+    GROUP BY u.id;
+    
+    -- Why? If User 1 has 3 orders and 2 reviews:
+    -- Join produces 3 × 2 = 6 rows for User 1.
+    -- COUNT(o.id) becomes 6 (instead of 3).
+
+    -- ✅ Correct: count orders per user
+    SELECT
+    u.id,
+    u.name,
+    COUNT(o.id)    AS order_count,
+    SUM(o.amount)  AS total_spent
+    FROM   users  u
+    LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.name      -- group by user
+    ORDER BY total_spent DESC NULLS LAST;
+    ```
+  </Card>
+  
+  <Card title="✅ The Fix: Pre-Aggregate in CTEs" icon="approve-check">
+    ```sql
+    WITH order_stats AS (
+      SELECT user_id, COUNT(*) AS order_count
+      FROM   orders GROUP BY user_id
+    ),
+    review_stats AS (
+      SELECT user_id, COUNT(*) AS review_count
+      FROM   reviews GROUP BY user_id
+    )
+    SELECT
+      u.id, u.name,
+      COALESCE(os.order_count,  0) AS order_count,
+      COALESCE(rs.review_count, 0) AS review_count
+    FROM       users        u
+    LEFT JOIN  order_stats  os ON u.id = os.user_id
+    LEFT JOIN  review_stats rs ON u.id = rs.user_id;
+    
+    -- Each CTE aggregates independently → No explosion ✅
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="danger">
+**Interview Trap**: JOINing two one-to-many tables and then `GROUP BY` gives inflated aggregates — the Cartesian explosion happens **BEFORE** grouping. Always pre-aggregate each many-side in a CTE/subquery first.
+</Aside>
+
+---
+
+## 7️⃣ GROUP BY with HAVING — Filter Groups
+
+> **`HAVING` filters AFTER grouping. `WHERE` filters BEFORE grouping.**
+
+<Code lang="sql" title="WHERE vs HAVING" code={`
+-- ✅ Correct: Filter groups with high average salary
+SELECT   department, AVG(salary) AS avg_sal
+FROM     employees
+GROUP BY department
+HAVING   AVG(salary) > 80000;    
+
+-- ❌ Wrong: Aggregate functions not allowed in WHERE
+-- WHERE AVG(salary) > 80000     -- ERROR
+
+-- ✅ Best Practice: Combine WHERE (row filter) and HAVING (group filter)
+SELECT   department, AVG(salary) AS avg_sal, COUNT(*) AS headcount
+FROM     employees
+WHERE    is_active = true        -- 1. Filter rows first (cheap, uses indexes)
+GROUP BY department
+HAVING   COUNT(*) >= 5           -- 2. Filter groups with < 5 people
+  AND    AVG(salary) > 70000;    -- 3. Filter groups by aggregate`} />
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><code>WHERE</code></th>
+      <th><code>HAVING</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Execution Time</td><td>Before GROUP BY</td><td>After GROUP BY</td></tr>
+    <tr><td>Filters</td><td>Individual Rows</td><td>Entire Groups</td></tr>
+    <tr><td>Aggregates</td><td>❌ Not Allowed</td><td>✅ Required/Allowed</td></tr>
+    <tr><td>Performance</td><td>Cheap (reduces input)</td><td>Expensive (groups first)</td></tr>
+    <tr><td>Index Usage</td><td>✅ Can use indexes</td><td>❌ Cannot use indexes</td></tr>
+  </tbody>
+</table>
+
+<Aside type="tip">
+```
+Performance rule:
+  Always push filters into WHERE when possible.
+  Only use HAVING for aggregate conditions.
+
+-- ❌ Slow: HAVING on non-aggregate (groups all, then filters)
+GROUP BY department
+HAVING department = 'Engineering'  -- should be in WHERE!
+
+-- ✅ Fast: WHERE on non-aggregate (filters before grouping)
+WHERE department = 'Engineering'
+GROUP BY department
+```
+> 🎯 **Interview Q:** *"What's the difference between WHERE and HAVING?"*
+> **A:** WHERE filters rows before grouping — works on individual columns, can use indexes. HAVING filters groups after grouping — must use aggregate results. Push all non-aggregate conditions to WHERE for performance.
+</Aside>
+
+---
+
+## 8️⃣ Internals — HashAggregate vs GroupAggregate
+
+PostgreSQL chooses between two strategies based on input sorting and \`work_mem\`.
+```
+Two strategies Postgres chooses between:
+
+┌──────────────────────────────────────────────────────────┐
+│  HashAggregate                                           │
+│                                                          │
+│  Build hash table: {group_key → accumulators}           │
+│  For each input row:                                     │
+│    bucket = hash(group_key)                              │
+│    accumulators[bucket].count++                          │
+│    accumulators[bucket].sum += val                       │
+│  Scan hash table → output one row per entry             │
+│                                                          │
+│  ✅ Works on unsorted input                              │
+│  ❌ Memory: O(distinct groups) → spills if > work_mem   │
+│  EXPLAIN: HashAggregate                                  │
+│  Planned Partitions > 0 = spilling to disk 💀           │
+└──────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────┐
+│  GroupAggregate                                          │
+│                                                          │
+│  Requires: input SORTED by GROUP BY columns             │
+│  Scan sorted input:                                      │
+│    if group_key == prev_key → accumulate                 │
+│    if group_key != prev_key → emit prev group, reset    │
+│                                                          │
+│  ✅ Memory: O(1) — streaming, one group at a time       │
+│  ✅ Output already sorted (no ORDER BY cost if matches)  │
+│  ❌ Needs sort or index scan for sorted input            │
+│  EXPLAIN: GroupAggregate                                 │
+└──────────────────────────────────────────────────────────┘
+```
+```sql
+-- See which strategy chosen
+EXPLAIN SELECT department, COUNT(*)
+FROM   employees
+GROUP BY department;
+
+-- Without index → HashAggregate (fast, uses hash table)
+-- HashAggregate
+--   Group Key: department
+--   -> Seq Scan on employees
+
+-- With index on department → GroupAggregate (uses index order)
+CREATE INDEX idx_emp_dept ON employees(department);
+
+EXPLAIN SELECT department, COUNT(*)
+FROM   employees
+GROUP BY department;
+
+-- GroupAggregate
+--   Group Key: department
+--   -> Index Only Scan on employees  ← sorted by index ✅
+--        (no Sort node needed)
+```
+
+```sql
+-- Fix HashAggregate spilling to disk
+EXPLAIN (ANALYZE) SELECT user_id, COUNT(*)
+FROM orders GROUP BY user_id;
+
+-- HashAggregate
+--   Planned Partitions: 8   ← spilling! 💀
+--   Batches: 8
+
+-- Fix option 1: increase work_mem
+SET work_mem = '256MB';
+
+-- Fix option 2: index enables GroupAggregate (O(1) memory)
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+-- Now: GroupAggregate + Index Scan → no memory pressure ✅
+```
+
+<Tabs>
+  <TabItem label="HashAggregate" icon="hash">
+    ```sql
+    EXPLAIN SELECT department, COUNT(*) FROM employees GROUP BY department;
+    
+    -- Output:
+    -- HashAggregate
+    --   Group Key: department
+    --   -> Seq Scan on employees
+    
+    -- How it works:
+    -- 1. Build hash table in memory: {dept → count, sum...}
+    -- 2. If hash table exceeds work_mem → Spill to disk (Batches) 💀
+    -- 3. Output one row per hash bucket.
+    
+    -- ✅ Fast for unsorted data.
+    -- ❌ Memory intensive.
+    ```
+  </TabItem>
+  
+  <TabItem label="GroupAggregate" icon="list">
+    ```sql
+    CREATE INDEX idx_emp_dept ON employees(department);
+    EXPLAIN SELECT department, COUNT(*) FROM employees GROUP BY department;
+    
+    -- Output:
+    -- GroupAggregate
+    --   Group Key: department
+    --   -> Index Only Scan on employees  ← Sorted input!
+    
+    -- How it works:
+    -- 1. Input is already sorted (by Index Scan or Sort node).
+    -- 2. Stream through rows. If key changes → emit previous group.
+    -- 3. Memory: O(1) — only holds current group state.
+    
+    -- ✅ Memory efficient.
+    -- ❌ Requires sorted input (extra cost if no index).
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="caution">
+**Fixing Disk Spills**: If `EXPLAIN` shows `Planned Partitions > 0` for HashAggregate, it's spilling to disk.  
+✅ **Fix 1**: Increase `work_mem` for the session.  
+✅ **Fix 2**: Add an index on the `GROUP BY` column to enable `GroupAggregate`.
+</Aside>
+
+---
+
+## 9️⃣ GROUP BY with ORDER BY — Common Combinations
+
+```sql
+-- Sort by aggregate result
+SELECT department, COUNT(*) AS headcount
+FROM   employees
+GROUP BY department
+ORDER BY headcount DESC;           -- sort by alias ✅ (ORDER BY runs after SELECT)
+
+-- Sort by multiple criteria
+SELECT
+  department,
+  AVG(salary) AS avg_sal,
+  COUNT(*)    AS headcount
+FROM   employees
+GROUP BY department
+ORDER BY avg_sal DESC,             -- primary: highest avg salary
+         headcount DESC;           -- secondary: largest team
+
+-- GROUP BY + ORDER BY on same expression
+SELECT
+  DATE_TRUNC('month', created_at) AS month,
+  SUM(amount) AS revenue
+FROM orders
+GROUP BY 1                         -- group by 1st column
+ORDER BY 1;                        -- sort by same → GroupAggregate possible ✅
+                                   -- output already in month order
+```
+--- 
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Time Series Aggregation" icon="chart">
+    ```sql
+    -- Daily Active Users (DAU)
+    SELECT
+      created_at::DATE            AS day,
+      COUNT(DISTINCT user_id)     AS dau,
+      COUNT(*) FILTER (WHERE event_type = 'purchase') AS purchases
+    FROM   events
+    WHERE  created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY created_at::DATE
+    ORDER BY day;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Top-N Per Group" icon="trophy">
+    ```sql
+    -- Top 3 products by revenue per category
+    WITH ranked AS (
+    SELECT
+        category,
+        product_name,
+        SUM(amount)                                    AS revenue,
+        RANK() OVER (PARTITION BY category
+                    ORDER BY SUM(amount) DESC)        AS rnk
+    FROM   order_items oi
+    JOIN   products    p ON oi.product_id = p.id
+    GROUP BY category, product_name           -- GROUP BY first ✅
+    )
+    SELECT category, product_name, revenue
+    FROM   ranked
+    WHERE  rnk <= 3
+    ORDER BY category, rnk;
+    ```
+  </Card>
+
+    <Card title="Pattern 3 — Gaps and Islands (Group Consecutive Rows)" icon="trophy">
+    ```sql
+    -- Find consecutive date ranges of activity
+    -- (classic gaps-and-islands problem using GROUP BY)
+    WITH numbered AS (
+    SELECT
+        user_id,
+        activity_date,
+        activity_date - ROW_NUMBER() OVER (
+        PARTITION BY user_id ORDER BY activity_date
+        ) * INTERVAL '1 day'                  AS grp    -- island identifier
+    FROM user_activity
+    ),
+    islands AS (
+    SELECT
+        user_id,
+        grp,
+        MIN(activity_date)  AS streak_start,
+        MAX(activity_date)  AS streak_end,
+        COUNT(*)            AS streak_length
+    FROM   numbered
+    GROUP BY user_id, grp                   -- group each island ✅
+    )
+    SELECT user_id, streak_start, streak_end, streak_length
+    FROM   islands
+    ORDER BY user_id, streak_start;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Pivot with CASE" icon="table">
+    ```sql
+    -- Monthly revenue per category in columns (pivot)
+    SELECT
+    DATE_TRUNC('month', o.created_at)::DATE           AS month,
+    SUM(CASE WHEN p.category = 'electronics'
+        THEN oi.amount ELSE 0 END)                    AS electronics,
+    SUM(CASE WHEN p.category = 'clothing'
+        THEN oi.amount ELSE 0 END)                    AS clothing,
+    SUM(CASE WHEN p.category = 'books'
+        THEN oi.amount ELSE 0 END)                    AS books,
+    SUM(oi.amount)                                    AS total
+    FROM   order_items  oi
+    JOIN   orders       o  ON oi.order_id   = o.id
+    JOIN   products     p  ON oi.product_id = p.id
+    WHERE  o.status = 'delivered'
+    GROUP BY DATE_TRUNC('month', o.created_at)
+    ORDER BY month;
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Duplicate Detection" icon="search">
+    ```sql
+    -- Find duplicate emails (keep track of which IDs)
+    SELECT
+    email,
+    COUNT(*)               AS occurrences,
+    MIN(id)                AS keep_id,        -- oldest = keep
+    ARRAY_AGG(id ORDER BY id) AS all_ids,     -- all duplicates
+    MAX(created_at)        AS latest_signup
+    FROM   users
+    WHERE  deleted_at IS NULL
+    GROUP BY email
+    HAVING COUNT(*) > 1                         -- only duplicates ✅
+    ORDER BY occurrences DESC;
+    ```
+  </Card>
+
+    <Card title="Pattern 6 — Running Total with GROUP BY + Window" icon="search">
+    ```sql
+    -- Monthly revenue with cumulative total
+    SELECT
+    month,
+    revenue,
+    SUM(revenue) OVER (ORDER BY month) AS cumulative_revenue,
+    ROUND(revenue * 100.0 /
+        SUM(revenue) OVER (), 1)          AS pct_of_annual
+    FROM (
+    SELECT
+        DATE_TRUNC('month', created_at)::DATE AS month,
+        SUM(amount)                            AS revenue
+    FROM   orders
+    WHERE  status = 'delivered'
+        AND  EXTRACT(YEAR FROM created_at) = 2024
+    GROUP BY 1                               -- GROUP BY first → then window ✅
+    ) monthly
+    ORDER BY month;
+    ```
+  </Card>   
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`
+-- Setup
+CREATE TEMP TABLE sales (
+  id      INT,
+  dept    TEXT,
+  rep     TEXT,
+  amount  INT,
+  status  TEXT
+);
+INSERT INTO sales VALUES
+  (1,'Eng',  'Raj',   1000, 'delivered'),
+  (2,'Eng',  'Raj',   2000, 'delivered'),
+  (3,'Eng',  'Priya', 1500, 'cancelled'),
+  (4,'Sales','Sam',    500, 'delivered'),
+  (5,'Sales','Sam',    800, 'pending'),
+  (6,'Sales','Ankit',  300, 'delivered');
+
+-- 1. Basic GROUP BY
+SELECT dept, COUNT(*), SUM(amount), AVG(amount)
+FROM   sales GROUP BY dept;
+-- Eng: 3 rows, Sales: 3 rows
+
+-- 2. Multi-column GROUP BY
+SELECT dept, status, COUNT(*), SUM(amount)
+FROM   sales GROUP BY dept, status ORDER BY dept, status;
+-- Each (dept, status) combo = one group
+
+-- 3. GROUP BY with expression
+SELECT dept, rep, SUM(amount) AS total
+FROM   sales GROUP BY dept, rep ORDER BY dept, total DESC;
+
+-- 4. HAVING vs WHERE
+SELECT dept, SUM(amount) AS total
+FROM   sales
+WHERE  status = 'delivered'     -- filter rows first ✅
+GROUP BY dept
+HAVING SUM(amount) > 800;       -- filter groups ✅
+
+-- 5. GROUP BY column position
+SELECT dept, SUM(amount)
+FROM   sales
+GROUP BY 1                       -- same as GROUP BY dept
+ORDER BY 2 DESC;                 -- same as ORDER BY SUM(amount) DESC
+
+-- 6. Non-aggregated column error
+SELECT dept, rep, COUNT(*)
+FROM   sales GROUP BY dept;      -- ERROR: rep not in GROUP BY ✅
+
+-- 7. PK shortcut
+CREATE TEMP TABLE t_users (id INT PRIMARY KEY, name TEXT, city TEXT);
+INSERT INTO t_users VALUES (1,'Raj','Mumbai'),(2,'Priya','Delhi');
+CREATE TEMP TABLE t_orders2 (id INT, user_id INT, amount INT);
+INSERT INTO t_orders2 VALUES (1,1,100),(2,1,200),(3,2,300);
+
+SELECT u.id, u.name, u.city, COUNT(o.id), SUM(o.amount)
+FROM   t_users u
+LEFT JOIN t_orders2 o ON u.id = o.user_id
+GROUP BY u.id;  -- id is PK → name, city allowed without GROUP BY ✅
+
+-- 8. EXPLAIN strategies
+EXPLAIN SELECT dept, COUNT(*) FROM sales GROUP BY dept;
+-- HashAggregate (small table) ✅
+`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Golden Rules" icon="shield">
+    ```text
+    Q: What is the Golden Rule of GROUP BY?
+    A: Every SELECT column must be in GROUP BY or an aggregate.
+    
+    Q: Why does Postgres error on non-grouped cols?
+    A: Standard SQL compliance. MySQL guesses (often wrongly).
+    
+    Q: What is the PK Shortcut?
+    A: If you GROUP BY a Primary Key, you can SELECT other columns from that table without grouping them.
+    ```
+  </Card>
+  
+  <Card title="Performance & Internals" icon="rocket">
+    ```text
+    Q: HashAggregate vs GroupAggregate?
+    A: Hash = Unsorted, O(memory). Group = Sorted, O(1) memory.
+    
+    Q: How to fix HashAggregate spilling to disk?
+    A: Increase work_mem OR add index on GROUP BY column.
+    
+    Q: WHERE vs HAVING performance?
+    A: WHERE is cheaper. It reduces rows BEFORE grouping. Always filter rows in WHERE if possible.
+    ```
+  </Card>
+
+  <Card title="Common Pitfalls" icon="caution">
+    ```text
+    Q: Why are my JOIN counts inflated?
+    A: Joining two one-to-many tables creates a Cartesian product before grouping. Pre-aggregate in CTEs.
+    
+    Q: Can I use aliases in GROUP BY?
+    A: No. GROUP BY runs before SELECT. Use column positions (GROUP BY 1) or repeat expression.
+    
+    Q: Can I use aliases in ORDER BY?
+    A: Yes. ORDER BY runs after SELECT.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+GROUP BY — Complete Picture
+
+Input rows (after WHERE):
+┌─────┬──────┬────────┐
+│ id  │ dept │ amount │
+│  1  │ Eng  │  1000  │
+│  2  │ Eng  │  2000  │  ← same dept → same group
+│  3  │ Sales│   500  │
+│  4  │ Sales│   800  │  ← same dept → same group
+└─────┴──────┴────────┘
+          │
+          ▼ GROUP BY dept
+┌──────────────────────────────┐
+│ Group: Eng                   │
+│   rows: {1000, 2000}         │ → COUNT=2, SUM=3000, AVG=1500
+│ Group: Sales                 │
+│   rows: {500, 800}           │ → COUNT=2, SUM=1300, AVG=650
+└──────────────────────────────┘
+          │
+          ▼ HAVING AVG > 1000
+┌──────────────────────────────┐
+│ Group: Eng (avg=1500 > 1000) │ ← kept ✅
+│ Group: Sales (avg=650 < 1000)│ ← removed ❌
+└──────────────────────────────┘
+          │
+          ▼ SELECT + ORDER BY
+┌──────────┬───────┬──────┐
+│ dept     │ COUNT │ SUM  │
+│ Eng      │   2   │ 3000 │
+└──────────┴───────┴──────┘
+
+Strategy selection:
+  Input unsorted, small groups → HashAggregate O(n) time O(g) memory
+  Input sorted (index)         → GroupAggregate O(n) time O(1) memory
+
+Spill guard:
+  HashAggregate > work_mem → disk batches → 10-100× slower
+  Fix: index on GROUP BY col → GroupAggregate (no memory limit)
+  Fix: SET work_mem = '256MB' (session level only)
+
+Golden rule:
+  SELECT col → must be in GROUP BY (or aggregate)
+  Exception: SELECT pk → dependent cols allowed (PK shortcut)
+  HAVING → aggregate conditions only, rest goes in WHERE
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always check `EXPLAIN` for `HashAggregate` vs `GroupAggregate`
+2. ✅ Use `GROUP BY 1, 2` for cleaner analytics queries
+3. ✅ Pre-aggregate complex JOINs in CTEs
+4. ✅ Use `HAVING` only for aggregate filters; `WHERE` for everything else
+
+Mastering `GROUP BY` turns raw data into actionable insights efficiently. 🐘✨
+</Aside>

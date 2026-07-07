@@ -1,0 +1,317 @@
+---
+title: JavaScript Custom Errors
+slug: computer-languages/javascript/runtime/custom-errors
+description: Master JS custom errors, extending the Error class, and domain-specific exception handling patterns.
+sidebar:
+  label: "Custom Errors"
+  badge:
+    text: Exception Mechanics
+    variant: tip
+tags: [javascript, custom-errors, error-handling, oop, interview]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🛠️ Custom Errors in JavaScript
+
+> In Java, you choose between `Exception` (Checked) and `RuntimeException` (Unchecked).  
+> In **JavaScript**, there are **no Checked Exceptions**. All errors are unchecked.  
+> Custom errors are created by extending the built-in `Error` class to provide domain-specific context.
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+Think of Custom Errors as **Structured Data for Failures**.  
+Instead of just a string message, you attach codes, IDs, and metadata.  
+✅ **Key Difference**: JS doesn't force callers to handle specific errors. It relies on **convention** and **global handlers**.
+</Aside>
+
+---
+
+## 🔬 Why Custom Errors?
+
+Standard JS errors (`Error`, `TypeError`) are generic. Custom errors allow you to distinguish between **technical failures** and **business logic failures**.
+
+| Standard Error | Custom Error | Use Case |
+|----------------|--------------|----------|
+| `Error` | `ValidationError` | User input is invalid |
+| `TypeError` | `PaymentDeclinedError` | Business rule violation |
+| `ReferenceError` | `ResourceNotFoundError` | Entity missing in DB |
+
+<Code lang="js" title="Basic Custom Error" code={`
+class ValidationError extends Error {
+    constructor(message, field) {
+        super(message);
+        this.name = "ValidationError"; // Important for stack traces
+        this.field = field;            // Custom property
+    }
+}
+
+// Usage
+throw new ValidationError("Invalid email", "email");
+`} />
+
+<Aside type="caution">
+**Crucial Step**: Always set `this.name = 'MyError'` in the constructor.  
+If you don't, the stack trace will show `Error` instead of your custom class name, making debugging harder.
+</Aside>
+
+---
+
+## 🏗️ Production-Grade Custom Error
+
+In a real app, you want more than just a message. You want codes, IDs, and cause chaining.
+
+<Code lang="js" title="Advanced Custom Error" code={`
+class AppError extends Error {
+    constructor(message, code, statusCode = 500, cause = null) {
+        super(message);
+        
+        // Ensure correct prototype chain (V8/Node quirk)
+        Object.setPrototypeOf(this, AppError.prototype);
+        
+        this.name = "AppError";
+        this.code = code;          // Machine-readable code
+        this.statusCode = statusCode; // HTTP status
+        this.cause = cause;        // Original error (ES2022 standard)
+    }
+}
+
+class NotFoundError extends AppError {
+    constructor(resource, id) {
+        super(
+            \`\${resource} with ID \${id} not found\`, 
+            "RESOURCE_NOT_FOUND", 
+            404
+        );
+        this.name = "NotFoundError";
+        this.resource = resource;
+        this.id = id;
+    }
+}
+
+// Usage
+throw new NotFoundError("User", 123);
+`} />
+
+<Aside type="note">
+**`Object.setPrototypeOf`**: In some environments (like older Node.js or Babel transpilation), extending `Error` can break the prototype chain. This line ensures `instanceof` checks work correctly.
+</Aside>
+
+---
+
+## 💻 Real-World Code — Domain Error Hierarchy
+
+Organize errors by domain to make handling predictable.
+
+<Code lang="js" title="Error Hierarchy" code={`
+// Base Class
+class DomainError extends Error {
+    constructor(message, code, statusCode) {
+        super(message);
+        Object.setPrototypeOf(this, DomainError.prototype);
+        this.name = "DomainError";
+        this.code = code;
+        this.statusCode = statusCode;
+    }
+}
+
+// Specific Errors
+class InsufficientFundsError extends DomainError {
+    constructor(balance, amount) {
+        super(
+            \`Insufficient funds: \${balance} < \${amount}\`,
+            "INSUFFICIENT_FUNDS",
+            402
+        );
+        this.name = "InsufficientFundsError";
+        this.balance = balance;
+        this.amount = amount;
+    }
+}
+
+class AccountFrozenError extends DomainError {
+    constructor(accountId) {
+        super("Account is frozen", "ACCOUNT_FROZEN", 403);
+        this.name = "AccountFrozenError";
+        this.accountId = accountId;
+    }
+}
+`} />
+
+### Handling Specific Errors
+
+<Code lang="js" title="Precise Handling" code={`
+async function transferMoney(from, to, amount) {
+    try {
+        await paymentGateway.charge(from, amount);
+    } catch (error) {
+        if (error instanceof InsufficientFundsError) {
+            // Send push notification to top up
+            notifyUser(from, "Please add funds.");
+        } else if (error instanceof AccountFrozenError) {
+            // Flag for fraud review
+            flagForReview(from);
+        } else {
+            // Generic fallback
+            throw error;
+        }
+    }
+}
+`} />
+
+---
+
+## ⚡ Async & Custom Errors
+
+Custom errors propagate through Promises and `async/await` just like standard errors.
+
+<Code lang="js" title="Async Propagation" code={`
+async function getUser(id) {
+    const user = await db.find(id);
+    if (!user) {
+        throw new NotFoundError("User", id);
+    }
+    return user;
+}
+
+// Handling
+try {
+    await getUser(999);
+} catch (err) {
+    if (err instanceof NotFoundError) {
+        res.status(404).json({ error: err.message });
+    } else {
+        next(err); // Pass to global handler
+    }
+}
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Forgetting `super()`" icon="error">
+    ```js
+    class MyError extends Error {
+        constructor(msg) {
+            // ❌ ReferenceError: Must call super constructor
+            this.name = "MyError"; 
+        }
+    }
+    // Fix: Always call super(msg) first.
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Losing the Stack Trace" icon="caution">
+    ```js
+    try {
+        riskyOp();
+    } catch (e) {
+        throw new Error("Failed"); // 😱 Original stack trace lost!
+    }
+    
+    // ✅ Fix: Use 'cause' (ES2022)
+    throw new Error("Failed", { cause: e });
+    ```
+  </Card>
+
+  <Card title="Trap 3: Throwing Non-Errors" icon="shield">
+    ```js
+    throw "Error"; 
+    // Valid, but no stack trace, no 'name', hard to debug.
+    // Always throw instances of Error.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you create a custom error in JS?" icon="information">
+    Extend the `Error` class. Call `super(message)` and set `this.name`.
+  </Card>
+  
+  <Card title="Q: What is the difference between Checked and Unchecked in JS?" icon="error">
+    **JS has no Checked Exceptions.** All errors are unchecked. You rely on documentation and conventions, not compiler enforcement.
+  </Card>
+
+  <Card title="Q: Why use `instanceof` for error handling?" icon="approve-check">
+    It allows you to distinguish between different types of failures (e.g., `NotFoundError` vs `ValidationError`) and react appropriately.
+  </Card>
+
+  <Card title="Q: What is the `cause` property?" icon="rocket">
+    Introduced in ES2022, `error.cause` allows you to chain errors, preserving the original stack trace when wrapping errors.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+JS CUSTOM ERROR CHECKLIST
+
+1. Structure:
+   class MyError extends Error {
+       constructor(msg) {
+           super(msg);
+           this.name = "MyError";
+           Object.setPrototypeOf(this, MyError.prototype);
+       }
+   }
+
+2. Properties:
+   - message: Human readable
+   - name: Class name
+   - code: Machine readable (optional)
+   - cause: Original error (optional)
+
+3. Handling:
+   - Use instanceof to check type
+   - Use global handlers for uncaught errors
+
+⚠️ Key Differences from Java:
+- No Checked Exceptions
+- No 'throws' declaration
+- Must manually fix prototype chain in some envs
+- Use 'cause' for chaining
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Create a base `AppError` class for your project.
+2. ✅ Extend it for specific domains (Auth, Payment, DB).
+3. ✅ Use `error.cause` to wrap low-level errors.
+4. ✅ Implement a Global Error Handler to map errors to HTTP statuses.
+
+Mastering custom errors makes your API responses consistent and debugging easier. ☕✨
+</Aside>
+```
+
+---
+
+## 🔄 Java Custom Exceptions → JS Custom Errors Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **extends Exception** | `extends Error` | JS has no checked/unchecked distinction. |
+| **extends RuntimeException** | `extends Error` | Same syntax, but no compiler enforcement. |
+| **throws keyword** | ❌ None | JS functions don't declare thrown errors. |
+| **Serialization** | `JSON.stringify` | JS errors don't serialize automatically (need custom toJSON). |
+| **Cause Chaining** | `error.cause` | Standardized in ES2022. |
+| **Stack Trace** | `error.stack` | Available on all Error objects. |
+
+---
+
+🧠 **Interview Power Move**: When asked about custom errors, always mention:  
+1. **Prototype Chain**: Why `Object.setPrototypeOf` is sometimes needed.  
+2. **No Checked Exceptions**: How JS handles this via conventions/global handlers.  
+3. **Error Causes**: Using `{ cause: e }` to preserve traces.  
+4. **Domain Modeling**: Mapping errors to HTTP status codes.  
+5. **Instanceof**: Using it for precise control flow.  
+
+---
+

@@ -1,0 +1,1047 @@
+---
+title: C++ Static Initialization Order
+slug: computer-languages/cpp/oop/static-initialization
+description: Master C++ static initialization — translation units, order of evaluation, SIOF (Static Initialization Order Fiasco), constexpr, and production patterns for reliable startup code.
+sidebar:
+  label: "Static Flow"
+  badge:
+    text: C++ Internals
+    variant: tip
+tags: [cpp, static, initialization, siof, constexpr, interview, linkage]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## ⚡ Static Initialization in C++
+
+> **In C++, static variables are initialized before `main()` starts. However, unlike Java, the order of initialization across different files (Translation Units) is largely undefined. This leads to the infamous "Static Initialization Order Fiasco" (SIOF).**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of C++ static init as **Two Phases**.
+1. **Static Initialization**: Zero-initialization + Constant expressions. (Deterministic, happens first).
+2. **Dynamic Initialization**: Running constructors/functions. (Order within a file is top-to-bottom; order *between* files is undefined).
+⚠️ If File A depends on File B's dynamic init, you might get garbage or a crash.
+</Aside>
+
+---
+
+## 🔬 The Two Phases (C++ Standard Model)
+
+```
+PROGRAM STARTUP
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 1 — STATIC INITIALIZATION            │
+│  1. Zero-initialization (globals = 0/null)  │
+│  2. Constant initialization (constexpr)     │
+│  ✅ Deterministic & Safe                    │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 2 — DYNAMIC INITIALIZATION           │
+│  Runs constructors & non-const exprs        │
+│  ❗ Order within file: Top-to-Bottom       │
+│  ❗ Order between files: UNDEFINED         │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│  PHASE 3 — main() executes                  │
+└─────────────────────────────────────────────┘
+```
+
+### The Execution Order 📜
+
+```text
+1. Zero-Init: All static storage duration vars set to 0/false/nullptr.
+2. Const-Init: constexpr vars computed at compile time.
+3. Dynamic-Init: 
+   - Within same .cpp: Top to Bottom.
+   - Across different .cpps: Undefined (Linker decides).
+4. main()
+5. Exit: Destructors run in reverse order of construction (within TU).
+```
+
+---
+
+## 💻 Real-World Code — The "SIOF" Trap
+
+The **Static Initialization Order Fiasco** occurs when one global variable depends on another global variable in a different file.
+
+<FileStructure>
+  <File name="a.cpp">
+    ```cpp
+    #include <iostream>
+    extern int b_val; // Declared in b.cpp
+
+    // Dynamic Init: Depends on b_val
+    int a_val = b_val + 10; 
+
+    void printA() {
+        std::cout << "A: " << a_val << std::endl;
+    }
+    ```
+  </File>
+  <File name="b.cpp">
+    ```cpp
+    #include <iostream>
+
+    // Dynamic Init
+    int b_val = 20;
+
+    void printB() {
+        std::cout << "B: " << b_val << std::endl;
+    }
+    ```
+  </File>
+  <File name="main.cpp">
+    ```cpp
+    extern void printA();
+    extern void printB();
+
+    int main() {
+        printA();
+        printB();
+    }
+    ```
+  </File>
+</FileStructure>
+
+**Output (Undefined Behavior):**
+```text
+Scenario 1 (b.cpp init first):
+A: 30
+B: 20
+
+Scenario 2 (a.cpp init first):
+A: 10  ← b_val was still 0 (zero-init) when a_val calculated!
+B: 20
+```
+
+<Aside type="danger">
+**🚨 Production Bug**: If `a.cpp` initializes before `b.cpp`, `a_val` becomes `10` instead of `30`. This is silent data corruption at startup.
+</Aside>
+
+---
+
+## 🛑 Forward References & Solutions
+
+C++ does not have a "RIWO" (Read Indirectly Write Only) compiler check like Java. It simply lets you shoot yourself in the foot.
+
+<CardGrid>
+  <Card title="❌ The Fiasco (Cross-TU Dependency)" icon="error">
+    ```cpp
+    // file1.cpp
+    extern int x;
+    int y = x + 1; // If x isn't init yet, y is wrong.
+    ```
+  </Card>
+  
+  <Card title="✅ Solution 1: Construct On First Use" icon="approve-check">
+    ```cpp
+    // header.h
+    int& getX() {
+        static int x = 42; // Local static: Init on first call
+        return x;
+    }
+    
+    // file1.cpp
+    int y = getX() + 1; // Safe! getX() ensures x is init.
+    ```
+  </Card>
+
+  <Card title="✅ Solution 2: constexpr (Compile Time)" icon="information">
+    ```cpp
+    // header.h
+    constexpr int x = 42; // Static Init Phase
+    
+    // file1.cpp
+    int y = x + 1; // Safe! x is known at compile time.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔁 Inheritance — No "Parent First" Guarantee for Globals
+
+Unlike Java, where Parent static blocks *always* run before Child static blocks, C++ global objects in different TUs have no guaranteed order unless they are in the same file.
+
+<Code lang="cpp" title="Global Objects vs Static Members" code={`
+class Parent {
+public:
+    static int x;
+};
+int Parent::x = 10; // Global scope initialization
+
+class Child : public Parent {
+public:
+    static int y;
+};
+int Child::y = 20; // Global scope initialization
+
+// If these are in different files, order is undefined.
+// If in same file, Parent::x init runs before Child::y (top-to-bottom).
+`} />
+
+<Aside type="note">
+**Key Insight**: C++ class *static members* are just global variables with scoped names. They follow global initialization rules, not class hierarchy rules.
+</Aside>
+
+---
+
+## 🔧 Initialization Triggers
+
+| Trigger | Initialization Phase | Notes |
+|---------|----------------------|-------|
+| `constexpr int x = 5;` | Static (Compile-time) | Zero overhead. |
+| `int x = 5;` (Global) | Static (Zero) → Dynamic (Assign) | Simple types often optimized to Static. |
+| `std::string s = "hi";` | Dynamic | Constructor runs at startup. |
+| `static int x = func();` | Dynamic | Function call at startup. |
+| `static int x = 0;` | Static | Zero-initialized. |
+
+### 🪤 Trap: Complex Constructors in Headers
+
+<Code lang="cpp" title="Header Globals are Dangerous" code={`
+// utils.h
+#include <vector>
+std::vector<int> globalData = {1, 2, 3}; // ❌ Dynamic Init in Header
+
+// If included in multiple .cpp files, which one initializes it?
+// ODR Violation risk if not inline.
+`} />
+
+<Aside type="tip">
+**Fix**: Use `inline` variables (C++17) or move definitions to `.cpp` files.
+```cpp
+// utils.h
+inline std::vector<int> globalData = {1, 2, 3}; // ✅ Safe, one instance
+```
+</Aside>
+
+---
+
+## 🔩 Internals — Startup Code
+
+Before `main()`, the C++ Runtime (CRT) executes startup code.
+1. **Zero Init**: BSS segment cleared.
+2. **Const Init**: Data segment loaded.
+3. **Dynamic Init**: Calls to `_init` functions or constructors registered by the compiler.
+
+If a dynamic initializer throws an exception, `std::terminate()` is called immediately. **You cannot catch exceptions from global constructors.**
+
+---
+
+## 🏭 SDE/SRE Relevance & Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Meyer's Singleton" icon="rocket">
+    ```cpp
+    class Database {
+    public:
+        static Database& getInstance() {
+            static Database instance; // Thread-safe init (C++11+)
+            return instance;
+        }
+    private:
+        Database() { /* Connect... */ }
+    };
+    // Solves SIOF: Init happens on first use, not at startup.
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Compile-Time Lookup Tables" icon="shield">
+    ```cpp
+    // Zero runtime cost, no SIOF risk
+    constexpr std::array<int, 5> lookup = {1, 2, 3, 4, 5};
+    
+    int getValue(int i) {
+        return lookup[i];
+    }
+    ```
+  </Card>
+
+  <Card title="Anti-Pattern: Global State with Dependencies" icon="error">
+    ```cpp
+    // logger.cpp
+    Logger globalLogger; 
+    
+    // app.cpp
+    extern Logger globalLogger;
+    AppConfig config(globalLogger); // ❌ SIOF Risk if logger not ready
+    ```
+  </Card>
+
+  <Card title="Anti-Pattern: Heavy Work in Constructors" icon="caution">
+    ```cpp
+    class HeavyLoader {
+    public:
+        HeavyLoader() {
+            loadHugeFile(); // ❌ Slows down startup unpredictably
+            // If it fails, program crashes before main()
+        }
+    };
+    HeavyLoader loader; // Global
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Execution Order" icon="information">
+    ```text
+    Q: What is the order of static init in C++?
+    A: Within a file: Top-to-Bottom. Across files: Undefined.
+    
+    Q: What is SIOF?
+    A: Static Initialization Order Fiasco. Using a global var from another file before it's initialized.
+    ```
+  </Card>
+  
+  <Card title="Forward References" icon="shield">
+    ```text
+    Q: Can I use a global var before it's defined?
+    A: If it's in another file, yes (via extern), but value is undefined if dynamic init hasn't run.
+    
+    Q: How to fix SIOF?
+    A: Use "Construct on First Use" (function-local static) or constexpr.
+    ```
+  </Card>
+
+  <Card title="Constants & Loading" icon="rocket">
+    ```text
+    Q: Does constexpr initialize at runtime?
+    A: No, at compile time. It's part of Static Initialization.
+    
+    Q: Are local statics thread-safe?
+    A: Yes, since C++11. Magic statics guarantee safe init.
+    ```
+  </Card>
+
+  <Card title="Common Traps" icon="caution">
+    ```text
+    Q: What happens if a global constructor throws?
+    A: std::terminate(). You can't catch it.
+    
+    Q: Difference between Java and C++ static init?
+    A: Java is deterministic (Class Loader). C++ is undefined across TUs.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+STATIC INIT CHECKLIST
+
+1. Phase 1 (Static):
+   - Zero-init everything.
+   - Compute constexprs.
+   - ✅ Safe.
+
+2. Phase 2 (Dynamic):
+   - Run constructors/non-const inits.
+   - Within .cpp: Top-to-Bottom.
+   - Between .cpps: ❗ UNDEFINED.
+
+3. SIOF Prevention:
+   - Avoid cross-file global dependencies.
+   - Use function-local statics (Meyer's Singleton).
+   - Use constexpr where possible.
+
+4. Safety:
+   - No exceptions from globals.
+   - Destructors run in reverse order (within TU).
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Prefer `constexpr` for constants.
+2. ✅ Use function-local statics for complex global objects.
+3. ✅ Avoid global state that depends on other global state.
+4. ✅ Keep global constructors lightweight.
+
+Mastering static init prevents heisenbugs that only appear at startup. ☕✨
+</Aside>
+
+---
+
+# ⚙️ C++ Static Control Flow — Complete Deep Dive
+
+---
+
+## 📌 What Is Static Control Flow?
+
+**Branching that happens at compile time** — the compiler selects which code path to keep, discard, or generate based on types and constants known before runtime.
+
+```
+Runtime control flow:
+  if (x > 5) { }    ← CPU evaluates at runtime
+                       both branches exist in binary
+                       branch predictor involved
+
+Static control flow:
+  if constexpr (is_integral_v<T>) { }   ← compiler evaluates
+                                           false branch NEVER compiled
+                                           zero runtime cost
+                                           false branch can have invalid code
+```
+
+---
+
+## 🗺️ Mechanisms Map
+
+```
+Static Control Flow in C++
+│
+├── Preprocessor Level (before compilation)
+│   ├── #if / #ifdef / #ifndef / #elif / #endif
+│   └── #error / #warning
+│
+├── Language Level (during compilation)
+│   ├── static_assert          → compile-time assertion
+│   ├── if constexpr (C++17)   → compile-time branch selection
+│   ├── constexpr functions    → compile-time computation
+│   ├── consteval (C++20)      → MUST be compile-time
+│   └── constinit (C++20)      → guaranteed static initialization
+│
+├── Template Level
+│   ├── Template specialization → type-based code selection
+│   ├── SFINAE                  → substitution-failure filtering
+│   ├── std::enable_if          → conditional template instantiation
+│   ├── Tag dispatch            → type-tag based branching
+│   └── Concepts (C++20)        → named compile-time constraints
+│
+└── Library Level
+    ├── std::conditional<>      → compile-time type selection
+    ├── std::is_same_v<>        → compile-time type comparison
+    └── type_traits             → compile-time type introspection
+```
+
+---
+
+## 🔷 1. Preprocessor Control Flow
+
+```cpp
+// Platform-specific code selection
+#if defined(_WIN32)
+    #include <windows.h>
+    using SocketHandle = SOCKET;
+#elif defined(__linux__)
+    #include <unistd.h>
+    using SocketHandle = int;
+#elif defined(__APPLE__)
+    #include <sys/socket.h>
+    using SocketHandle = int;
+#else
+    #error "Unsupported platform"
+#endif
+
+// Feature flags
+#ifdef ENABLE_LOGGING
+    #define LOG(msg) std::cerr << "[LOG] " << msg << "\n"
+#else
+    #define LOG(msg) do { } while(0)    // expands to nothing
+#endif
+
+// C++ version gating
+#if __cplusplus >= 202002L
+    #include <format>
+    #define HAS_FORMAT 1
+#endif
+
+// Debug vs Release
+#ifdef NDEBUG
+    #define ASSERT(x) ((void)0)         // release: no-op
+#else
+    #define ASSERT(x) assert(x)         // debug: actual check
+#endif
+```
+
+### Preprocessor vs Language-Level
+
+| | Preprocessor `#if` | `if constexpr` |
+|---|---|---|
+| Knows C++ types | ❌ text substitution only | ✅ full type system |
+| Syntax checked in false branch | ❌ not even parsed | ✅ must be syntactically valid |
+| Scope | file-level | block-level |
+| Debuggable | ❌ macros disappear | ✅ real C++ |
+| Prefer in modern C++ | ❌ only for platform/feature flags | ✅ for type-based branching |
+
+---
+
+## 🔷 2. `static_assert` — Compile-Time Assertion
+
+```cpp
+// Fail compilation if condition is false
+static_assert(sizeof(int) == 4, "int must be 4 bytes");
+static_assert(sizeof(void*) == 8, "only 64-bit supported");
+
+// In templates — check template arguments
+template<typename T>
+class FixedBuffer {
+    static_assert(std::is_trivially_copyable_v<T>,
+        "T must be trivially copyable for FixedBuffer");
+    static_assert(sizeof(T) <= 64,
+        "T too large for FixedBuffer — use HeapBuffer instead");
+    T data_[1024];
+};
+
+FixedBuffer<int>         ok;    // ✅ int is trivially copyable, small
+FixedBuffer<std::string> err;   // ❌ compile error: string not trivially copyable
+
+// Numerical constraints
+template<int N>
+class CircularBuffer {
+    static_assert(N > 0, "Buffer size must be positive");
+    static_assert((N & (N-1)) == 0, "Size must be power of 2");
+    // guaranteed: N > 0 AND N is power of 2
+};
+
+CircularBuffer<8>  ok;   // ✅
+CircularBuffer<0>  err;  // ❌ compile error
+CircularBuffer<3>  err;  // ❌ compile error — not power of 2
+```
+
+### `static_assert` at Different Scopes
+
+```cpp
+// Global scope — checked always
+static_assert(CHAR_BIT == 8, "exotic platform not supported");
+
+// Class scope — checked when class instantiated
+template<typename T>
+class Wrapper {
+    static_assert(!std::is_pointer_v<T>,
+        "Wrapper does not accept raw pointers — use Wrapper<T*> intentionally?");
+};
+
+// Function scope — checked when function instantiated
+template<typename T>
+void serialize(const T& val) {
+    static_assert(std::is_standard_layout_v<T>,
+        "Can only serialize standard-layout types");
+}
+```
+
+---
+
+## 🔷 3. `if constexpr` — Compile-Time Branch Selection
+
+### Core Behavior
+
+```cpp
+template<typename T>
+void process(T val) {
+    if constexpr (std::is_integral_v<T>) {
+        // This branch compiled ONLY for integral T
+        val.integer_method();   // OK — only compiled if T is integral
+    } else if constexpr (std::is_floating_point_v<T>) {
+        // This branch compiled ONLY for floating-point T
+        val.float_method();
+    } else {
+        // All other types
+        val.generic_method();
+    }
+}
+// For T=int: only first branch exists in binary
+// For T=double: only second branch exists
+// Each instantiation: single code path, no dead code
+```
+
+### Regular `if` vs `if constexpr`
+
+```cpp
+template<typename T>
+void bad(T val) {
+    if (std::is_integral_v<T>) {        // regular if
+        val.integer_method();            // ❌ must compile for ALL T
+    }                                    //    compile error if T=double
+}
+
+template<typename T>
+void good(T val) {
+    if constexpr (std::is_integral_v<T>) {  // constexpr if
+        val.integer_method();                 // ✅ only compiled for integral T
+    }                                         //    never instantiated for T=double
+}
+```
+
+### Real-World Template Serialization
+
+```cpp
+template<typename T>
+std::string to_string(const T& val) {
+    if constexpr (std::is_same_v<T, bool>) {
+        return val ? "true" : "false";
+    } else if constexpr (std::is_integral_v<T>) {
+        return std::to_string(val);
+    } else if constexpr (std::is_floating_point_v<T>) {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(6) << val;
+        return oss.str();
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        return '"' + val + '"';
+    } else if constexpr (std::is_same_v<T, const char*>) {
+        return '"' + std::string(val) + '"';
+    } else {
+        // Fallback — requires T::to_string()
+        return val.to_string();
+    }
+}
+
+to_string(true);        // → "true"
+to_string(42);          // → "42"
+to_string(3.14);        // → "3.140000"
+to_string("hello"s);    // → "\"hello\""
+```
+
+### `if constexpr` in Recursive Templates
+
+```cpp
+// Variadic print — no base case function needed
+template<typename T, typename... Rest>
+void print_all(T first, Rest... rest) {
+    std::cout << first;
+    if constexpr (sizeof...(rest) > 0) {
+        std::cout << ", ";
+        print_all(rest...);   // recursion — only compiled if rest not empty
+    }
+    // When rest is empty: no recursive call compiled
+    // No base case needed — if constexpr handles it
+}
+
+print_all(1, 2.5, "hello", 'x');
+// → 1, 2.5, hello, x
+```
+
+---
+
+## 🔷 4. `constexpr` Functions — Compile-Time Computation
+
+```cpp
+constexpr int factorial(int n) {
+    return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+// Compile-time evaluation
+constexpr int f10 = factorial(10);   // computed at compile time
+                                      // f10 = 3628800 in .rodata
+
+// Runtime evaluation (same function!)
+int n;
+std::cin >> n;
+int fn = factorial(n);    // computed at runtime
+
+// Array size from constexpr
+int arr[factorial(5)];    // ✅ factorial(5) = 120 — compile-time constant
+```
+
+### `constexpr` Control Flow Inside Function
+
+```cpp
+constexpr int collatz_steps(int n) {
+    int steps = 0;
+    while (n != 1) {           // while loop in constexpr (C++14+)
+        if (n % 2 == 0)
+            n /= 2;
+        else
+            n = 3 * n + 1;
+        steps++;
+    }
+    return steps;
+}
+
+constexpr int c27 = collatz_steps(27);   // = 111 — compile-time
+```
+
+---
+
+## 🔷 5. `consteval` — Guaranteed Compile-Time (C++20)
+
+```cpp
+// consteval = must be evaluated at compile time
+// calling with runtime args = compile error
+consteval int square(int n) { return n * n; }
+
+constexpr int a = square(5);    // ✅ compile-time
+int n = 5;
+int b = square(n);              // ❌ compile error — n not constexpr
+
+// Use case: compile-time validated string
+consteval const char* checked_format(const char* fmt) {
+    // validate fmt at compile time
+    // if invalid → compile error
+    return fmt;
+}
+```
+
+---
+
+## 🔷 6. Template Specialization as Control Flow
+
+```cpp
+// Primary template — general case
+template<typename T>
+struct TypeInfo {
+    static constexpr const char* name = "unknown";
+    static constexpr bool is_numeric  = false;
+};
+
+// Full specializations — type-specific cases
+template<>
+struct TypeInfo<int> {
+    static constexpr const char* name = "int";
+    static constexpr bool is_numeric  = true;
+    static constexpr int min = INT_MIN;
+    static constexpr int max = INT_MAX;
+};
+
+template<>
+struct TypeInfo<double> {
+    static constexpr const char* name = "double";
+    static constexpr bool is_numeric  = true;
+};
+
+template<>
+struct TypeInfo<std::string> {
+    static constexpr const char* name = "string";
+    static constexpr bool is_numeric  = false;
+};
+
+// Partial specialization — for all pointer types
+template<typename T>
+struct TypeInfo<T*> {
+    static constexpr const char* name = "pointer";
+    static constexpr bool is_numeric  = false;
+};
+
+// Usage — selected at compile time based on type
+TypeInfo<int>::name      // → "int"
+TypeInfo<double*>::name  // → "pointer" (partial spec)
+TypeInfo<float>::name    // → "unknown" (primary)
+```
+
+---
+
+## 🔷 7. SFINAE — Substitution Failure Is Not An Error
+
+When template substitution fails → that overload silently removed, no error.
+
+```cpp
+// Enable function only for integral types
+template<typename T>
+typename std::enable_if<std::is_integral_v<T>, T>::type
+double_val(T x) {
+    return x * 2;
+}
+
+// Enable function only for floating-point types
+template<typename T>
+typename std::enable_if<std::is_floating_point_v<T>, T>::type
+double_val(T x) {
+    return x * 2.0;
+}
+
+double_val(5);      // selects int version
+double_val(3.14);   // selects double version
+double_val("hi");   // ❌ compile error — no valid overload
+```
+
+### Cleaner SFINAE with `std::enable_if_t`
+
+```cpp
+// Trailing return with enable_if (C++11)
+template<typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
+T next_power_of_two(T n) {
+    T result = 1;
+    while (result < n) result <<= 1;
+    return result;
+}
+
+// Or as non-type template parameter
+template<typename T, std::enable_if_t<std::is_integral_v<T>, int> = 0>
+T next_power_of_two(T n) { /* ... */ }
+```
+
+---
+
+## 🔷 8. Tag Dispatch — Type-Based Static Branching
+
+```cpp
+// Tags — empty types, carry type information
+struct RandomAccessTag { };
+struct ForwardTag      { };
+struct InputTag        { };
+
+// Tag → algorithm selection at compile time
+template<typename It>
+void advance_impl(It& it, int n, RandomAccessTag) {
+    it += n;         // O(1) — random access can jump directly
+}
+
+template<typename It>
+void advance_impl(It& it, int n, ForwardTag) {
+    while (n-- > 0) ++it;   // O(n) — must step through
+}
+
+// Dispatcher — selects based on iterator category
+template<typename It>
+void my_advance(It& it, int n) {
+    using Category = typename std::iterator_traits<It>::iterator_category;
+
+    if constexpr (std::is_base_of_v<std::random_access_iterator_tag, Category>)
+        advance_impl(it, n, RandomAccessTag{});
+    else
+        advance_impl(it, n, ForwardTag{});
+}
+
+std::vector<int> v(100);
+auto it = v.begin();
+my_advance(it, 50);    // → advance_impl with RandomAccessTag — O(1)
+
+std::list<int> l(100);
+auto lit = l.begin();
+my_advance(lit, 50);   // → advance_impl with ForwardTag — O(n)
+```
+
+---
+
+## 🔷 9. `std::conditional` — Compile-Time Type Selection
+
+```cpp
+// Select type at compile time based on condition
+template<bool B, typename T, typename F>
+// std::conditional<B, T, F>::type = T if B, else F
+
+template<bool IsConst>
+using Reference = std::conditional_t<IsConst, const int&, int&>;
+
+Reference<true>  cr = x;    // const int&
+Reference<false> mr = x;    // int&
+
+// Real use — adaptive container storage
+template<typename T, bool UseSmallBuffer>
+class Storage {
+    using ContainerType = std::conditional_t
+        UseSmallBuffer,
+        std::array<T, 16>,    // small buffer — if UseSmallBuffer
+        std::vector<T>        // heap — otherwise
+    >;
+    ContainerType data_;
+};
+
+Storage<int, true>  small;   // uses std::array<int,16> — no heap
+Storage<int, false> large;   // uses std::vector<int>   — heap
+```
+
+---
+
+## 🔷 10. Concepts (C++20) — Named Static Constraints
+
+```cpp
+// Define compile-time interface contracts
+template<typename T>
+concept Hashable = requires(T t) {
+    { std::hash<T>{}(t) } -> std::convertible_to<std::size_t>;
+};
+
+template<typename T>
+concept Numeric = std::integral<T> || std::floating_point<T>;
+
+template<typename T>
+concept Container = requires(T c) {
+    c.begin(); c.end(); c.size();
+    typename T::value_type;
+    typename T::iterator;
+};
+
+template<typename T>
+concept Printable = requires(T t, std::ostream& os) {
+    { os << t } -> std::same_as<std::ostream&>;
+};
+
+// Use concepts — cleaner than SFINAE
+template<Numeric T>
+T absolute(T val) {
+    return val < 0 ? -val : val;
+}
+
+template<Container C>
+    requires Printable<typename C::value_type>
+void print_all(const C& c) {
+    for (const auto& x : c) std::cout << x << " ";
+}
+
+// Concept-based overloading
+template<std::integral T>
+T divide(T a, T b) { return a / b; }          // integer division
+
+template<std::floating_point T>
+T divide(T a, T b) { return a / b; }          // float division
+
+divide(7, 2);     // → 3   (integral version)
+divide(7.0, 2.0); // → 3.5 (floating-point version)
+```
+
+---
+
+## 🔬 Under the Hood — What Static Control Flow Compiles To
+
+```cpp
+template<typename T>
+T process(T val) {
+    if constexpr (std::is_integral_v<T>) {
+        return val * 2;
+    } else {
+        return val + val;
+    }
+}
+```
+
+```asm
+; process<int>(int):
+; ONLY the integer branch — multiply
+process_int:
+    lea eax, [rdi + rdi]    ; eax = val * 2 (add optimization of *2)
+    ret
+
+; process<double>(double):
+; ONLY the double branch — add
+process_double:
+    addsd xmm0, xmm0        ; xmm0 = val + val
+    ret
+
+; The OTHER branch doesn't exist in binary at all
+; Zero overhead — single path per instantiation
+```
+
+```cpp
+// static_assert — compile-time only
+static_assert(sizeof(int) == 4);
+// Generates ZERO instructions
+// Checked entirely during compilation
+// Disappears completely in binary
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Cross-platform atomic integer with SIMD optimization:**
+
+```cpp
+template<typename T>
+class AtomicCounter {
+    static_assert(std::is_integral_v<T>,
+        "AtomicCounter requires integral type");
+    static_assert(sizeof(T) <= 8,
+        "AtomicCounter supports up to 64-bit integers");
+
+    std::atomic<T> value_{0};
+
+public:
+    T increment() noexcept {
+        // Compile-time platform selection
+        if constexpr (sizeof(T) == 8) {
+            #if defined(__x86_64__)
+                T old;
+                __asm__ volatile(
+                    "lock xaddq %0, %1"
+                    : "=r"(old), "+m"(value_)
+                    : "0"(T(1))
+                    : "memory"
+                );
+                return old + 1;
+            #else
+                return value_.fetch_add(1, std::memory_order_relaxed) + 1;
+            #endif
+        } else {
+            return value_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+    }
+
+    T get() const noexcept { return value_.load(std::memory_order_relaxed); }
+};
+
+AtomicCounter<int>      int_counter;    // 4-byte, general path
+AtomicCounter<uint64_t> u64_counter;   // 8-byte, x86 asm path
+AtomicCounter<float>    err;           // ❌ compile error — static_assert
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+template<typename T>
+void foo(T val) {
+    if constexpr (false) {
+        int x = "not an int";   // valid?
+    }
+}
+foo(42);   // compiles?
+```
+> ✅ **Compiles.** `if constexpr (false)` → false branch completely **discarded** — not instantiated, not type-checked. Invalid code in discarded branch = fine. With regular `if (false)`: ❌ compile error — both branches compiled.
+
+**Trap 2:**
+```cpp
+template<typename T>
+void bar() {
+    if constexpr (std::is_integral_v<T>) {
+        static_assert(sizeof(T) == 4, "must be 4 bytes");
+    }
+}
+bar<char>();   // fires assert?
+```
+> **No.** `char` is integral → enters `if constexpr` block. `sizeof(char) == 1 != 4` → **static_assert fires** — compile error. `if constexpr` discards the whole branch only when the outer condition is false. Inner `static_assert` still evaluated when branch is taken.
+
+**Trap 3:**
+```cpp
+constexpr int val = 42;
+if constexpr (val > 10) {
+    // ...
+}
+// vs
+const int val2 = 42;
+if constexpr (val2 > 10) {
+    // ...
+}
+// Both work?
+```
+> Both work — `constexpr` guarantees compile-time. `const int val2 = 42` with literal initializer is also a compile-time constant (integral constant expression). `if constexpr` requires constant expression — both qualify. But `const int val2 = runtime_value()` → ❌ not a constant expression → compile error.
+
+**Trap 4:**
+```cpp
+template<typename T>
+concept Addable = requires(T a, T b) { a + b; };
+
+template<Addable T>
+T add(T a, T b) { return a + b; }
+
+struct Foo { };
+Foo operator+(Foo, Foo) { return {}; }  // defined AFTER concept
+
+add(Foo{}, Foo{});   // works?
+```
+> ✅ Works — concepts check at point of use (call site), not definition. When `add(Foo{}, Foo{})` is called, `operator+` is already defined → `Addable<Foo>` is satisfied.
+
+**Trap 5:**
+```cpp
+constexpr bool flag = true;
+if constexpr (flag) {
+    int x = 5;
+}
+std::cout << x;   // compiles?
+```
+> ❌ **Compile error.** `x` is declared inside the `if constexpr` block — **its scope is the block**. `if constexpr` does not change scoping rules. `x` not visible after the block regardless of which branch is taken.
+
+---

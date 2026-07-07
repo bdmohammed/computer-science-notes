@@ -1,0 +1,1131 @@
+---
+title: C++ Exception Handling
+slug: computer-languages/cpp/exception-handling/fundamentals/what-is-an-exception
+description: What is an Exception in C++? Stack unwinding, RAII, noexcept, std::exception hierarchy, and performance implications.
+sidebar:
+  label: "Exception Fundamentals"
+  badge:
+    text: Core Concept
+    variant: tip
+tags: [cpp, exception, stack-unwinding, raii, noexcept, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 💥 What Is An Exception in C++?
+
+---
+
+### 🧠 What It Is
+
+An **exception** is a mechanism to handle runtime errors by transferring control from the point of failure to a handler. Unlike Java, C++ exceptions are **not required to be objects** (though `std::exception` is standard), and there is **no mandatory base class**.
+
+When an error occurs, the program **throws** an object (or primitive). The C++ runtime then performs **Stack Unwinding**: it destroys all local objects in the current scope and previous scopes until a matching `catch` block is found.
+
+```text
+FileNotFound
+StdBadAlloc
+LogicError ...etc
+```
+
+- **Goal**: Separate error handling code from normal logic.
+- **Key Mechanism**: **RAII** (Resource Acquisition Is Initialization) ensures resources are cleaned up during unwinding, unlike Java's `finally` or try-with-resources.
+
+---
+
+### 🔬 Exception vs Error vs Bug
+
+| | Definition | Example | Recoverable? |
+|--|-----------|---------|-------------|
+| **Bug** | Logic error | Dereferencing null pointer | Fix code (UB in C++) |
+| **Exception** | Runtime anomaly | File missing, bad alloc | ✅ Yes — catch & handle |
+| **Error** | Severe system failure | Hardware failure, heap corruption | ❌ Rarely — usually terminate |
+
+> ⚠️ **C++ Specific**: In C++, accessing invalid memory (e.g., `arr[10]` on size 5) is **Undefined Behavior (UB)**, not an automatic exception. It might crash (SegFault) or corrupt data. It does **not** throw `ArrayIndexOutOfBoundsException` like Java.
+
+---
+
+### 🔬 "Throwing" in C++
+
+```cpp
+int* arr = new int[5];
+// arr[10] = 99; // ❌ Undefined Behavior! No exception thrown automatically.
+
+// To throw manually:
+if (index >= 5) {
+    throw std::out_of_range("Index out of bounds");
+}
+```
+
+```
+Exception Object on Heap (typically):
+┌──────────────────────────────────────────┐
+│  std::out_of_range                       │
+│  ├── what() : "Index out of bounds"      │
+│  └── vtable ptr                          │
+└──────────────────────────────────────────┘
+```
+
+---
+
+## 📚 Stack Unwinding Mechanism
+
+---
+
+### 🧠 What It Is
+
+When an exception is thrown, C++ does **not** just jump to the catch block. It must **destroy** all local variables created since the `try` block was entered. This process is called **Stack Unwinding**.
+
+This is critical for **RAII**: destructors are called automatically, ensuring files close, locks release, and memory frees.
+
+```cpp
+void doStuff() {
+    Resource r; // Constructor called
+    doMoreStuff(); // Throws exception
+    // r.~Resource() called automatically here!
+}
+```
+
+```text
+Call Stack Unwinding:
+
+┌───────────────┐
+│ doMoreStuff() │ ← Exception thrown here
+├───────────────┤
+│   doStuff()   │ ← Destructors for local vars run here
+├───────────────┤
+│    main()     │ ← Catch block found here?
+└───────────────┘
+```
+
+---
+
+### 🔬 Stack Frame & Destructors
+
+In Java, the GC cleans up later. In C++, **destructors run immediately** during unwinding.
+
+```cpp
+class Logger {
+public:
+    Logger() { std::cout << "Open Log\\n"; }
+    ~Logger() { std::cout << "Close Log\\n"; } // Runs during unwind!
+};
+
+void process() {
+    Logger log; 
+    throw std::runtime_error("Fail");
+    // log.~Logger() runs automatically before catch
+}
+```
+
+<Aside type="note">
+**Java vs C++**: 
+- Java: `finally` block or try-with-resources.
+- C++: Destructor of local objects (RAII). This is safer and harder to forget.
+</Aside>
+
+---
+
+### 💻 Real-World Code — Unwinding in Action
+
+```cpp
+#include <iostream>
+#include <stdexcept>
+
+struct DBConnection {
+    DBConnection() { std::cout << "DB Connected\\n"; }
+    ~DBConnection() { std::cout << "DB Disconnected\\n"; }
+};
+
+void fetchUser() {
+    DBConnection db; // RAII object
+    std::cout << "Fetching...\\n";
+    throw std::runtime_error("Network Error");
+}
+
+void process() {
+    try {
+        fetchUser();
+    } catch (const std::exception& e) {
+        std::cout << "Caught: " << e.what() << "\\n";
+    }
+}
+
+int main() {
+    process();
+    return 0;
+}
+```
+
+**Output:**
+```text
+DB Connected
+Fetching...
+DB Disconnected  ← Destructor called during unwind!
+Caught: Network Error
+```
+
+If `fetchUser` didn't use RAII (e.g., raw `new`/`delete`), the memory would leak if an exception occurred before `delete`.
+
+---
+
+### 🔬 Exception Handling Flow
+
+```
+THROW SITE: fetchUser()
+     │
+     ▼
+JVM/CPP Runtime looks for handler in current frame
+     │
+     No matching catch
+     │
+     ▼
+Run destructors for local variables in fetchUser()
+     │
+     ▼
+Pop fetchUser() frame
+     │
+     ▼
+Check caller (process()) exception handlers
+     │
+     Match found! (catch std::exception)
+     │
+     ▼
+Jump to catch block
+     │
+     ▼
+Execution continues after catch
+```
+
+---
+
+## 🛡️ The Standard Hierarchy (`<stdexcept>`)
+
+Unlike Java, C++ does not distinguish between "Checked" and "Unchecked" exceptions. **All exceptions are unchecked**. The compiler does not force you to catch them.
+
+```text
+std::exception (Base Class)
+│
+├── std::logic_error (Programmer errors)
+│   ├── std::invalid_argument
+│   ├── std::out_of_range
+│   └── std::length_error
+│
+├── std::runtime_error (External events)
+│   ├── std::io_error
+│   ├── std::system_error
+│   └── std::bad_alloc (Memory allocation failure)
+│
+└── ... (Others like bad_cast, bad_typeid)
+```
+
+<CardGrid>
+  <Card title="No Checked Exceptions" icon="information">
+    In Java: `void foo() throws IOException` is mandatory.
+    In C++: `void foo()` can throw anything. The caller doesn't know unless documented.
+    
+    ```cpp
+    void readFile() {
+        // Might throw std::ios_base::failure
+        // Compiler won't warn you if you don't catch it
+    }
+    ```
+  </Card>
+  
+  <Card title="Catch by Reference" icon="approve-check">
+    Always catch exceptions by **const reference** to avoid slicing and unnecessary copies.
+    
+    ```cpp
+    try {
+        // ...
+    } catch (const std::exception& e) { // ✅ Best Practice
+        std::cerr << e.what() << '\\n';
+    }
+    // catch (std::exception e) { } // ❌ Avoid: Slicing + Copy
+    // catch (std::exception* e) { } // ❌ Avoid: Memory management issues
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## ⚡ `noexcept` Specifier (C++11)
+
+C++11 introduced `noexcept` to replace the deprecated `throw()` specification. It tells the compiler that a function will **not** throw exceptions.
+
+### Why use `noexcept`?
+1. **Optimization**: Compiler can generate faster code (no unwind tables needed).
+2. **Move Semantics**: `std::vector` will only use `move` constructors if they are `noexcept`. If not, it falls back to `copy` (slower) to maintain strong exception safety.
+
+<Code lang="cpp" title="noexcept usage" code={`
+void safeOperation() noexcept {
+    // If this throws, std::terminate() is called immediately
+    // No stack unwinding!
+}
+
+class MyClass {
+public:
+    // Move constructor should be noexcept for std::vector optimization
+    MyClass(MyClass&& other) noexcept : data(other.data) {
+        other.data = nullptr;
+    }
+private:
+    int* data;
+};
+`} />
+
+<Aside type="danger">
+**Termination**: If a `noexcept` function throws, the program calls `std::terminate()` immediately. The stack is **not** unwound. Destructors may not run. Use only when you are 100% sure no exceptions can occur.
+</Aside>
+
+---
+
+## 💣 Interview Traps & Best Practices
+
+<CardGrid>
+  <Card title="Trap 1: Exceptions in Destructors" icon="error">
+    **NEVER throw an exception from a destructor.**
+    
+    ```cpp
+    ~MyClass() {
+        throw std::runtime_error("Fail"); // ❌ BAD!
+    }
+    ```
+    If an exception is already active (during unwinding) and a destructor throws another one, the C++ runtime calls `std::terminate()` immediately. You cannot have two active exceptions.
+  </Card>
+  
+  <Card title="Trap 2: Performance Cost" icon="caution">
+    Exceptions are **zero-cost when not thrown** (modern compilers use lookup tables, not checks at every line).
+    However, **throwing** is expensive (stack unwinding, object creation).
+    
+    ✅ Use exceptions for **rare** errors.
+    ❌ Do not use exceptions for control flow (e.g., loop termination).
+  </Card>
+
+  <Card title="Trap 3: Object Slicing" icon="shield">
+    Catching by value slices the object.
+    
+    ```cpp
+    try {
+        throw std::out_of_range("err");
+    } catch (std::exception e) { // ❌ Sliced! loses specific type info
+        // e.what() works, but dynamic_cast fails
+    }
+    ```
+    ✅ Always use `catch (const std::exception& e)`.
+  </Card>
+
+  <Card title="Trap 4: Raw Pointers & Leaks" icon="error">
+    If you allocate memory with `new` and then throw before `delete`, you leak.
+    
+    ```cpp
+    void risky() {
+        int* p = new int(10);
+        throw std::runtime_error("fail"); // ❌ Leak!
+        delete p;
+    }
+    ```
+    ✅ Use Smart Pointers (`std::unique_ptr`) or RAII wrappers.
+  </Card>
+</CardGrid>
+
+---
+
+## 🆚 Java vs C++ Exceptions
+
+| Feature | Java | C++ |
+|---------|------|-----|
+| **Base Class** | `java.lang.Throwable` | `std::exception` (convention, not mandatory) |
+| **Checked Exceptions** | ✅ Yes (Compiler enforced) | ❌ No (All unchecked) |
+| **Finally Block** | ✅ Yes | ❌ No (Use RAII/Destructors) |
+| **Stack Trace** | Automatic | Must capture explicitly (some libs) |
+| **Performance** | Generally slower | Zero-cost if not thrown |
+| **Memory Mgmt** | GC handles cleanup | Destructors handle cleanup (RAII) |
+| **Specification** | `throws` clause | `noexcept` (optimization hint) |
+
+---
+
+## 🔑 Quick Reference Summary
+
+### Standard Exceptions
+| Exception | Cause |
+|-----------|-------|
+| `std::exception` | Base class |
+| `std::runtime_error` | Runtime issues (IO, Network) |
+| `std::logic_error` | Logic bugs (Invalid Arg, Out of Range) |
+| `std::bad_alloc` | `new` failed (OOM) |
+| `std::out_of_range` | `.at()` access failed |
+
+### Best Practices
+1. ✅ **Throw by Value**, **Catch by Reference** (`const&`).
+2. ✅ Use **RAII** for resource cleanup (no `finally` needed).
+3. ✅ Mark move constructors `noexcept`.
+4. ✅ Never throw from destructors.
+5. ✅ Use specific exception types, not just `std::exception`.
+
+<Aside type="tip">
+**Pro Tip**: In modern C++ (C++11/14/17/20), prefer returning `std::optional<T>` or `std::expected<T, E>` (C++23) for recoverable errors instead of throwing exceptions. Exceptions should be for **exceptional** circumstances.
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+struct A {
+    ~A() { std::cout << "A "; }
+};
+
+struct B {
+    ~B() { std::cout << "B "; }
+};
+
+void foo() {
+    A a;
+    throw std::runtime_error("err");
+    B b; // Never constructed
+}
+
+int main() {
+    try {
+        foo();
+    } catch (...) {
+        std::cout << "Caught ";
+    }
+    return 0;
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output: A Caught 
+
+Explanation:
+1. foo() creates 'a'.
+2. Exception thrown.
+3. Stack unwinds: 'a' is destroyed → prints "A ".
+4. 'b' is never created because execution stopped at throw.
+5. Control jumps to catch block → prints "Caught ".
+```
+</details>
+
+---
+
+*Converted from Java Exception guide → Modern C++ (C++11/14/17/20). Emphasizes RAII, noexcept, and the lack of checked exceptions. 🦾*
+
+---
+
+
+# ⚠️ C++ Exceptions — Fundamentals
+
+---
+
+# 📁 01 — What Is An Exception
+
+## 📌 What Is an Exception?
+
+A mechanism to **signal and handle errors that occur at runtime** — transferring control from the point of failure to a handler that can deal with it.
+
+```
+Normal flow:
+  call stack: main → foo → bar → baz
+                                  ↓
+                              error occurs
+                                  ↓
+Exception flow:
+  baz throws → bar has no handler → foo has no handler → main catches
+  ↑ control travels UP the call stack until a handler is found
+```
+
+---
+
+### Exception vs Error Code — The Fundamental Choice
+
+```cpp
+// ❌ Error code approach — problems
+int divide(int a, int b, int& result) {
+    if (b == 0) return -1;    // error code
+    result = a / b;
+    return 0;
+}
+
+int r;
+if (divide(10, 0, r) != 0) {  // must CHECK every call
+    handle_error();            // easy to forget
+}
+
+// ❌ If forgotten:
+divide(10, 0, r);              // silently ignored — r is garbage
+use(r);                        // bug propagates silently
+```
+
+```cpp
+// ✅ Exception approach — errors CANNOT be silently ignored
+int divide(int a, int b) {
+    if (b == 0)
+        throw std::runtime_error("division by zero");
+    return a / b;
+}
+
+try {
+    int r = divide(10, 0);   // throws — skips rest of try block
+    use(r);                   // never reached if throw
+} catch (const std::runtime_error& e) {
+    handle_error(e.what());
+}
+// If no try/catch: exception propagates — cannot be silently ignored
+```
+
+---
+
+### Three Components
+
+```
+throw    → signal that something went wrong
+try      → mark code that might throw
+catch    → handle the exception
+```
+
+```cpp
+try {
+    // Code that might throw — the "guarded region"
+    auto conn = open_connection(host, port);   // may throw
+    auto data = conn.fetch(query);             // may throw
+    process(data);                             // may throw
+} catch (const ConnectionError& e) {
+    // Handle connection-specific errors
+    log("Connection failed: ", e.what());
+} catch (const QueryError& e) {
+    // Handle query-specific errors
+    retry_with_fallback(query);
+} catch (const std::exception& e) {
+    // Catch-all for standard exceptions
+    log("Unexpected error: ", e.what());
+} catch (...) {
+    // Catch-all for ANYTHING — even non-standard types
+    log("Unknown exception");
+}
+// Execution continues here if exception was caught
+```
+
+---
+
+### What Can Be Thrown
+
+```cpp
+// ✅ Anything can be thrown — any type
+throw 42;                          // int
+throw 3.14;                        // double
+throw "error message";             // const char*
+throw std::runtime_error("oops");  // standard exception
+throw MyCustomException{...};      // user-defined class
+throw std::vector<int>{1,2,3};     // STL container (unusual but valid)
+
+// ❌ Should never throw:
+// throw nullptr;    // technically legal but meaningless
+```
+
+> 🔑 **Best practice:** Always throw objects derived from `std::exception`. Throwing `int` or `const char*` makes catching at different levels impossible without catching everything.
+
+---
+
+### Standard Exception Hierarchy
+
+```
+std::exception
+│   what() const noexcept → const char*
+│
+├── std::logic_error        → programming errors (preventable)
+│   ├── std::invalid_argument
+│   ├── std::domain_error
+│   ├── std::length_error
+│   ├── std::out_of_range
+│   └── std::future_error
+│
+├── std::runtime_error      → runtime errors (not preventable)
+│   ├── std::range_error
+│   ├── std::overflow_error
+│   ├── std::underflow_error
+│   └── std::system_error
+│       └── std::ios_base::failure
+│
+├── std::bad_alloc          → new failed (out of memory)
+├── std::bad_cast           → dynamic_cast<T&> failed
+├── std::bad_typeid         → typeid on null pointer
+├── std::bad_exception      → unexpected exception
+└── std::bad_optional_access→ optional with no value
+```
+
+```cpp
+// Catch by hierarchy — polymorphism applies
+try {
+    throw std::out_of_range("index too large");
+} catch (const std::logic_error& e) {
+    // Catches: out_of_range, invalid_argument, domain_error...
+    // out_of_range IS-A logic_error → caught here
+} catch (const std::exception& e) {
+    // Not reached — already caught above
+}
+```
+
+---
+
+### Custom Exception Types
+
+```cpp
+// ✅ Best practice — derive from std::exception
+class DatabaseError : public std::runtime_error {
+    int error_code_;
+    std::string query_;
+
+public:
+    DatabaseError(int code, std::string query, std::string msg)
+        : std::runtime_error(std::move(msg))
+        , error_code_(code)
+        , query_(std::move(query)) { }
+
+    int               code()  const noexcept { return error_code_; }
+    const std::string& query() const noexcept { return query_; }
+};
+
+class ConnectionError : public DatabaseError {
+    std::string host_;
+public:
+    ConnectionError(std::string host, std::string msg)
+        : DatabaseError(-1, "", std::move(msg))
+        , host_(std::move(host)) { }
+
+    const std::string& host() const noexcept { return host_; }
+};
+
+// Catch by hierarchy
+try {
+    connect("bad-host");
+} catch (const ConnectionError& e) {
+    retry(e.host());      // specific handler
+} catch (const DatabaseError& e) {
+    log(e.code());        // general database handler
+} catch (const std::exception& e) {
+    crash(e.what());      // last resort
+}
+```
+
+---
+
+# 📁 02 — Runtime Stack Mechanism (Stack Unwinding)
+
+## 📌 What Is Stack Unwinding?
+
+When an exception is thrown, the runtime **unwinds the call stack** — destroying all local objects in reverse construction order until a matching `catch` is found.
+
+```
+Call stack at moment of throw:
+
+main()        ← catch block here
+  └── foo()   ← no handler
+        └── bar() ← no handler
+              └── baz() ← THROW here
+
+Stack unwinding:
+  baz() frame destroyed → ~LocalInBaz() called
+  bar() frame destroyed → ~LocalInBar() called
+  foo() frame destroyed → ~LocalInFoo() called
+  main() catch block reached → exception handled
+```
+
+---
+
+### Step-by-Step Unwinding
+
+```cpp
+#include <iostream>
+#include <stdexcept>
+
+struct RAII_Guard {
+    std::string name_;
+    RAII_Guard(std::string n) : name_(n) {
+        std::cout << "CONSTRUCT: " << name_ << "\n";
+    }
+    ~RAII_Guard() {
+        std::cout << "DESTROY:   " << name_ << "\n";
+    }
+};
+
+void baz() {
+    RAII_Guard g("baz_guard");
+    std::cout << "baz: about to throw\n";
+    throw std::runtime_error("error in baz");
+    // g destroyed during unwind — destructor called
+}
+
+void bar() {
+    RAII_Guard g("bar_guard");
+    std::cout << "bar: calling baz\n";
+    baz();   // exception propagates through here
+    std::cout << "bar: after baz\n";  // NEVER REACHED
+}
+
+void foo() {
+    RAII_Guard g("foo_guard");
+    std::cout << "foo: calling bar\n";
+    bar();
+    std::cout << "foo: after bar\n";  // NEVER REACHED
+}
+
+int main() {
+    try {
+        RAII_Guard g("main_guard");
+        foo();
+        std::cout << "main: after foo\n";  // NEVER REACHED
+    } catch (const std::exception& e) {
+        std::cout << "CAUGHT: " << e.what() << "\n";
+    }
+    // main_guard destroyed AFTER catch block (normal scope exit)
+}
+```
+
+```
+Output:
+CONSTRUCT: main_guard
+CONSTRUCT: foo_guard
+foo: calling bar
+CONSTRUCT: bar_guard
+bar: calling baz
+CONSTRUCT: baz_guard
+baz: about to throw
+DESTROY:   baz_guard    ← unwinding begins
+DESTROY:   bar_guard    ← bar frame cleaned up
+DESTROY:   foo_guard    ← foo frame cleaned up
+CAUGHT: error in baz    ← catch block runs
+DESTROY:   main_guard   ← normal scope exit
+```
+
+---
+
+### Stack Unwinding — Under the Hood
+
+```
+Exception handling mechanism (Itanium ABI — GCC/Clang):
+
+Step 1: throw expression evaluates
+  → exception object constructed in special exception buffer
+  → NOT on current stack frame — survives frame destruction
+  → _Unwind_RaiseException() called
+
+Step 2: Phase 1 — Search Phase (no unwinding yet)
+  → walk up call stack
+  → check each frame's exception table (LSDA — Landing Pad Descriptor)
+  → find first frame with matching catch handler
+  → if none found → std::terminate()
+
+Step 3: Phase 2 — Cleanup Phase (actual unwinding)
+  → re-walk from throw point to catching frame
+  → for each frame: call cleanup code (destructors, __cxa_end_cleanup)
+  → transfer control to catch handler
+
+Exception tables stored in .gcc_except_table section:
+  → maps program counter ranges to cleanup actions
+  → generated by compiler from RAII objects + try/catch
+  → ZERO overhead on happy path (no exception)
+  → overhead ONLY when exception actually thrown
+```
+
+```
+Binary structure:
+.text:    your compiled code
+.rodata:  exception type descriptors (type_info)
+.gcc_except_table: LSDA — landing pad info per function
+                   maps each try block → list of handlers
+                   maps each scope → cleanup (destructor) code
+```
+
+---
+
+### RAII — The Foundation of Exception Safety
+
+```cpp
+// ❌ Without RAII — resources leak on exception
+void process_file(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "r");
+    // ... do work ...
+    if (error_condition)
+        throw std::runtime_error("failed");  // f is NEVER closed!
+    fclose(f);   // skipped if throw
+}
+
+// ✅ With RAII — guaranteed cleanup on any exit
+void process_file(const std::string& path) {
+    std::unique_ptr<FILE, decltype(&fclose)> f(
+        fopen(path.c_str(), "r"), &fclose);
+    // ... do work ...
+    if (error_condition)
+        throw std::runtime_error("failed");
+    // f's destructor: fclose() called automatically
+    // Works for: normal return, exception, early return
+}
+```
+
+---
+
+### Exception Safety Guarantees
+
+| Guarantee | What It Means | Example |
+|---|---|---|
+| **No-throw** (strongest) | Never throws — `noexcept` | `std::swap`, destructors |
+| **Strong** | If throws, state unchanged — rollback | Copy-and-swap assignment |
+| **Basic** | If throws, no leak, valid (but unspecified) state | Most STL ops |
+| **None** (weakest) | No guarantee — may corrupt state | C-style code |
+
+```cpp
+// Strong guarantee — copy-and-swap
+Buffer& Buffer::operator=(Buffer other) {  // copy made first
+    swap(*this, other);   // no-throw swap
+    return *this;
+    // if copy throws: *this unchanged → strong guarantee
+    // if swap throws: impossible — swap is noexcept
+}
+
+// No-throw guarantee
+void swap(Buffer& a, Buffer& b) noexcept {
+    std::swap(a.data_, b.data_);  // pointer swap — never throws
+    std::swap(a.size_, b.size_);
+}
+```
+
+---
+
+### Unwinding and `noexcept`
+
+```cpp
+void cleanup() noexcept {
+    throw std::runtime_error("oops");  // ❌ exception in noexcept function
+    // → std::terminate() called IMMEDIATELY
+    // → NO unwinding — stack not cleaned
+    // → destructors NOT called
+}
+
+// CRITICAL: destructors must NEVER throw
+class Resource {
+public:
+    ~Resource() noexcept {                // ALWAYS noexcept
+        try {
+            risky_cleanup();
+        } catch (...) {
+            // swallow — cannot propagate from destructor
+            log_error("cleanup failed");
+        }
+    }
+};
+```
+
+```
+If destructor throws DURING stack unwinding:
+  → Two active exceptions simultaneously
+  → std::terminate() called
+  → Program killed — no further cleanup
+  → All resources in stack leaked
+```
+
+---
+
+# 📁 03 — Default Exception Handling
+
+## 📌 What Happens Without a Handler?
+
+```
+Exception thrown → runtime searches call stack for matching catch
+  → found:     caught, program continues after catch block
+  → NOT found: std::terminate() called → program ends
+```
+
+---
+
+### `std::terminate()` — The Last Resort
+
+```cpp
+// No try/catch anywhere → std::terminate()
+void foo() {
+    throw std::runtime_error("nobody catches me");
+}
+
+int main() {
+    foo();   // terminate() called
+}
+
+// Output (platform-dependent):
+// terminate called after throwing an instance of 'std::runtime_error'
+// what(): nobody catches me
+// Aborted (core dumped)
+```
+
+```
+std::terminate():
+  1. Calls the currently registered terminate handler
+  2. Default handler: calls std::abort()
+  3. std::abort() → SIGABRT → OS kills process
+  4. Core dump generated (if enabled)
+  5. No stack unwinding in default handler
+  6. No destructors called (important!)
+```
+
+---
+
+### `std::set_terminate` — Custom Handler
+
+```cpp
+#include <exception>
+#include <cstdlib>
+
+void my_terminate_handler() {
+    std::cerr << "Unhandled exception — terminating\n";
+
+    // Log the current exception if possible
+    try {
+        auto ep = std::current_exception();
+        if (ep) {
+            std::rethrow_exception(ep);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Exception: " << e.what() << "\n";
+    } catch (...) {
+        std::cerr << "Unknown exception type\n";
+    }
+
+    std::abort();   // MUST terminate — handler cannot return
+}
+
+int main() {
+    std::set_terminate(my_terminate_handler);
+    // Now all unhandled exceptions use our handler
+    throw std::runtime_error("test");
+}
+```
+
+---
+
+### `catch(...)` — Catch-All
+
+```cpp
+try {
+    risky_operation();
+} catch (const MyError& e) {
+    handle_specific(e);          // specific first
+} catch (const std::exception& e) {
+    handle_standard(e.what());   // standard second
+} catch (...) {
+    // Catches EVERYTHING:
+    // — any std::exception derived type
+    // — throw 42 (int)
+    // — throw "error" (const char*)
+    // — throw MyWeirdClass{}
+    // — any non-exception type
+
+    // Cannot access the exception object — no name, no type
+    // Can rethrow: throw;
+
+    auto ep = std::current_exception();  // capture for later
+    log_unknown_error();
+    throw;  // rethrow — or handle and swallow
+}
+```
+
+---
+
+### `std::current_exception` and `std::exception_ptr`
+
+```cpp
+#include <exception>
+
+// Capture exception for cross-thread transport
+std::exception_ptr captured;
+
+void worker() {
+    try {
+        do_risky_work();
+    } catch (...) {
+        captured = std::current_exception();  // capture ANY exception
+    }
+}
+
+void main_thread_check() {
+    if (captured) {
+        try {
+            std::rethrow_exception(captured);  // rethrow in different context
+        } catch (const std::exception& e) {
+            std::cerr << "Worker failed: " << e.what() << "\n";
+        }
+    }
+}
+
+// Use case: propagate exceptions from threads to main thread
+std::thread t(worker);
+t.join();
+main_thread_check();
+```
+
+---
+
+### Where Exceptions Are Disabled
+
+```cpp
+// noexcept — disables exception propagation, not throwing
+void foo() noexcept {
+    throw std::runtime_error("oops");  // → std::terminate()
+}
+
+// Common noexcept contexts:
+class Foo {
+    ~Foo() noexcept { }           // ✅ destructors
+    Foo(Foo&&) noexcept { }       // ✅ move operations
+    Foo& operator=(Foo&&) noexcept{ }
+    void swap(Foo&) noexcept { }  // ✅ swap
+};
+
+// -fno-exceptions compiler flag:
+// — disables ALL exception support
+// — throw becomes abort()
+// — try/catch become if/else (no overhead)
+// — used in: embedded, game engines, performance-critical systems
+```
+
+---
+
+### Default Handling in Key Scenarios
+
+| Scenario | What Happens |
+|---|---|
+| Exception not caught anywhere | `std::terminate()` → `std::abort()` |
+| Exception in destructor during unwind | `std::terminate()` immediately |
+| Exception in constructor | object NOT constructed, no destructor called |
+| Exception in `noexcept` function | `std::terminate()` immediately |
+| Exception across thread boundary | `std::terminate()` (unless caught in thread) |
+| Exception in `main()` not caught | `std::terminate()` |
+| `new` fails (out of memory) | `std::bad_alloc` thrown (unless `nothrow`) |
+
+```cpp
+// Out of memory — default behavior
+int* p = new int[1'000'000'000'000LL];  // throws std::bad_alloc if fails
+
+// Opt-out of exception on failure
+int* p = new(std::nothrow) int[1'000'000'000'000LL];
+if (!p) {
+    // handle nullptr — no exception thrown
+}
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Unhandled exception in server → crash with no info:**
+
+```cpp
+// ❌ Production bug — no exception handling at thread boundary
+void handle_client(Socket client) {
+    // If any exception thrown here:
+    // → escapes thread function
+    // → std::terminate() called
+    // → entire server process killed
+    // → all other clients disconnected
+    auto request = client.read_request();
+    auto response = process(request);
+    client.send(response);
+}
+
+std::thread t(handle_client, std::move(client));
+t.detach();  // detached — exception = terminate = server down
+
+// ✅ Fix — catch all at thread boundary
+void handle_client(Socket client) {
+    try {
+        auto request = client.read_request();
+        auto response = process(request);
+        client.send(response);
+    } catch (const ClientDisconnected&) {
+        // expected — just close
+    } catch (const std::exception& e) {
+        log_error("Client handler failed: ", e.what());
+        client.send_error_response(500, e.what());
+    } catch (...) {
+        log_error("Unknown exception in client handler");
+        client.send_error_response(500, "internal error");
+    }
+    // Exception never escapes thread — server stays up
+}
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+struct Foo {
+    Foo()  { std::cout << "C"; }
+    ~Foo() { std::cout << "D"; }
+};
+void bar() {
+    Foo f;
+    throw std::runtime_error("err");
+}
+int main() {
+    try { bar(); }
+    catch (...) { std::cout << "X"; }
+}
+```
+> Output: `CDX`. `Foo` constructed (`C`), exception thrown, stack unwinds → `~Foo()` called (`D`), catch block runs (`X`). Destructors run BEFORE catch block.
+
+**Trap 2:**
+```cpp
+void foo() noexcept {
+    try {
+        throw std::runtime_error("test");
+    } catch (...) { }   // caught inside noexcept
+}
+// Does noexcept matter here?
+```
+> Exception caught INSIDE the `noexcept` function — never escapes. `noexcept` only triggers `std::terminate()` if exception **propagates out** of the function. Catching inside = fine.
+
+**Trap 3:**
+```cpp
+struct Bad {
+    ~Bad() { throw std::runtime_error("in destructor"); }
+};
+void foo() {
+    Bad b;
+    throw std::runtime_error("original");
+}
+int main() { try { foo(); } catch(...) { } }
+```
+> **`std::terminate()` called.** Two exceptions active simultaneously: "original" + destructor exception during unwind. C++ cannot handle two concurrent exceptions → `terminate()`. Rule: **destructors must never throw**.
+
+**Trap 4:**
+```cpp
+// What does catch(...) { throw; } do?
+try {
+    throw std::runtime_error("test");
+} catch (...) {
+    throw;   // rethrow
+}
+```
+> `throw;` (bare throw) **rethrows the current exception** — preserving its original type and message. NOT `throw std::exception{}` which would slice. Bare `throw` is the only way to rethrow in a catch-all block.
+
+**Trap 5:**
+```cpp
+void foo() {
+    try {
+        throw std::runtime_error("A");
+    } catch (const std::exception& e) {
+        throw std::runtime_error("B");  // throw INSIDE catch
+    }
+}
+// What exception propagates?
+```
+> `std::runtime_error("B")` propagates. When you `throw` a new exception inside a catch block, the original exception ("A") is **replaced** — lost. If you want to preserve it: use `std::throw_with_nested` or rethrow with bare `throw;`.
+
+---

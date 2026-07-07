@@ -16,13 +16,54 @@ import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/component
 
 > Member modifiers control **visibility**, **behavior**, and **thread-safety** of fields, methods, and blocks. This guide covers all modifiers with practical examples and interview essentials.
 
+```
+Method Modifiers
+│
+├── Access Modifiers
+│   ├── public       → accessible everywhere
+│   ├── protected    → same package + subclasses
+│   ├── (default)    → same package only
+│   └── private      → same class only
+│
+├── Non-Access Modifiers
+│   ├── abstract     → no body, must be overridden
+│   ├── final        → cannot be overridden
+│   ├── static       → belongs to class, not instance
+│   ├── synchronized → one thread at a time
+│   ├── native       → implemented in native code (JNI)
+│   ├── strictfp     → strict floating point (deprecated Java 17+)
+│   └── default      → interface default method (Java 8+)
+│
+└── Invalid Combinations
+    ├── abstract + final
+    ├── abstract + static
+    ├── abstract + private
+    ├── abstract + native
+    └── abstract + synchronized
+```
+```
+Access levels — most to least permissive:
+  public    → anywhere
+  protected → same package + subclass (even different package)
+  (default) → same package only
+  private   → same class only
+
+Subclass in different package:
+  public method    → accessible ✅
+  protected method → accessible via inheritance ✅
+                     (NOT via reference to parent type ❌)
+  default method   → NOT accessible ❌
+  private method   → NOT accessible ❌
+```
+
 ---
 
 ## 🌍 public Members
 
 > Accessible from **anywhere** — but the **containing class must also be visible**.
 
-<Code lang="java" title="public member — cross-package access" code={`// File: pack1/A.java
+<Code lang="java" title="public member — cross-package access" code={`
+// File: pack1/A.java
 package pack1;
 class A {  // ❌ Not public → package-private
     public void methodOne() {
@@ -79,7 +120,18 @@ class B {
 
 > When **no access modifier** is specified, members have **package-private** visibility — accessible only within the same package.
 
-<Code lang="java" title="Default member — same-package access only" code={`// File: pack1/A.java
+```
+default method rules:
+  ├── Only in interfaces — not in classes
+  ├── Has method body — unlike abstract
+  ├── Implementing class: inherits OR overrides
+  ├── If class implements two interfaces with same default:
+  │     → COMPILE ERROR — must override to resolve conflict
+  └── class implementation always wins over interface default
+```
+
+<Code lang="java" title="Default member — same-package access only" code={`
+// File: pack1/A.java
 package pack1;
 class A {
     void methodOne() {  // No modifier → default/package-private
@@ -304,6 +356,20 @@ private < default < protected < public
 ## 🔐 final Modifier — Variables
 
 > Once assigned, the value **cannot be changed**.
+```
+final method use cases:
+  ├── Template method pattern — lock algorithm structure
+  ├── Security — prevent bypassing validation
+  ├── Performance — JIT devirtualizes → inlines
+  └── Design — "this method is complete — not a hook"
+
+private vs final:
+  private: not inherited at all — subclass can define same name
+           (it's a new method, not an override)
+  final:   inherited but not overridable
+
+> 🔑 A `private` method is implicitly final — cannot be overridden because it's not visible to subclasses. Defining same-named method in subclass = new method, not override.
+```
 
 ### 🔹 final Instance Variables
 
@@ -405,7 +471,8 @@ private < default < protected < public
 
 ### 🔹 final Local Variables & Parameters
 
-<Code lang="java" title="final local variable rules" code={`void method() {
+<Code lang="java" title="final local variable rules" code={`
+void method() {
     // ✅ Can declare without immediate init (unlike instance/static final)
     final int y;
     y = 50;        // First assignment ✅
@@ -440,9 +507,19 @@ Runnable r3 = () -> System.out.println(z);  // ✅
 </Aside>
 
 ---
+
 ## ⚡ static Modifier
 
 > Belongs to the **class**, not instances — shared across all objects.
+```
+static method:
+  ├── No 'this' reference
+  ├── Cannot access instance fields/methods directly
+  ├── Can access static fields/methods
+  ├── Called on class name (or instance — discouraged)
+  ├── NOT polymorphic — resolved at compile time
+  └── Cannot be abstract or override instance methods
+```
 
 ### 🔑 static Member Rules
 
@@ -456,6 +533,17 @@ Runnable r3 = () -> System.out.println(z);  // ✅
         Counter() {
             count++;  // Increment shared counter
             id = count;
+        }
+
+        public static void incrementClass() {
+            count++;
+            id++;    // ❌ COMPILE ERROR — cannot access instance field
+            this.count++;  // ❌ COMPILE ERROR — no 'this' in static context
+        }
+
+        public void incrementInstance() {
+            count++;       // ✅ static field accessible from instance method
+            id++;    // ✅
         }
     }
     
@@ -535,7 +623,8 @@ main() starts
 
 ### 🧠 static Methods — Inheritance & Overloading
 
-<Code lang="java" title="static methods use method hiding, not overriding" code={`class Parent {
+<Code lang="java" title="static methods use method hiding, not overriding" code={`
+class Parent {
     static void show() {
         System.out.println("Parent.show()");    }
     
@@ -566,6 +655,31 @@ c.show();  // "Child.show()" ← Reference type is Child
 // java Child  → Child.main() (hides parent's main)
 `} />
 
+```java
+class Parent {
+    public static void display() {
+        System.out.println("Parent static");
+    }
+    public void show() {
+        System.out.println("Parent instance");
+    }
+}
+
+class Child extends Parent {
+    public static void display() {     // HIDES parent static method
+        System.out.println("Child static");
+    }
+    @Override
+    public void show() {               // OVERRIDES parent instance method
+        System.out.println("Child instance");
+    }
+}
+
+Parent p = new Child();
+p.display();    // "Parent static" — resolved at COMPILE TIME (reference type)
+p.show();       // "Child instance" — resolved at RUNTIME (actual type)
+```
+
 <Aside type="note">
 **Key Distinction**:  
 - **Overriding** (instance methods): Runtime polymorphism — method called depends on **object type**  
@@ -578,7 +692,8 @@ c.show();  // "Child.show()" ← Reference type is Child
 
 > Marks a method whose implementation is in **native code** (C/C++) via JNI.
 
-<Code lang="java" title="native method declaration" code={`class FileSystem {
+<Code lang="java" title="native method declaration" code={`
+class FileSystem {
     // Native method — NO body in Java, ends with semicolon
     public native void readFile(String path);
     
@@ -635,7 +750,8 @@ fs.readFile("/data/file.txt");  // Calls native C/C++ implementation
 | ✅ Access low-level system features | ❌ Harder to debug, maintain, test |
 | ✅ Critical sections in native code | ❌ Security risks (native code bypasses JVM safety) |
 
-<Aside type="caution">**Best Practice**: Use `native` only when absolutely necessary (e.g., hardware drivers, performance-critical math libraries). Prefer pure Java for portability and maintainability.
+<Aside type="caution">
+**Best Practice**: Use `native` only when absolutely necessary (e.g., hardware drivers, performance-critical math libraries). Prefer pure Java for portability and maintainability.
 </Aside>
 
 ---
@@ -643,6 +759,16 @@ fs.readFile("/data/file.txt");  // Calls native C/C++ implementation
 ## 🔀 synchronized Modifier
 
 > Ensures **mutual exclusion** — only one thread executes the synchronized code at a time.
+
+```
+synchronized method:
+  ├── Instance: acquires lock on 'this' before executing
+  ├── Static: acquires lock on Class object before executing
+  ├── Only one thread executes at a time per lock
+  ├── Lock released on: return, exception, or end of method
+  ├── Does NOT make compound operations atomic
+  └── CAN be combined with: public, protected, private, final, static
+```
 
 ### 🔑 synchronized Rules
 
@@ -867,6 +993,42 @@ System.out.println(restored.sessionToken); // 0 ❌ (transient reset to default)
 
 ---
 
+## 🔬 Invalid Combinations
+
+```java
+// ❌ abstract + final
+abstract final void process();      // must override vs cannot override
+
+// ❌ abstract + static
+abstract static void process();     // static not polymorphic — can't override
+
+// ❌ abstract + private
+abstract private void process();    // subclass can't see private — can't override
+
+// ❌ abstract + native
+abstract native void process();     // both have no Java body — contradictory
+
+// ❌ abstract + synchronized
+abstract synchronized void process(); // no body to synchronize
+
+// ✅ Valid combinations
+public static final void util() { }
+public synchronized final void safe() { }
+public static synchronized void classLevel() { }
+private static final void helper() { }
+protected abstract void hook();
+```
+
+```
+Abstract method valid modifiers:
+  ✅ public, protected, (default)
+  ✅ (nothing else — must be overridable and visible)
+
+  ❌ private, final, static, native, synchronized, strictfp
+```
+
+---
+
 ## 📊 Complete Modifier Applicability Table
 
 <table>
@@ -883,8 +1045,8 @@ System.out.println(restored.sessionToken); // 0 ❌ (transient reset to default)
   </thead>
   <tbody>
     <tr><td><code>public</code></td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
-    <tr><td><code>private</code></td><td>❌*</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
-    <tr><td><code>protected</code></td><td>❌*</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td><code>private</code></td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+    <tr><td><code>protected</code></td><td>❌</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
     <tr><td><code>default</code></td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
     <tr><td><code>final</code></td><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td><td>✅</td></tr>
     <tr><td><code>abstract</code></td><td>✅</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td></tr>
@@ -1062,6 +1224,52 @@ System.out.println(restored.sessionToken); // 0 ❌ (transient reset to default)
   </Card>
 </CardGrid>
 
+**Underlying primitive: vtable (virtual dispatch) + method_info flags**
+
+```
+Method resolution at bytecode level:
+
+invokevirtual  → instance method, polymorphic
+                 looks up vtable at runtime
+                 cost: vtable lookup + indirect call
+                 JIT: inline cache → direct call after warmup
+
+invokestatic   → static method
+                 resolved at compile time
+                 no vtable — direct call
+                 fastest dispatch
+
+invokespecial  → private, constructor, super call
+                 resolved at compile time
+                 no polymorphism
+
+invokeinterface→ interface method call
+                 similar to invokevirtual but different table (itable)
+
+Method flags in .class file (method_info):
+  ACC_PUBLIC       = 0x0001
+  ACC_PRIVATE      = 0x0002
+  ACC_PROTECTED    = 0x0004
+  ACC_STATIC       = 0x0008
+  ACC_FINAL        = 0x0010
+  ACC_SYNCHRONIZED = 0x0020
+  ACC_NATIVE       = 0x0100
+  ACC_ABSTRACT     = 0x0400
+
+final method optimization:
+  invokevirtual on final method
+  → JIT detects ACC_FINAL
+  → devirtualizes: removes vtable lookup
+  → inlines method body if small
+  → significant performance gain in hot paths
+
+synchronized method:
+  ACC_SYNCHRONIZED flag on method_info
+  JVM: before executing — monitorenter on 'this' (or Class)
+  After executing — monitorexit
+  Exception path: monitorexit in exception handler (guaranteed)
+```
+
 <Aside type="tip">
 **DSA Pro Tip**: Use `final` for algorithm parameters to prevent accidental reassignment and enable lambda usage. Use `static` for memoization tables shared across recursive calls. Use `volatile` sparingly — prefer higher-level concurrency utilities for parallel algorithms.
 </Aside>
@@ -1166,6 +1374,7 @@ System.out.println(restored.sessionToken); // 0 ❌ (transient reset to default)
 </CardGrid>
 
 ---
+
 
 ## 🔑 Quick Reference Summary
 

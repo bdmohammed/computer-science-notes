@@ -1,0 +1,874 @@
+---
+title: PostgreSQL RANK vs DENSE_RANK
+slug: computer-query-languages/postgresql/window-functions/rank-vs-dense-rank
+description: Master ranking functions in PostgreSQL — understand the gap logic, Nth highest value patterns, tie handling, and performance optimization.
+sidebar:
+  label: "RANK vs DENSE_RANK"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, rank, dense-rank, ranking, analytics, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 RANK vs DENSE_RANK — Complete Guide
+
+> **`RANK()` leaves gaps after ties (like an Olympic podium where two silvers means no bronze), while `DENSE_RANK()` never leaves gaps. The choice is purely about whether skipped positions are meaningful in your domain.**
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+- **RANK**: "How many people are strictly better than me?" + 1. (Gaps occur).  
+- **DENSE_RANK**: "How many distinct score levels are strictly better than mine?" + 1. (No gaps).
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Syntax
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← RANK / DENSE_RANK computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+<Code lang="sql" title="Basic Syntax" code={`
+-- Both are window functions — require OVER clause
+-- Both handle ties — differ only in what comes AFTER a tie
+
+SELECT
+  name,
+  score,
+  RANK()       OVER (ORDER BY score DESC) AS rnk,
+  DENSE_RANK() OVER (ORDER BY score DESC) AS dense_rnk
+FROM leaderboard;`} />
+
+---
+
+## 1️⃣ The Core Difference — Gaps vs No Gaps
+
+```
+leaderboard table:
+┌──────────┬───────┐
+│ name     │ score │
+├──────────┼───────┤
+│ Raj      │  100  │
+│ Priya    │   90  │
+│ Sam      │   90  │  ← tie with Priya
+│ Ankit    │   80  │
+│ Meera    │   70  │
+└──────────┴───────┘
+
+RANK() vs DENSE_RANK():
+
+┌──────────┬───────┬──────┬────────────┐
+│ name     │ score │ RANK │ DENSE_RANK │
+├──────────┼───────┼──────┼────────────┤
+│ Raj      │  100  │   1  │     1      │
+│ Priya    │   90  │   2  │     2      │ ← tie starts
+│ Sam      │   90  │   2  │     2      │ ← same rank for both ✅
+│ Ankit    │   80  │   4  │     3      │ ← RANK skips 3, DENSE_RANK = 3
+│ Meera    │   70  │   5  │     4      │
+└──────────┴───────┴──────┴────────────┘
+
+RANK:        1, 2, 2, 4, 5   ← gap at 3 (because two people got rank 2)
+DENSE_RANK:  1, 2, 2, 3, 4   ← no gap (always consecutive integers)
+```
+
+```
+The Olympic analogy:
+
+RANK (Olympic rules):
+  Gold:   1 person  → rank 1
+  Silver: 2 people  → BOTH get rank 2
+  Bronze: NOBODY    → rank 3 is SKIPPED
+  4th:    1 person  → rank 4
+  "There were 2 people ranked above me" = position 4
+
+DENSE_RANK (dense/compact):
+  Gold:   1 person  → rank 1
+  Silver: 2 people  → BOTH get rank 2
+  Bronze: 1 person  → rank 3 (no skip)
+  4th:    1 person  → rank 4
+  "There were 2 distinct score levels above me" = rank 3
+```
+
+> 🎯 **Interview Q:** *"What's the difference between RANK and DENSE_RANK?"*
+> **A:** Both assign the same rank to tied rows. RANK leaves a gap after ties — the next rank value jumps by the count of tied rows. DENSE_RANK never leaves gaps — rank values are always consecutive integers. Use RANK when the gap is meaningful (position tracking), DENSE_RANK when you want distinct rank levels.
+
+---
+
+## 2️⃣ Basic Syntax — All Forms
+
+```sql
+-- RANK
+SELECT
+  name, score,
+  RANK() OVER (ORDER BY score DESC) AS rank_position
+FROM leaderboard;
+
+-- DENSE_RANK
+SELECT
+  name, score,
+  DENSE_RANK() OVER (ORDER BY score DESC) AS dense_position
+FROM leaderboard;
+
+-- With PARTITION BY (most common in production)
+SELECT
+  name, department, salary,
+  RANK() OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) AS dept_rank,
+  DENSE_RANK() OVER (
+    PARTITION BY department
+    ORDER BY salary DESC
+  ) AS dept_dense_rank
+FROM employees;
+
+-- Multiple rankings in one query
+SELECT
+  name, department, salary, hire_date,
+  RANK()       OVER (PARTITION BY department ORDER BY salary DESC)   AS salary_rank,
+  DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC)   AS salary_dense,
+  RANK()       OVER (PARTITION BY department ORDER BY hire_date ASC) AS tenure_rank,
+  DENSE_RANK() OVER (ORDER BY salary DESC)                           AS global_dense_rank
+FROM employees
+WHERE is_active = true;
+```
+
+---
+
+## 3️⃣ All Three Ranking Functions — Complete Comparison
+
+```sql
+-- See all three side by side
+SELECT
+  name,
+  score,
+  ROW_NUMBER()  OVER (ORDER BY score DESC) AS row_num,
+  RANK()        OVER (ORDER BY score DESC) AS rnk,
+  DENSE_RANK()  OVER (ORDER BY score DESC) AS dense_rnk
+FROM (VALUES
+  ('Raj',    100),
+  ('Priya',   90),
+  ('Sam',     90),
+  ('Ankit',   90),
+  ('Meera',   80),
+  ('Kiran',   70)
+) AS t(name, score);
+```
+
+```
+Result:
+┌───────┬───────┬─────────┬──────┬───────────┐
+│ name  │ score │ row_num │ rnk  │ dense_rnk │
+├───────┼───────┼─────────┼──────┼───────────┤
+│ Raj   │  100  │    1    │   1  │     1     │
+│ Priya │   90  │    2    │   2  │     2     │ ← three-way tie
+│ Sam   │   90  │    3    │   2  │     2     │ ← same rank
+│ Ankit │   90  │    4    │   2  │     2     │ ← same rank
+│ Meera │   80  │    5    │   5  │     3     │ ← RANK skips 3,4
+│ Kiran │   70  │    6    │   6  │     4     │    DENSE never skips
+└───────┴───────┴─────────┴──────┴───────────┘
+
+ROW_NUMBER:  1, 2, 3, 4, 5, 6   → always unique, no ties
+RANK:        1, 2, 2, 2, 5, 6   → ties same, gap = tie count
+DENSE_RANK:  1, 2, 2, 2, 3, 4   → ties same, always consecutive
+
+Gap rule for RANK:
+  Three-way tie at rank 2 → next rank = 2 + 3 = 5 (skips 3, 4)
+  Gap size = number of tied rows
+```
+
+```
+┌─────────────────┬────────────────────────────────────────────┐
+│ Function        │ Use when                                   │
+├─────────────────┼────────────────────────────────────────────┤
+│ ROW_NUMBER()    │ Need guaranteed unique position            │
+│                 │ Deduplication, pagination, top-N           │
+├─────────────────┼────────────────────────────────────────────┤
+│ RANK()          │ Position matters (2nd place means 2nd)     │
+│                 │ Sports, competition, "what position am I?" │
+│                 │ Gap signals "N people beat me"             │
+├─────────────────┼────────────────────────────────────────────┤
+│ DENSE_RANK()    │ Levels matter (salary bands, tiers)        │
+│                 │ "How many distinct levels above me?"       │
+│                 │ Finding Nth highest value                  │
+│                 │ Tier classification                        │
+└─────────────────┴────────────────────────────────────────────┘
+```
+
+> 🎯 **DSA connection:** RANK = position in a sorted array (counting all elements before you). DENSE_RANK = number of distinct values that are greater than yours. Like counting elements vs counting unique elements before a value in a sorted array.
+
+---
+
+## 4️⃣ The Most Common Interview Pattern — Nth Highest Value
+
+**DENSE_RANK is the standard answer for "find the Nth highest" interview questions.**
+
+```sql
+-- Find the 2nd highest salary (classic interview question)
+
+-- ❌ Naive: LIMIT + OFFSET (breaks with ties)
+SELECT salary FROM employees
+ORDER BY salary DESC LIMIT 1 OFFSET 1;
+-- If two people earn 120K and one earns 110K:
+-- Returns 120K (the second row) not 110K (the second distinct salary) 💀
+
+-- ✅ DENSE_RANK: handles ties correctly
+SELECT DISTINCT salary
+FROM (
+  SELECT
+    salary,
+    DENSE_RANK() OVER (ORDER BY salary DESC) AS dr
+  FROM employees
+  WHERE is_active = true
+) ranked
+WHERE dr = 2;
+-- Returns 110K (the second distinct salary level) ✅
+
+-- ✅ Parameterized: Nth highest salary
+-- Replace 2 with any N
+WITH ranked AS (
+  SELECT
+    salary,
+    DENSE_RANK() OVER (ORDER BY salary DESC) AS dr
+  FROM employees
+  WHERE is_active = true
+)
+SELECT DISTINCT salary
+FROM   ranked
+WHERE  dr = :n;    -- any N you want ✅
+```
+
+```
+Why DENSE_RANK not RANK for Nth highest?
+
+Scores: 100, 90, 90, 80
+"Find 2nd highest score" = 90
+
+RANK:
+  100 → 1, 90 → 2, 90 → 2, 80 → 4
+  WHERE rank = 2 → returns {90, 90} ← correct result but
+  WHERE rank = 3 → returns nothing ← confusing gap!
+
+DENSE_RANK:
+  100 → 1, 90 → 2, 90 → 2, 80 → 3
+  WHERE dense_rank = 2 → returns {90, 90} ✅
+  WHERE dense_rank = 3 → returns {80} ✅ (no gap)
+
+DENSE_RANK = natural "Nth distinct value" semantics ✅
+```
+
+---
+
+## 5️⃣ With PARTITION BY — Per-Group Rankings
+
+```sql
+-- Rank employees by salary within each department
+SELECT
+  name, department, salary,
+  RANK()       OVER (PARTITION BY department ORDER BY salary DESC) AS dept_rank,
+  DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC) AS dept_dense_rank
+FROM employees
+ORDER BY department, salary DESC;
+```
+
+```
+Result (Engineering salaries: 120K, 110K, 110K, 90K):
+
+┌──────────┬──────────────┬────────┬───────────┬────────────────┐
+│ name     │ department   │ salary │ dept_rank │ dept_dense_rank│
+├──────────┼──────────────┼────────┼───────────┼────────────────┤
+│ Raj      │ Engineering  │ 120000 │     1     │       1        │
+│ Priya    │ Engineering  │ 110000 │     2     │       2        │ ← tie
+│ Sharma   │ Engineering  │ 110000 │     2     │       2        │ ← tie
+│ Dev      │ Engineering  │  90000 │     4     │       3        │ ← gap vs no gap
+│ Sam      │ Sales        │  85000 │     1     │       1        │ ← restarts ✅
+│ Ankit    │ Sales        │  75000 │     2     │       2        │
+└──────────┴──────────────┴────────┴───────────┴────────────────┘
+
+Each partition restarts at 1 independently ✅
+RANK shows Dev is "4th" (2 people tied at 2nd before him)
+DENSE_RANK shows Dev is "3rd level" (2 distinct levels above him)
+```
+
+---
+
+## 6️⃣ Finding Top-N With Ties — RANK vs DENSE_RANK Choice
+
+```sql
+-- Top 3 scorers — two different interpretations:
+
+-- RANK <= 3: "all people whose position is 3 or better"
+-- (may return MORE than 3 rows if there are ties at position 3)
+WITH ranked AS (
+  SELECT name, score,
+    RANK() OVER (ORDER BY score DESC) AS rnk
+  FROM leaderboard
+)
+SELECT name, score, rnk
+FROM   ranked
+WHERE  rnk <= 3;
+-- If scores: 100, 90, 90, 80
+-- Returns: rank1(100), rank2(90), rank2(90) — 3 rows, but rank 3 empty
+-- If scores: 100, 90, 80, 80
+-- Returns: rank1(100), rank2(90), rank3(80), rank3(80) — 4 ROWS! ✅ intended?
+
+-- DENSE_RANK <= 3: "all people in top 3 distinct score levels"
+-- (may also return more than 3 rows for ties, but no gaps)
+WITH ranked AS (
+  SELECT name, score,
+    DENSE_RANK() OVER (ORDER BY score DESC) AS dr
+  FROM leaderboard
+)
+SELECT name, score, dr
+FROM   ranked
+WHERE  dr <= 3;
+-- If scores: 100, 90, 80, 80
+-- Returns all rows with top 3 distinct scores ✅
+```
+
+```
+Which to use for "top N with ties"?
+
+RANK <= N:        "include all people who beat less than N others"
+DENSE_RANK <= N:  "include all people in top N distinct score levels"
+ROW_NUMBER <= N:  "strictly N rows, ties broken arbitrarily"
+
+Sports leaderboard:    RANK (position tracking)
+"Top N salary bands":  DENSE_RANK (distinct levels)
+"Exactly N rows":      ROW_NUMBER (unique positions)
+```
+
+> 🎯 **Real-life SDE:** E-commerce "Top 3 products per category" — if you want exactly 3 use ROW_NUMBER. If you want "top 3 revenue levels" where ties get same rank use DENSE_RANK. If you want "all products ranked 3rd or better position" use RANK. The choice changes the business meaning.
+
+---
+
+## 7️⃣ Tier Classification with DENSE_RANK
+
+```sql
+-- Classify customers into tiers based on lifetime value
+-- DENSE_RANK naturally creates tier numbering
+
+WITH customer_value AS (
+  SELECT
+    user_id,
+    SUM(amount) AS lifetime_value
+  FROM   orders
+  WHERE  status = 'delivered'
+  GROUP BY user_id
+),
+tier_ranked AS (
+  SELECT
+    user_id,
+    lifetime_value,
+    DENSE_RANK() OVER (ORDER BY lifetime_value DESC) AS value_rank,
+    NTILE(4)     OVER (ORDER BY lifetime_value DESC) AS quartile
+  FROM customer_value
+)
+SELECT
+  user_id,
+  lifetime_value,
+  value_rank,
+  CASE
+    WHEN value_rank <= 10   THEN '💎 Platinum'  -- top 10 customers
+    WHEN value_rank <= 50   THEN '🥇 Gold'
+    WHEN value_rank <= 200  THEN '🥈 Silver'
+    ELSE                         '🥉 Bronze'
+  END AS tier
+FROM tier_ranked
+ORDER BY lifetime_value DESC;
+```
+
+---
+
+## 8️⃣ Internals — How Both Execute
+
+```
+RANK and DENSE_RANK are implemented similarly to ROW_NUMBER.
+All three use the WindowAgg node with a Sort.
+
+Algorithm:
+
+Sort rows by (PARTITION BY keys, ORDER BY keys)
+Scan sorted rows, tracking:
+  - current_rank     (RANK)
+  - current_dense    (DENSE_RANK)
+  - row_count        (position counter)
+  - prev_order_vals  (previous row's ORDER BY values)
+
+For each row:
+  if partition changed:
+    reset row_count=1, current_rank=1, current_dense=1, prev_order_vals=NULL
+
+  if ORDER BY values == prev_order_vals:  (TIE!)
+    RANK       → emit current_rank  (same as previous tied row)
+    DENSE_RANK → emit current_dense (same as previous tied row)
+  else:  (NEW VALUE)
+    RANK       → current_rank = row_count    (row_count may have jumped)
+    DENSE_RANK → current_dense++             (always increments by 1)
+
+  row_count++
+  prev_order_vals = current row's ORDER BY values
+```
+
+```sql
+-- EXPLAIN: same structure as ROW_NUMBER
+EXPLAIN SELECT name, salary,
+  RANK()       OVER (PARTITION BY dept ORDER BY salary DESC) AS rnk,
+  DENSE_RANK() OVER (PARTITION BY dept ORDER BY salary DESC) AS dr
+FROM t_emp;
+
+-- WindowAgg                           ← computes both in one pass ✅
+--   -> Sort                           ← sort by (dept, salary DESC)
+--        Sort Key: dept, salary DESC
+--        -> Seq Scan on t_emp
+```
+
+```
+Key insight: RANK and DENSE_RANK with identical OVER clause
+computed in ONE WindowAgg pass — no extra cost for having both.
+
+Multiple window functions with same OVER = same sort = shared cost ✅
+```
+
+```sql
+-- Index optimization (same as ROW_NUMBER)
+CREATE INDEX idx_emp_dept_salary ON employees(department, salary DESC);
+
+EXPLAIN SELECT name,
+  RANK() OVER (PARTITION BY department ORDER BY salary DESC),
+  DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC)
+FROM employees;
+
+-- WindowAgg
+--   -> Index Scan on idx_emp_dept_salary  ← no Sort! ✅
+```
+
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+### Pattern 1 — Sales Leaderboard with Proper Tie Handling
+
+```sql
+-- Monthly sales leaderboard
+WITH monthly_sales AS (
+  SELECT
+    e.id,
+    e.name,
+    e.department,
+    SUM(o.amount)   AS monthly_revenue,
+    COUNT(o.id)     AS deals_closed
+  FROM   employees  e
+  JOIN   orders     o ON o.rep_id = e.id
+  WHERE  o.status        = 'delivered'
+    AND  o.created_at   >= DATE_TRUNC('month', NOW())
+  GROUP BY e.id, e.name, e.department
+),
+ranked AS (
+  SELECT
+    *,
+    RANK()       OVER (ORDER BY monthly_revenue DESC) AS position,
+    DENSE_RANK() OVER (ORDER BY monthly_revenue DESC) AS level,
+    RANK()       OVER (
+      PARTITION BY department
+      ORDER BY monthly_revenue DESC
+    )                                                  AS dept_position
+  FROM monthly_sales
+)
+SELECT
+  position,        -- actual position (with gaps for ties)
+  level,           -- revenue tier (no gaps)
+  name,
+  department,
+  monthly_revenue,
+  deals_closed,
+  dept_position,   -- rank within their dept
+  CASE level
+    WHEN 1 THEN '🥇'
+    WHEN 2 THEN '🥈'
+    WHEN 3 THEN '🥉'
+    ELSE        '  '
+  END AS medal
+FROM   ranked
+ORDER BY position, name;
+```
+
+### Pattern 2 — Percentile-Based Grading System
+
+```sql
+-- Grade students: A, B, C, D based on DENSE_RANK percentile
+
+WITH exam_ranked AS (
+  SELECT
+    student_id,
+    exam_id,
+    score,
+    DENSE_RANK() OVER (
+      PARTITION BY exam_id
+      ORDER BY score DESC
+    )                                              AS dr,
+    COUNT(*) OVER (PARTITION BY exam_id)           AS total_students,
+    COUNT(DISTINCT score) OVER (PARTITION BY exam_id) AS distinct_scores
+  FROM exam_results
+)
+SELECT
+  student_id,
+  exam_id,
+  score,
+  dr                                              AS rank_level,
+  CASE
+    WHEN dr <= CEIL(distinct_scores * 0.10) THEN 'A'  -- top 10% of score levels
+    WHEN dr <= CEIL(distinct_scores * 0.30) THEN 'B'
+    WHEN dr <= CEIL(distinct_scores * 0.60) THEN 'C'
+    ELSE                                           'D'
+  END                                             AS grade
+FROM   exam_ranked
+ORDER BY exam_id, score DESC;
+```
+
+### Pattern 3 — Price History Analysis
+
+```sql
+-- Find products where current price is not the lowest it's ever been
+-- (rank historical prices, check if current = rank 1 for min price)
+
+WITH price_ranked AS (
+  SELECT
+    product_id,
+    price,
+    recorded_at,
+    RANK() OVER (
+      PARTITION BY product_id
+      ORDER BY price ASC     -- rank 1 = cheapest ever
+    ) AS cheapest_rank,
+    RANK() OVER (
+      PARTITION BY product_id
+      ORDER BY recorded_at DESC  -- rank 1 = most recent
+    ) AS recency_rank
+  FROM price_history
+)
+SELECT DISTINCT
+  p.name,
+  curr.price    AS current_price,
+  hist_min.price AS historical_min,
+  ROUND((curr.price - hist_min.price) * 100.0
+    / NULLIF(hist_min.price, 0), 1) AS pct_above_min
+FROM products p
+JOIN price_ranked curr ON p.id = curr.product_id AND curr.recency_rank = 1
+JOIN price_ranked hist_min ON p.id = hist_min.product_id AND hist_min.cheapest_rank = 1
+WHERE curr.price > hist_min.price    -- not at all-time low
+ORDER BY pct_above_min DESC;
+```
+
+### Pattern 4 — Tournament Bracket Seeding
+
+```sql
+-- Assign tournament seeds based on win rate
+-- RANK used because gaps reflect actual differences in standing
+
+WITH player_stats AS (
+  SELECT
+    player_id,
+    COUNT(*)                                      AS games_played,
+    COUNT(*) FILTER (WHERE result = 'win')        AS wins,
+    ROUND(
+      COUNT(*) FILTER (WHERE result = 'win')
+      * 100.0 / NULLIF(COUNT(*), 0), 1
+    )                                             AS win_rate
+  FROM game_results
+  WHERE season = :current_season
+  GROUP BY player_id
+  HAVING COUNT(*) >= 10          -- minimum games to qualify
+),
+seeded AS (
+  SELECT
+    player_id,
+    wins,
+    win_rate,
+    games_played,
+    RANK() OVER (
+      ORDER BY win_rate DESC, wins DESC  -- tiebreak by total wins
+    ) AS seed
+  FROM player_stats
+)
+SELECT
+  seed,
+  p.name,
+  win_rate,
+  wins,
+  games_played
+FROM   seeded s
+JOIN   players p ON p.id = s.player_id
+WHERE  seed <= 32    -- top 32 seeds qualify for tournament
+ORDER BY seed;
+```
+
+### Pattern 5 — Detect Duplicate Transactions with Ranking
+
+```sql
+-- Financial fraud: find duplicate transactions
+-- Same amount + same user + within 5 minutes = suspicious
+
+WITH suspicious AS (
+  SELECT
+    id,
+    user_id,
+    amount,
+    merchant,
+    created_at,
+    DENSE_RANK() OVER (
+      PARTITION BY
+        user_id,
+        amount,
+        merchant,
+        DATE_TRUNC('hour', created_at)    -- group by same hour
+      ORDER BY created_at
+    ) AS occurrence_number
+  FROM transactions
+  WHERE created_at >= NOW() - INTERVAL '24 hours'
+)
+SELECT
+  user_id,
+  amount,
+  merchant,
+  created_at,
+  occurrence_number,
+  CASE
+    WHEN occurrence_number = 1 THEN '✅ Original'
+    ELSE                            '🚨 Duplicate #' || occurrence_number
+  END AS classification
+FROM   suspicious
+WHERE  occurrence_number > 1    -- only show suspected duplicates
+ORDER BY user_id, amount, created_at;
+```
+
+### Pattern 6 — Salary Band Navigation
+
+```sql
+-- Show each employee's salary band relative to peer levels
+
+WITH salary_levels AS (
+  SELECT DISTINCT
+    department,
+    salary,
+    DENSE_RANK() OVER (
+      PARTITION BY department
+      ORDER BY salary DESC
+    ) AS level_from_top,
+    DENSE_RANK() OVER (
+      PARTITION BY department
+      ORDER BY salary ASC
+    ) AS level_from_bottom
+  FROM employees
+  WHERE is_active = true
+),
+total_levels AS (
+  SELECT department, MAX(level_from_top) AS num_levels
+  FROM   salary_levels GROUP BY department
+)
+SELECT
+  e.name,
+  e.department,
+  e.salary,
+  sl.level_from_top,
+  tl.num_levels,
+  sl.level_from_bottom,
+  ROUND(
+    (sl.level_from_bottom - 1) * 100.0
+    / NULLIF(tl.num_levels - 1, 0), 0
+  )                                       AS percentile_in_dept
+FROM   employees    e
+JOIN   salary_levels sl ON e.department = sl.department
+                        AND e.salary    = sl.salary
+JOIN   total_levels  tl ON e.department = tl.department
+WHERE  e.is_active = true
+ORDER BY e.department, e.salary DESC;
+```
+
+---
+
+## 🔬 Verify Yourself
+
+```sql
+-- Setup
+CREATE TEMP TABLE t_scores (
+  id     INT,
+  name   TEXT,
+  dept   TEXT,
+  score  INT
+);
+INSERT INTO t_scores VALUES
+  (1, 'Raj',   'A',  100),
+  (2, 'Priya', 'A',   90),
+  (3, 'Sam',   'A',   90),  -- tie with Priya
+  (4, 'Ankit', 'A',   90),  -- three-way tie
+  (5, 'Meera', 'A',   80),
+  (6, 'Kiran', 'B',   95),
+  (7, 'Dev',   'B',   85),
+  (8, 'Tina',  'B',   85);  -- tie with Dev
+
+-- 1. Core comparison: ROW_NUMBER vs RANK vs DENSE_RANK
+SELECT name, dept, score,
+  ROW_NUMBER()  OVER (PARTITION BY dept ORDER BY score DESC) AS rn,
+  RANK()        OVER (PARTITION BY dept ORDER BY score DESC) AS rnk,
+  DENSE_RANK()  OVER (PARTITION BY dept ORDER BY score DESC) AS dr
+FROM t_scores ORDER BY dept, score DESC;
+
+-- Dept A: 100→1,1,1 | 90→2,2,2,2 | 80→5,5,3 (RANK vs DENSE_RANK!)
+-- Dept B: 95→1,1,1 | 85→2,2,2,2 | next→3,3,2 ✅
+
+-- 2. Gap demonstration (RANK)
+SELECT name, score,
+  RANK() OVER (ORDER BY score DESC) AS rnk
+FROM t_scores WHERE dept = 'A';
+-- 100→1, 90→2, 90→2, 90→2, 80→5  ← gap at 3,4 ✅
+
+-- 3. No gap (DENSE_RANK)
+SELECT name, score,
+  DENSE_RANK() OVER (ORDER BY score DESC) AS dr
+FROM t_scores WHERE dept = 'A';
+-- 100→1, 90→2, 90→2, 90→2, 80→3  ← no gap ✅
+
+-- 4. Nth highest value (DENSE_RANK)
+-- 2nd highest score in dept A
+SELECT DISTINCT score
+FROM (
+  SELECT score,
+    DENSE_RANK() OVER (ORDER BY score DESC) AS dr
+  FROM t_scores WHERE dept = 'A'
+) r
+WHERE dr = 2;
+-- Returns: 90 ✅ (not 80, even though 3 people tied)
+
+-- 5. Top-2 with RANK (include all ties)
+SELECT name, score, rnk
+FROM (
+  SELECT name, score,
+    RANK() OVER (PARTITION BY dept ORDER BY score DESC) AS rnk
+  FROM t_scores
+) r
+WHERE rnk <= 2
+ORDER BY dept, rnk;
+-- Dept A: Raj(rank1) + Priya,Sam,Ankit(all rank2) = 4 rows! ✅
+-- Dept B: Kiran(rank1) + Dev,Tina(both rank2) = 3 rows! ✅
+
+-- 6. Top-2 with DENSE_RANK
+SELECT name, score, dr
+FROM (
+  SELECT name, score,
+    DENSE_RANK() OVER (PARTITION BY dept ORDER BY score DESC) AS dr
+  FROM t_scores
+) r
+WHERE dr <= 2
+ORDER BY dept, dr;
+-- Same as RANK for top-2 ← both include ties at boundary ✅
+
+-- 7. Top-2 with ROW_NUMBER (exactly 2, ties broken arbitrarily)
+SELECT name, score, rn
+FROM (
+  SELECT name, score,
+    ROW_NUMBER() OVER (PARTITION BY dept ORDER BY score DESC) AS rn
+  FROM t_scores
+) r
+WHERE rn <= 2
+ORDER BY dept, rn;
+-- Dept A: Raj + one of {Priya,Sam,Ankit} (arbitrary!) ← exactly 2 ✅
+-- Dept B: Kiran + one of {Dev,Tina} ← exactly 2 ✅
+
+-- 8. EXPLAIN: shared sort for same OVER
+EXPLAIN SELECT name, score,
+  RANK()       OVER (PARTITION BY dept ORDER BY score DESC) AS rnk,
+  DENSE_RANK() OVER (PARTITION BY dept ORDER BY score DESC) AS dr
+FROM t_scores;
+-- WindowAgg → ONE Sort node (shared!) ← computed in one pass ✅
+
+-- 9. Different OVER = separate sorts
+EXPLAIN SELECT name, score,
+  RANK() OVER (PARTITION BY dept ORDER BY score DESC) AS by_score,
+  RANK() OVER (PARTITION BY dept ORDER BY id ASC)    AS by_id
+FROM t_scores;
+-- TWO Sort nodes ← different ORDER BY = two separate sorts ⚠️
+
+-- 10. Verify Nth highest
+SELECT DISTINCT score AS third_highest
+FROM (
+  SELECT score,
+    DENSE_RANK() OVER (ORDER BY score DESC) AS dr
+  FROM t_scores WHERE dept = 'A'
+) r
+WHERE dr = 3;
+-- Returns: 80 ✅ (third distinct score level)
+```
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| RANK vs DENSE_RANK for ties? | RANK: same rank, gap after tie. DENSE_RANK: same rank, no gap ever |
+| RANK gap size? | Equals the number of tied rows (3-way tie at rank 2 → next rank = 5) |
+| DENSE_RANK always consecutive? | Yes — 1, 2, 3, 4... always, regardless of how many rows tie |
+| Nth highest value? | Use DENSE_RANK — WHERE dr = N gives Nth distinct value |
+| Why not RANK for Nth highest? | RANK gaps mean WHERE rank = 3 might return nothing (if two tied at rank 2) |
+| Why not LIMIT/OFFSET for Nth highest? | Returns Nth ROW not Nth distinct value — wrong with duplicates |
+| RANK \<= N for top-N? | May return more than N rows (ties at boundary). Intended for sports/competition |
+| DENSE_RANK \<= N for top-N? | May also return more than N rows (ties). Gives top N distinct levels |
+| ROW_NUMBER \<= N for top-N? | Exactly N rows — ties broken arbitrarily. For strict N-row limit |
+| Same OVER for both? | Computed in ONE WindowAgg pass — zero extra cost |
+| Index optimization? | Same as ROW_NUMBER: index on (PARTITION BY cols, ORDER BY cols) |
+| RANK for what domain? | Sports, positions, competitions, "how many beat me" semantics |
+| DENSE_RANK for what domain? | Tiers, salary bands, score levels, "how many distinct levels above me" |
+| No PARTITION BY? | Rankings span entire result set as one window |
+
+---
+
+## 🧠 Full Mental Model
+
+```
+RANK vs DENSE_RANK — Complete Picture
+
+Same input: scores 100, 90, 90, 80, 70
+
+RANK:                           DENSE_RANK:
+100 → 1                         100 → 1
+ 90 → 2  ┐ tie                   90 → 2  ┐ tie
+ 90 → 2  ┘ same rank             90 → 2  ┘ same rank
+ 80 → 4  ← gap! (skipped 3)     80 → 3  ← consecutive! (no gap)
+ 70 → 5                          70 → 4
+
+Gap rule (RANK):                Dense rule (DENSE_RANK):
+  next_rank = position           next_rank = prev_rank + 1
+  (counts ALL rows before)       (counts DISTINCT values before)
+  3-way tie at 2 → next = 5     3-way tie at 2 → next = 3
+
+Algorithm:
+  Sort → scan → track prev ORDER BY values
+  TIE detected: same rank value for both
+  RANK:       next rank = current_row_count (position)
+  DENSE_RANK: next rank = prev_rank + 1 (increment once per new value)
+
+Choose by domain:
+  "What position did I finish?"  → RANK
+  "What tier/level am I in?"     → DENSE_RANK
+  "Give me exactly N rows"       → ROW_NUMBER
+
+Nth highest value (interview staple):
+  DENSE_RANK always correct ✅
+  LIMIT/OFFSET broken with ties ❌
+  RANK can have gaps (WHERE rank=N might find nothing) ❌
+
+Same OVER clause = one sort, one pass:
+  RANK() OVER w + DENSE_RANK() OVER w = shared Sort ✅
+  Different OVER = separate sorts ⚠️
+```
+
+---

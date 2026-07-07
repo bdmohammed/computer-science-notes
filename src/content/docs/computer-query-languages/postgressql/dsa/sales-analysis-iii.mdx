@@ -1,0 +1,548 @@
+---
+title: 1084. Sales Analysis III
+slug: computer-query-languages/postgresql/dsa/sales-analysis-iii
+description: PostgreSQL solution with debug-style execution breakdown & query plan analysis
+publishDate: new Date()
+updatedDate: new Date()
+tags: ["SQL", "PostgreSQL", "LeetCode", "Aggregation", "Date-Filtering", "Anti-Join"]
+collection: solutions
+---
+
+## 1084. Sales Analysis III
+
+### 🎯 Problem
+
+Find products that were sold **only during Q1 2019**.
+
+That means every sale of that product must be between `2019-01-01` and `2019-03-31` inclusive.
+
+### Sample Input
+
+**Product**
+
+```text
+┌────────────┬──────────────┬────────────┐
+│ product_id │ product_name │ unit_price │
+├────────────┼──────────────┼────────────┤
+│     1      │ S8           │   1000     │
+│     2      │ G4           │    800     │
+│     3      │ iPhone       │   1400     │
+│     4      │ Pixel        │    900     │
+│     5      │ AirPods      │    200     │
+└────────────┴──────────────┴────────────┘
+```
+
+**Sales**
+
+```text
+┌───────────┬────────────┬──────────┬────────────┬──────────┬───────┐
+│ seller_id │ product_id │ buyer_id │ sale_date  │ quantity │ price │
+├───────────┼────────────┼──────────┼────────────┼──────────┼───────┤
+│     1     │     1      │    1     │ 2019-01-21 │    2     │ 2000  │
+│     2     │     1      │    2     │ 2019-03-15 │    1     │ 1000  │
+│     1     │     2      │    3     │ 2019-02-17 │    1     │  800  │
+│     2     │     2      │    4     │ 2019-06-02 │    1     │  800  │
+│     3     │     3      │    5     │ 2019-05-13 │    2     │ 2800  │
+│     4     │     4      │    6     │ 2018-12-30 │    1     │  900  │
+│     5     │     4      │    7     │ 2019-01-05 │    1     │  900  │
+└───────────┴────────────┴──────────┴────────────┴──────────┴───────┘
+```
+
+### Expected Output
+
+```text
+┌────────────┬──────────────┐
+│ product_id │ product_name │
+├────────────┼──────────────┤
+│     1      │ S8           │
+└────────────┴──────────────┘
+```
+
+Product `1` was sold only inside Q1 2019.
+
+Product `2` had a Q1 sale, but also had a sale after Q1.  
+Product `3` was sold only after Q1.  
+Product `4` was sold before Q1 and inside Q1.  
+Product `5` has no sales, so it is not returned.
+
+## 🧩 Approaches Overview
+
+1. ✅ **GROUP BY + HAVING MIN/MAX dates** — group each product and check that its first and last sale are inside Q1. Recommended.
+2. ⚡ **Conditional Aggregation** — count outside-Q1 sales and keep products where outside count is `0`.
+3. 🧠 **EXISTS + NOT EXISTS** — require at least one Q1 sale and reject any outside-Q1 sale.
+4. 🔎 **IN + NOT IN** — set-based version; works, but `NOT IN` has NULL caveats.
+
+## ✅ Approach 1: GROUP BY + HAVING MIN/MAX Dates
+
+```sql
+SELECT
+    p.product_id,
+    p.product_name
+FROM Product p
+JOIN Sales s
+    ON p.product_id = s.product_id
+GROUP BY
+    p.product_id,
+    p.product_name
+HAVING
+    MIN(s.sale_date) >= DATE '2019-01-01'
+    AND MAX(s.sale_date) <= DATE '2019-03-31';
+```
+
+### Data Flow Notes
+
+Execution order: `FROM Product` → `JOIN Sales` → `GROUP BY product_id, product_name` → `HAVING MIN/MAX date check` → `SELECT`
+
+**Step 1: FROM Product**
+
+The query starts with all products.
+
+```text
+┌────────────┬──────────────┬────────────┐
+│ product_id │ product_name │ unit_price │
+├────────────┼──────────────┼────────────┤
+│     1      │ S8           │   1000     │
+│     2      │ G4           │    800     │
+│     3      │ iPhone       │   1400     │
+│     4      │ Pixel        │    900     │
+│     5      │ AirPods      │    200     │
+└────────────┴──────────────┴────────────┘
+5 rows loaded.
+```
+
+---
+
+**Step 2: JOIN Sales**
+
+Each product is matched with its sales rows.
+
+```text
+┌────────────┬──────────────┬────────────┬──────────┬───────┐
+│ product_id │ product_name │ sale_date  │ quantity │ price │
+├────────────┼──────────────┼────────────┼──────────┼───────┤
+│     1      │ S8           │ 2019-01-21 │    2     │ 2000  │
+│     1      │ S8           │ 2019-03-15 │    1     │ 1000  │
+│     2      │ G4           │ 2019-02-17 │    1     │  800  │
+│     2      │ G4           │ 2019-06-02 │    1     │  800  │
+│     3      │ iPhone       │ 2019-05-13 │    2     │ 2800  │
+│     4      │ Pixel        │ 2018-12-30 │    1     │  900  │
+│     4      │ Pixel        │ 2019-01-05 │    1     │  900  │
+└────────────┴──────────────┴────────────┴──────────┴───────┘
+7 rows after join.
+```
+
+Product `5` disappears here because it has no matching sale.
+
+---
+
+**Step 3: GROUP BY product_id, product_name**
+
+Rows are grouped product-wise.
+
+```text
+Groups formed:
+- product_id=1, S8     → dates [2019-01-21, 2019-03-15]
+- product_id=2, G4     → dates [2019-02-17, 2019-06-02]
+- product_id=3, iPhone → dates [2019-05-13]
+- product_id=4, Pixel  → dates [2018-12-30, 2019-01-05]
+```
+
+Result after grouping, with `MIN()` and `MAX()` tracked:
+
+```text
+┌────────────┬──────────────┬────────────┬────────────┐
+│ product_id │ product_name │ min_date   │ max_date   │
+├────────────┼──────────────┼────────────┼────────────┤
+│     1      │ S8           │ 2019-01-21 │ 2019-03-15 │
+│     2      │ G4           │ 2019-02-17 │ 2019-06-02 │
+│     3      │ iPhone       │ 2019-05-13 │ 2019-05-13 │
+│     4      │ Pixel        │ 2018-12-30 │ 2019-01-05 │
+└────────────┴──────────────┴────────────┴────────────┘
+4 product groups.
+```
+
+---
+
+**Step 4: HAVING**
+
+Condition applied:
+
+```sql
+MIN(s.sale_date) >= DATE '2019-01-01'
+AND MAX(s.sale_date) <= DATE '2019-03-31'
+```
+
+Group check:
+
+```text
+product_id=1 → min=2019-01-21, max=2019-03-15 ✅ keep
+product_id=2 → min=2019-02-17, max=2019-06-02 ❌ drop, sold after Q1
+product_id=3 → min=2019-05-13, max=2019-05-13 ❌ drop, sold after Q1
+product_id=4 → min=2018-12-30, max=2019-01-05 ❌ drop, sold before Q1
+```
+
+Result after `HAVING`:
+
+```text
+┌────────────┬──────────────┐
+│ product_id │ product_name │
+├────────────┼──────────────┤
+│     1      │ S8           │
+└────────────┴──────────────┘
+1 row remaining.
+```
+
+---
+
+**Step 5: SELECT**
+
+Columns projected: `[p.product_id, p.product_name]`
+
+Final output:
+
+```text
+┌────────────┬──────────────┐
+│ product_id │ product_name │
+├────────────┼──────────────┤
+│     1      │ S8           │
+└────────────┴──────────────┘
+```
+
+### Why MIN/MAX Works
+
+For all sales of a product to be inside Q1 2019:
+
+```text
+earliest sale must be >= 2019-01-01
+latest sale must be <= 2019-03-31
+```
+
+If the earliest and latest sales are both inside the range, then every sale between them is also inside the range.
+
+### Common Mistake
+
+```sql
+SELECT DISTINCT
+    p.product_id,
+    p.product_name
+FROM Product p
+JOIN Sales s
+    ON p.product_id = s.product_id
+WHERE s.sale_date BETWEEN DATE '2019-01-01' AND DATE '2019-03-31';
+```
+
+Wait — this is wrong.
+
+This query only checks whether the product had **at least one sale** in Q1.
+
+It would incorrectly return product `2`, because product `2` has a Q1 sale on `2019-02-17`, but it also has an outside-Q1 sale on `2019-06-02`.
+
+### PostgreSQL Query Plan Notes
+
+```text
+HashAggregate  (cost=52.40..55.40 rows=20 width=36)
+  Group Key: p.product_id, p.product_name
+  Filter: ((min(s.sale_date) >= '2019-01-01'::date)
+        AND (max(s.sale_date) <= '2019-03-31'::date))
+  -> Hash Join  (cost=18.10..44.90 rows=1000 width=40)
+       Hash Cond: (s.product_id = p.product_id)
+       -> Seq Scan on sales s  (cost=0.00..24.00 rows=1000 width=8)
+       -> Hash  (cost=12.60..12.60 rows=440 width=36)
+            -> Seq Scan on product p  (cost=0.00..12.60 rows=440 width=36)
+```
+
+**Node Mapping:**
+
+- `Seq Scan on sales` → reads all sale rows
+- `Seq Scan on product` → reads product metadata
+- `Hash` → builds a hash table from `Product`
+- `Hash Join` → attaches `product_name` to each sale
+- `HashAggregate` → groups by product and computes `MIN(sale_date)` and `MAX(sale_date)`
+- `Filter` → applies the `HAVING` condition
+
+### Performance Notes
+
+- ⏱️ **Time complexity:** `O(S + P)` average, where `S = Sales rows`, `P = Product rows`
+- 💾 **Memory usage:** `O(G)`, where `G = number of sold product groups`
+- 📇 **Index impact:** `Sales(product_id, sale_date)` can help grouping by product and reading dates together
+- 📈 **Large data:** full scan of `Sales` is often needed because every sale can affect whether a product is valid
+
+### Edge Cases
+
+- 🔹 **Sold on `2019-01-01`:** included
+- 🔹 **Sold on `2019-03-31`:** included
+- 🔹 **Sold before Q1 and inside Q1:** excluded
+- 🔹 **Sold inside Q1 and after Q1:** excluded
+- 🔹 **Sold only outside Q1:** excluded
+- 🔹 **Product with no sales:** excluded because `JOIN Sales` removes it
+- 🔹 **Duplicate sales rows:** harmless; `MIN()` and `MAX()` still give correct boundaries
+- 🔹 **NULL sale_date:** `MIN()` and `MAX()` ignore NULL, so add explicit handling if NULL dates are possible
+
+### Limitations
+
+- 🐌 **When slow:** very large `Sales` table with many distinct products and low memory for hash aggregation
+- ❌ **When wrong:** if the requirement changes to include products with no sales
+- 💥 **Breaks at scale:** aggregation can spill to disk when many product groups exceed `work_mem`
+
+## ⚡ Approach 2: Conditional Aggregation
+
+```sql
+SELECT
+    p.product_id,
+    p.product_name
+FROM Product p
+JOIN Sales s
+    ON p.product_id = s.product_id
+GROUP BY
+    p.product_id,
+    p.product_name
+HAVING
+    SUM(
+        CASE
+            WHEN s.sale_date < DATE '2019-01-01'
+              OR s.sale_date > DATE '2019-03-31'
+            THEN 1
+            ELSE 0
+        END
+    ) = 0;
+```
+
+### Data Flow Notes
+
+Execution order: `FROM Product` → `JOIN Sales` → `GROUP BY product_id, product_name` → `HAVING invalid sale count = 0` → `SELECT`
+
+After grouping, count sales outside Q1:
+
+```text
+┌────────────┬──────────────┬──────────────────────────────┬───────────────┐
+│ product_id │ product_name │ sale dates                   │ outside_count │
+├────────────┼──────────────┼──────────────────────────────┼───────────────┤
+│     1      │ S8           │ 2019-01-21, 2019-03-15       │       0       │
+│     2      │ G4           │ 2019-02-17, 2019-06-02       │       1       │
+│     3      │ iPhone       │ 2019-05-13                   │       1       │
+│     4      │ Pixel        │ 2018-12-30, 2019-01-05       │       1       │
+└────────────┴──────────────┴──────────────────────────────┴───────────────┘
+```
+
+`HAVING outside_count = 0` keeps only product `1`.
+
+Final output:
+
+```text
+┌────────────┬──────────────┐
+│ product_id │ product_name │
+├────────────┼──────────────┤
+│     1      │ S8           │
+└────────────┴──────────────┘
+```
+
+### PostgreSQL FILTER Version
+
+PostgreSQL has a cleaner syntax for this pattern:
+
+```sql
+SELECT
+    p.product_id,
+    p.product_name
+FROM Product p
+JOIN Sales s
+    ON p.product_id = s.product_id
+GROUP BY
+    p.product_id,
+    p.product_name
+HAVING
+    COUNT(*) FILTER (
+        WHERE s.sale_date < DATE '2019-01-01'
+           OR s.sale_date > DATE '2019-03-31'
+    ) = 0;
+```
+
+### Performance Notes
+
+- ⏱️ **Time complexity:** `O(S + P)`
+- 💾 **Memory usage:** `O(G)` grouped products
+- 📇 **Index impact:** `Sales(product_id, sale_date)` helps
+- 📈 **Large data:** similar to MIN/MAX, but the condition is more verbose
+
+### Limitation
+
+This approach is very explicit, but less elegant than `MIN/MAX`.
+
+For this problem, `MIN/MAX` expresses the rule more directly.
+
+## 🧠 Approach 3: EXISTS + NOT EXISTS
+
+```sql
+SELECT
+    p.product_id,
+    p.product_name
+FROM Product p
+WHERE EXISTS (
+    SELECT 1
+    FROM Sales s
+    WHERE s.product_id = p.product_id
+      AND s.sale_date BETWEEN DATE '2019-01-01' AND DATE '2019-03-31'
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM Sales s
+    WHERE s.product_id = p.product_id
+      AND (
+          s.sale_date < DATE '2019-01-01'
+          OR s.sale_date > DATE '2019-03-31'
+      )
+);
+```
+
+### Notes
+
+This reads almost exactly like the requirement:
+
+```text
+Keep product if:
+1. It has at least one sale in Q1 2019
+2. It has no sale outside Q1 2019
+```
+
+For the sample data:
+
+```text
+product_id=1 → has Q1 sale ✅, has outside sale ❌ → keep
+product_id=2 → has Q1 sale ✅, has outside sale ✅ → drop
+product_id=3 → has Q1 sale ❌, has outside sale ✅ → drop
+product_id=4 → has Q1 sale ✅, has outside sale ✅ → drop
+product_id=5 → has Q1 sale ❌, has outside sale ❌ → drop
+```
+
+### Performance Notes
+
+- ⏱️ **Time complexity:** can be `O(P log S)` with a good index
+- 💾 **Memory usage:** low; no grouping table required
+- 📇 **Best index:** `Sales(product_id, sale_date)`
+- 📈 **Large data:** can be very efficient because `EXISTS` can stop after finding a matching row
+
+### Limitation
+
+More verbose than `GROUP BY + HAVING`, but very production-friendly.
+
+## 🔎 Approach 4: IN + NOT IN
+
+```sql
+SELECT
+    product_id,
+    product_name
+FROM Product
+WHERE product_id IN (
+    SELECT product_id
+    FROM Sales
+    WHERE sale_date BETWEEN DATE '2019-01-01' AND DATE '2019-03-31'
+)
+AND product_id NOT IN (
+    SELECT product_id
+    FROM Sales
+    WHERE sale_date < DATE '2019-01-01'
+       OR sale_date > DATE '2019-03-31'
+);
+```
+
+### Notes
+
+This uses two sets:
+
+```text
+Q1 products:
+{1, 2, 4}
+
+Outside-Q1 products:
+{2, 3, 4}
+
+Q1 products minus outside-Q1 products:
+{1}
+```
+
+Final output:
+
+```text
+┌────────────┬──────────────┐
+│ product_id │ product_name │
+├────────────┼──────────────┤
+│     1      │ S8           │
+└────────────┴──────────────┘
+```
+
+### Caution
+
+`NOT IN` can behave unexpectedly if the subquery returns `NULL`.
+
+If `Sales.product_id` can be NULL, prefer `NOT EXISTS`.
+
+## 🔄 Variations
+
+### Variation 1: Products sold only in January 2019
+
+Change the date range:
+
+```sql
+MIN(s.sale_date) >= DATE '2019-01-01'
+AND MAX(s.sale_date) <= DATE '2019-01-31'
+```
+
+### Variation 2: Products sold in Q1 and also outside Q1
+
+Change the `HAVING` logic:
+
+```sql
+HAVING
+    COUNT(*) FILTER (
+        WHERE s.sale_date BETWEEN DATE '2019-01-01' AND DATE '2019-03-31'
+    ) > 0
+    AND COUNT(*) FILTER (
+        WHERE s.sale_date < DATE '2019-01-01'
+           OR s.sale_date > DATE '2019-03-31'
+    ) > 0
+```
+
+### Variation 3: Products with no sales
+
+Use `LEFT JOIN`:
+
+```sql
+FROM Product p
+LEFT JOIN Sales s
+    ON p.product_id = s.product_id
+WHERE s.product_id IS NULL
+```
+
+### Variation 4: Products sold only in Q1 2019 with total quantity
+
+Add aggregate output:
+
+```sql
+SUM(s.quantity) AS total_quantity
+```
+
+## 📊 Approach Comparison
+
+| Approach | Complexity | Memory | Index Usage | Best For |
+|---|---:|---:|---|---|
+| ✅ GROUP BY + HAVING MIN/MAX | `O(S + P)` | `O(G)` | helpful on `(product_id, sale_date)` | best default solution |
+| ⚡ Conditional Aggregation | `O(S + P)` | `O(G)` | helpful on `(product_id, sale_date)` | explicit invalid-sale counting |
+| 🧠 EXISTS + NOT EXISTS | `O(P log S)` with index | `O(1)` to `O(P)` | strongly benefits from `(product_id, sale_date)` | production-safe filtering |
+| 🔎 IN + NOT IN | `O(S + P)` average | `O(P)` | helpful, but NULL-sensitive | simple set logic |
+
+## Final Recommended Answer
+
+```sql
+SELECT
+    p.product_id,
+    p.product_name
+FROM Product p
+JOIN Sales s
+    ON p.product_id = s.product_id
+GROUP BY
+    p.product_id,
+    p.product_name
+HAVING
+    MIN(s.sale_date) >= DATE '2019-01-01'
+    AND MAX(s.sale_date) <= DATE '2019-03-31';
+```

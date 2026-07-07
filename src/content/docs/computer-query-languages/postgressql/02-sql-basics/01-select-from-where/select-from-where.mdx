@@ -1,0 +1,589 @@
+---
+title: PostgreSQL SELECT, FROM, WHERE
+slug: computer-query-languages/postgresql/sql-basics/select-from-where
+description: "Master the core SQL clauses: what to retrieve, where from, and how to filter. Includes execution order, operator precedence, and performance patterns."
+sidebar:
+  label: "Basic Queries"
+  badge:
+    text: Fundamentals
+    variant: tip
+tags: [postgresql, sql, select, where, from, query-syntax, interview, performance]
+---
+
+
+import { Aside, Badge, Card, CardGrid, Code, LinkCard, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+
+## 📄 SELECT, FROM, WHERE — The Core Query
+
+> **`FROM` finds the data, `WHERE` filters the rows, `SELECT` picks the columns. In that exact order — even though you write SELECT first.**
+
+<Aside type="tip">
+**⚙️ Execution Order vs Writing Order**
+
+This is the #1 source of confusion. You **write** it one way, Postgres **runs** it another.
+
+```text
+You WRITE:                    Postgres EXECUTES:
+                              
+SELECT   col1, col2           1. FROM      ← find the table
+FROM     table                2. WHERE     ← filter rows  
+WHERE    condition            3. SELECT    ← pick columns
+```
+The database **filters first**, then **picks columns**. This is why you can't use `SELECT` aliases in `WHERE` — the alias doesn't exist yet during filtering!
+</Aside>
+
+---
+
+## ⚙️ Execution Order — Why It Matters
+
+<Code lang="sql" title="❌ Alias in WHERE fails — execution order" code={`
+SELECT name AS n                  -- alias defined here (step 3)
+FROM   users
+WHERE  n = 'Raj';                 -- ❌ ERROR! WHERE runs before SELECT
+                                  -- alias doesn't exist yet
+
+-- ✅ Fix: use real column name
+SELECT name AS n
+FROM   users  
+WHERE  name = 'Raj';`} />
+
+<Aside type="note">
+**Interview Trap**: You cannot use a `SELECT` alias in `WHERE` or `GROUP BY`. The alias is created in the SELECT phase, which runs **after** filtering and grouping.
+</Aside>
+
+---
+
+## 1️⃣ FROM — Where Data Lives
+
+<Code lang="sql" title="FROM clause patterns" code={`
+-- Single table
+SELECT * FROM users;
+
+-- Schema-qualified (when multiple schemas exist)
+SELECT * FROM public.users;
+SELECT * FROM analytics.events;
+
+-- Aliasing a table (required for self-joins, cleans up long names)
+SELECT u.name, u.email
+FROM   users u;              -- 'u' is now shorthand for 'users'
+
+-- FROM with a subquery (inline view)
+SELECT *  FROM   (SELECT id, name FROM users WHERE is_active = true) AS active_users;`} />
+
+### 🔍 What FROM Actually Does Internally
+
+```
+            FROM users
+                │
+                ▼
+┌─────────────────────────────────────┐
+│  Query Planner decides:             │
+│                                     │
+│  Option A: Sequential Scan          │
+│  Read every 8KB page one by one     │
+│  Search Type: Linear Search         │
+│  Cost: O(n)                         │
+│                                     │
+│  Option B: Index Scan               │
+│  Use B-Tree to jump to exact rows   │
+│  Search Type: Binary Search         │
+│  Cost: O(log n)                     │
+│                                     │
+│  Decision based on: row count,      │
+│  selectivity, statistics            │
+└─────────────────────────────────────┘
+```
+
+<Aside type="tip">
+**🎯 DSA Connection**: 
+- Sequential Scan = linear search **O(n)**
+- Index Scan = binary search on B-Tree **O(log n)**
+
+The planner picks whichever is cheaper based on table statistics. If this step is slow, you likely need an index on the filter/join columns.
+</Aside>
+
+---
+
+## 2️⃣ WHERE — The Filter Engine
+
+> Filters rows **before** grouping, sorting, or selecting columns.
+
+<CardGrid>
+  <Card title="Basic Operators" icon="shield">
+    ```sql
+    -- Equality & Inequality
+    WHERE id = 42
+    WHERE status != 'cancelled'   -- or: <>
+    
+    -- Range
+    WHERE amount > 1000
+    WHERE created_at >= '2024-01-01'
+    
+    -- Multiple conditions
+    WHERE status = 'shipped' AND amount > 500
+    WHERE city = 'Mumbai' OR city = 'Delhi'
+    WHERE NOT is_deleted
+    ```
+  </Card>
+  
+  <Card title="Short-Circuit Evaluation" icon="rocket">
+    ```text
+    Postgres evaluates AND left-to-right and stops early:
+    
+    WHERE is_active = true AND age > 18 AND score > 90
+          │                    │             │
+          ▼                    ▼             ▼
+       false?               false?         false?
+       STOP ✋              STOP ✋         check
+       (skip rest)          (skip rest)
+    
+    ✅ Pro Tip: Put the MOST SELECTIVE condition first in AND chains.
+    If is_active filters 90% of rows, the rest run on only 10% of data.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 3️⃣ SELECT — Picking Your Columns
+
+<Code lang="sql" title="SELECT patterns & best practices" code={`
+-- ❌ Avoid in production: fetches ALL columns
+SELECT * FROM users;
+
+-- ✅ Always prefer: specific columns only
+SELECT id, name, email FROM users;
+
+-- With table alias
+SELECT u.id, u.name FROM users u;
+
+-- Expressions & computed columns
+SELECT
+  id,
+  price * quantity        AS total_amount,
+  UPPER(name)             AS name_upper,
+  created_at::DATE        AS created_date,
+  CASE
+    WHEN salary > 100000 THEN 'Senior'
+    WHEN salary > 50000  THEN 'Mid'
+    ELSE                      'Junior'
+  END                     AS level
+FROM orders;
+
+-- DISTINCT: remove duplicate rows
+SELECT DISTINCT city FROM users;
+
+-- DISTINCT ON (PostgreSQL superpower!)
+-- Returns first row per group based on ordering
+SELECT DISTINCT ON (user_id) 
+  user_id, order_id, created_at
+FROM orders
+ORDER BY user_id, created_at DESC;
+-- ✅ Returns each user's most recent order`} />
+
+<Aside type="caution">
+**Why `SELECT *` is dangerous in production**:
+1. 🐌 Fetches ALL columns including huge `TEXT`/`JSONB` → triggers TOAST reads → slow
+2. 💥 If someone adds a column tomorrow, your app code breaks (unexpected column)
+3. 🌐 More data over network = higher latency
+4. 🚫 Prevents **index-only scans** (planner can't skip heap fetch)
+
+✅ Rule: `SELECT *` is fine for exploration in `psql`. Never use it in application code.
+</Aside>
+
+---
+
+## 4️⃣ WHERE — All Operators Reference
+
+<Tabs>
+  <TabItem label="Comparison & Range" icon="equals">
+    ```sql
+    -- Basic comparison
+    WHERE age = 25
+    WHERE age != 25          -- or: <>
+    WHERE age > 25
+    WHERE age >= 25
+    WHERE age < 25
+    WHERE age <= 25
+    
+    -- Range (inclusive both ends)
+    WHERE age BETWEEN 18 AND 30
+    
+    -- Set membership
+    WHERE city IN ('Mumbai', 'Delhi', 'Bangalore')
+    WHERE city NOT IN ('Patna', 'Ranchi')  -- ⚠️ NULL trap!
+    ```
+  </TabItem>
+  
+  <TabItem label="Pattern Matching" icon="search">
+    ```sql
+    -- LIKE: case-sensitive, _ = 1 char, % = any string
+    WHERE email LIKE '%@gmail.com'
+    WHERE name  LIKE 'Raj%'           -- starts with Raj
+    WHERE phone LIKE '_______890'     -- _ = exactly one char
+    
+    -- ILIKE: case-insensitive (Postgres-only ✅)
+    WHERE email ILIKE '%@GMAIL.COM'
+    
+    -- Regular expressions (POSIX)
+    WHERE email ~* '^[a-z0-9._%+-]+@gmail\.com$'  -- case-insensitive
+    WHERE name  ~   '^John'                       -- case-sensitive
+    ```
+  </TabItem>
+
+  <TabItem label="NULL & Boolean" icon="info">
+    ```sql
+    -- ✅ Correct NULL checks
+    WHERE phone IS NULL
+    WHERE phone IS NOT NULL
+    
+    -- ❌ Wrong (always returns 0 rows)
+    WHERE phone = NULL
+    WHERE phone != NULL
+    
+    -- Boolean shorthand
+    WHERE is_active           -- same as: is_active = true
+    WHERE NOT is_deleted      -- same as: is_deleted = false
+    
+    -- Three-value logic reminder:
+    -- NULL = NULL → NULL (not TRUE!)
+    -- Any comparison with NULL = NULL (unknown)
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="danger">
+**⚠️ NULL Trap**: `WHERE x != 5` does **not** return rows where `x` is `NULL`. `NULL` rows are silently excluded because `NULL != 5` evaluates to `NULL` (unknown), not `TRUE`.  
+✅ Always add `OR x IS NULL` if you want to include NULLs: `WHERE x != 5 OR x IS NULL`
+</Aside>
+
+---
+
+## 5️⃣ Internals — What Happens When You Run a Query
+
+<Steps>
+1. PARSE:
+    SQL string → Parse Tree (AST). Checks syntax only. `'city'` column not validated yet.
+2. ANALYZE:
+    Checks: does table `'users'` exist? Does column `'city'` exist? Are types compatible?
+3. PLAN:
+    Planner checks `pg_statistics` for `'city'` column:
+    ```text
+    ┌──────────────────────────────────────────┐
+    │ Is there an index on city?               │
+    │   YES + few rows match → Index Scan      │
+    │   YES + many rows match → Seq Scan       │
+    │   NO                   → Seq Scan        │
+    └──────────────────────────────────────────┘
+    ```
+4. EXECUTE:
+    Reads pages from `shared_buffers` (or disk if not cached). Applies `WHERE` filter row-by-row. Projects only requested columns. Streams results back to client.
+</Steps>
+
+### 🔬 Prove It with EXPLAIN
+
+<Code lang="sql" title="See the planner's decision" code={`-- No index on city
+EXPLAIN SELECT id, name FROM users WHERE city = 'Raipur';
+
+-- Output:
+-- Seq Scan on users  (cost=0.00..25.00 rows=10 width=36)
+--   Filter: (city = 'Raipur')
+
+-- After adding index:
+CREATE INDEX idx_users_city ON users(city);
+
+EXPLAIN SELECT id, name FROM users WHERE city = 'Raipur';
+
+-- Output:
+-- Index Scan using idx_users_city on users  (cost=0.43..8.45 rows=10)
+--   Index Cond: (city = 'Raipur')
+
+-- PRO TIP: Always use EXPLAIN ANALYZE in dev
+-- It actually runs the query and shows REAL timing & row counts!
+EXPLAIN (ANALYZE, BUFFERS) SELECT id, name FROM users WHERE city = 'Raipur';`} />
+
+---
+
+## 6️⃣ Performance Rules for WHERE Clauses
+
+<CardGrid>
+  <Card title="✅ DO — Index-Friendly Patterns" icon="approve-check">
+    ```sql
+    -- Equality & Range (B-Tree loves these)
+    WHERE status = 'active'
+    WHERE created_at BETWEEN '2024-01-01' AND '2024-12-31'
+    
+    -- Left-anchored LIKE (uses index)
+    WHERE username LIKE 'john%'
+    
+    -- IS NULL / IS NOT NULL (with partial index)
+    CREATE INDEX idx_active ON orders(id) WHERE status = 'pending';
+    
+    -- Put most selective condition FIRST in AND chain
+    WHERE is_active = true    -- filters 90% of rows
+      AND score > 90          -- runs on remaining 10%
+    ```
+  </Card>
+  
+  <Card title="❌ AVOID — Index-Killing Patterns" icon="error">
+    ```sql
+    -- Wrapping column in function
+    WHERE EXTRACT(YEAR FROM created_at) = 2024;
+    WHERE LOWER(email) = 'test@example.com';
+    WHERE amount::TEXT LIKE '10%';
+    
+    -- Leading wildcard in LIKE
+    WHERE bio LIKE '%developer%';  -- Full table scan!
+    
+    -- Implicit type casting
+    WHERE varchar_column = 123;    -- Postgres casts column to int → scan
+    -- Fix: WHERE varchar_column = '123';
+    
+    -- Using SELECT alias in WHERE
+    WHERE discounted_price > 50;   -- alias doesn't exist yet!
+    ```
+  </Card>
+</CardGrid>
+
+<Aside type="tip">
+**🎯 SARGable Queries**: **S**earch **ARG**ument **ABLE** — a query that can efficiently use indexes.  
+✅ Column stands alone on one side: `WHERE created_at > '2024-01-01'`  
+❌ Column wrapped in function/cast: `WHERE DATE(created_at) = '2024-01-01'`
+</Aside>
+
+---
+
+## 7️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: Paginated List" icon="rocket">
+    ```sql
+    -- Mobile/web app: fetch latest published posts
+    SELECT id, title, created_at
+    FROM   posts
+    WHERE  is_published = true
+    ORDER BY created_at DESC
+    LIMIT  20;
+    
+    -- ✅ Index on (is_published, created_at DESC) makes this blazing fast
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: User Search" icon="search">
+    ```sql
+    -- Case-insensitive name search with active filter
+    SELECT id, name, email
+    FROM   users
+    WHERE  name ILIKE '%rahul%'    -- case-insensitive
+      AND  is_active = true
+    LIMIT  10;
+    
+    -- ⚠️ ILIKE with leading % skips index unless you have:
+    -- CREATE INDEX idx_users_name_trgm ON users USING gin(name gin_trgm_ops);
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Dashboard Filter" icon="shield">
+    ```sql
+    -- Date range + status filter for user orders
+    SELECT id, amount, status
+    FROM   orders
+    WHERE  user_id    = 42
+      AND  created_at >= '2024-01-01'
+      AND  created_at <  '2025-01-01'  -- exclusive end = better index usage
+      AND  status     != 'cancelled';
+    
+    -- ✅ Composite index: (user_id, created_at, status) covers this query
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Soft Delete (Production Standard)" icon="backspace">
+    ```sql
+    -- Never physically DELETE, just mark deleted
+    SELECT id, name, email
+    FROM   users
+    WHERE  deleted_at IS NULL;     -- the golden rule
+    
+    -- ✅ Partial index: only indexes active rows → smaller, faster
+    CREATE INDEX idx_users_active ON users(id) WHERE deleted_at IS NULL;
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Execution & Aliases" icon="information">
+    ```text
+    Q: What's the execution order of SELECT/FROM/WHERE?
+    A: FROM → WHERE → SELECT (not the written order!)
+    
+    Q: Can you use a SELECT alias in WHERE?
+    A: NO ❌ — alias is created in SELECT phase, which runs after WHERE.
+       ✅ Fix: repeat the expression or use a CTE/subquery.
+    ```
+  </Card>
+  
+  <Card title="NULL & Logic" icon="caution">
+    ```text
+    Q: Why does WHERE x = NULL return 0 rows?
+    A: NULL = NULL evaluates to NULL (unknown), not TRUE.
+       ✅ Always use IS NULL / IS NOT NULL.
+    
+    Q: Does WHERE x != 5 include NULL rows?
+    A: NO ❌ — NULL != 5 is NULL (unknown), not TRUE.
+       ✅ Add OR x IS NULL if you want NULLs included.
+    ```
+  </Card>
+
+  <Card title="Performance & Indexes" icon="rocket">
+    ```text
+    Q: Why is SELECT * bad in production?
+    A: Fetches unused columns → TOAST reads, network waste, 
+       blocks index-only scans, fragile to schema changes.
+    
+    Q: What makes a query SARGable?
+    A: Column stands alone on one side of operator.
+       ✅ WHERE created_at > '2024-01-01'
+       ❌ WHERE DATE(created_at) = '2024-01-01'
+    
+    Q: Why does LIKE '%word%' skip indexes?
+    A: Leading wildcard prevents B-Tree prefix matching.
+       ✅ Use trigram GIN index for mid-string search.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+### SELECT Clause Rules
+| Pattern | Use Case | Performance Note |
+|---------|----------|-----------------|
+| `SELECT col1, col2` | Production queries | ✅ Fast, minimal network |
+| `SELECT *` | Exploration in psql | ❌ Avoid in app code |
+| `SELECT DISTINCT` | Remove duplicate rows | ⚠️ Sorts all rows → expensive at scale |
+| `SELECT DISTINCT ON (x)` | First row per group (PG-only) | ✅ Efficient with proper ORDER BY |
+| `SELECT expr AS alias` | Computed columns | Alias usable in ORDER BY, not WHERE |
+
+### WHERE Clause Rules
+| Operator | Index-Friendly? | Notes |
+|----------|----------------|-------|
+| `=`, `>`, `<`, `BETWEEN` | ✅ Yes | B-Tree index works great |
+| `IN (val1, val2)` | ✅ Yes | Converted to OR chain internally |
+| `LIKE 'prefix%'` | ✅ Yes | Left-anchored = index usable |
+| `LIKE '%suffix'` | ❌ No | Leading wildcard = full scan |
+| `ILIKE`, `~` | ⚠️ Maybe | Needs functional/trigram index |
+| `IS NULL` | ✅ Yes (with partial index) | Create `WHERE col IS NULL` index |
+| `func(col) = val` | ❌ No | Wrap column → index ignored |
+
+### NULL Logic Quick Guide
+```sql
+-- This finds nothing, even if phone column has NULLs
+WHERE phone = NULL       -- ❌ always returns 0 rows
+
+-- Correct
+WHERE phone IS NULL      -- ✅
+
+-- Why?
+-- NULL = NULL → NULL (not TRUE) in SQL's three-value logic
+-- Any comparison with NULL = NULL (unknown), not TRUE/FALSE
+
+-- Three-value logic:
+TRUE  AND NULL = NULL   (not TRUE → row excluded)
+FALSE AND NULL = FALSE
+TRUE  OR  NULL = TRUE
+FALSE OR  NULL = NULL
+```
+
+```
+SQL Logic Table:
+┌────────┬────────┬───────┬────────┐
+│ A      │ B      │ A AND │ A OR B │
+├────────┼────────┼───────┼────────┤
+│ TRUE   │ TRUE   │ TRUE  │ TRUE   │
+│ TRUE   │ FALSE  │ FALSE │ TRUE   │
+│ TRUE   │ NULL   │ NULL  │ TRUE   │
+│ FALSE  │ NULL   │ FALSE │ NULL   │
+│ NULL   │ NULL   │ NULL  │ NULL   │
+└────────┴────────┴───────┴────────┘
+NULL rows are EXCLUDED from results
+(WHERE only keeps TRUE rows)
+```
+
+> 🎯 **Interview trap:** `WHERE x != 5` does **not** return rows where x is NULL. NULL rows are silently excluded. Always add `OR x IS NULL` if you want them.
+
+<Aside type="caution">
+**Final Checklist for SELECT/WHERE**:
+1. ✅ Always specify columns — never `SELECT *` in app code
+2. ✅ Use `IS NULL` / `IS NOT NULL` — never `= NULL`
+3. ✅ Keep indexed columns bare in WHERE (no functions/casts)
+4. ✅ Put most selective condition first in AND chains
+5. ✅ Use `EXPLAIN (ANALYZE, BUFFERS)` to verify index usage
+6. ✅ Remember: aliases from SELECT aren't available in WHERE
+7. ✅ Use `DISTINCT ON` for "latest per group" without window functions
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="text" title="Predict the behavior" code={`Q1: What's wrong with this query?
+SELECT price * 1.2 AS marked_up 
+FROM products 
+WHERE marked_up > 100;
+
+Q2: Why does this return 0 rows even though NULLs exist?
+SELECT * FROM users WHERE middle_name = NULL;
+
+Q3: Which is faster on a 10M row table with index on (email)?
+A) WHERE email = 'Test@Example.COM'
+B) WHERE LOWER(email) = 'test@example.com'  
+C) WHERE email ILIKE 'test@example.com'
+
+Q4: What does this return?
+SELECT DISTINCT ON (user_id) user_id, order_date, total
+FROM orders
+ORDER BY user_id, total DESC;
+
+Q5: Why might this query be slow despite an index on (status, created_at)?
+SELECT * FROM orders 
+WHERE UPPER(status) = 'ACTIVE' 
+  AND created_at > '2024-01-01';
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Alias "marked_up" used in WHERE → fails. WHERE runs before SELECT.
+   Fix: WHERE price * 1.2 > 100
+
+Q2: = NULL always evaluates to UNKNOWN → filtered out.
+   Fix: WHERE middle_name IS NULL
+
+Q3: A) is fastest (exact match, uses B-Tree index directly).
+   B) & C) likely skip index unless functional/CITEXT index exists.
+
+Q4: Returns each user_id's HIGHEST total order (first row per user_id after ordering by total DESC).
+   Postgres-specific DISTINCT ON feature ✅
+
+Q5: UPPER(status) wraps the column → index on status is ignored.
+   Fix: Store status in uppercase, or create functional index: 
+   CREATE INDEX idx_orders_status_upper ON orders(UPPER(status), created_at);
+```
+</details>
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Practice writing SARGable `WHERE` clauses — avoid wrapping indexed columns
+2. ✅ Use `EXPLAIN (ANALYZE, BUFFERS)` to verify `WHERE` uses indexes, not sequential scans
+3. ✅ Prefer `NOT EXISTS` over `NOT IN` when subqueries might contain `NULL`s
+4. ✅ Use `ILIKE` judiciously — it's convenient but often index-unfriendly
+5. ✅ Master `DISTINCT ON` — it solves "latest record per group" without window functions
+
+These three clauses are your foundation. Write them efficiently, and your entire application scales better. 🐘⚡
+</Aside>

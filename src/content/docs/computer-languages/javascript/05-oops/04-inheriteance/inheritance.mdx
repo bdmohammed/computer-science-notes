@@ -1,0 +1,1876 @@
+---
+title: JavaScript Inheritance & Composition
+slug: computer-languages/javascript/oop/inheritance
+description: Master JS inheritance via Prototypes and Classes, understand the IS-A relationship, and learn why Composition is often preferred.
+sidebar:
+  label: "Inheritance"
+  badge:
+    text: OOP Pillar
+    variant: tip
+tags: [javascript, inheritance, extends, super, prototype, composition, interview]
+---
+
+import { Tabs, TabItem, Aside, Badge, Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## 🧬 Inheritance in JavaScript
+
+> In Java, inheritance is rigid (`extends`).  
+> In **JavaScript**, inheritance is based on **Prototypes**. Modern JS uses `class` syntax, but it's just syntactic sugar over the prototype chain.  
+> JS supports **Single Inheritance** for classes, but achieves multiple capabilities via **Mixins** or **Interfaces** (in TypeScript).
+
+<Aside type="tip">
+**🧠 Mental Model**:  
+Think of JS Inheritance as a **Delegation Chain**.  
+If an object doesn't have a property, it asks its Prototype. If the Prototype doesn't have it, it asks *its* Prototype, all the way up to `null`.  
+✅ **Key Difference**: JS is dynamic. You can modify prototypes at runtime (though you shouldn't).
+</Aside>
+
+---
+
+## 🗂️ The `extends` Keyword
+
+JS classes use `extends` to create a parent-child relationship.
+
+<Code lang="js" title="Basic Inheritance" code={`
+// Parent Class
+class Animal {
+    constructor(name) {
+        this.name = name;
+    }
+
+    speak() {
+        return \`\${this.name} makes a noise.\`;
+    }
+}
+
+// Child Class
+class Dog extends Animal {
+    constructor(name, breed) {
+        super(name); // ✅ Must call super() before using 'this'
+        this.breed = breed;
+    }
+
+    // Overriding method
+    speak() {
+        return \`\${super.speak()} Woof!\`;
+    }
+
+    bark() {
+        return 'Woof! Woof!';
+    }
+}
+
+const dog = new Dog('Rex', 'Labrador');
+console.log(dog.speak()); // "Rex makes a noise. Woof!"
+console.log(dog.bark());  // "Woof! Woof!"
+`} />
+
+<Aside type="caution">
+**Critical Rule**: In a subclass constructor, you **MUST** call `super()` before accessing `this`.  
+Java does this implicitly if you don't write it. JS throws a `ReferenceError` if you forget.
+</Aside>
+
+---
+
+## 🔗 Constructor Chaining with `super()`
+
+When a subclass is created, the parent constructor runs first to initialize inherited properties.
+
+<Code lang="js" title="Constructor Execution Order" code={`
+class Parent {
+    constructor() {
+        console.log("Parent Constructor");
+    }
+}
+
+class Child extends Parent {
+    constructor() {
+        super(); // Calls Parent Constructor
+        console.log("Child Constructor");
+    }
+}
+
+new Child();
+// Output:
+// Parent Constructor
+// Child Constructor
+`} />
+
+### ⚠️ `super()` Rules
+
+1.  **Must be first**: You cannot access `this` before `super()`.
+2.  **Arguments**: Pass required arguments to the parent.
+3.  **No Multiple Parents**: JS classes only extend one class.
+
+### Rule: super() First
+    ```js
+        class Dog extends Animal {
+            constructor(name) {
+                // ❌ ReferenceError
+                // this.breed = 'Lab'; 
+                // super(name);
+                
+                // ✅ Correct
+                super(name);
+                this.breed = 'Lab';
+            }
+        }
+    ```
+
+### Rule: Implicit Super?
+    ```js
+    class Animal {}
+    
+    class Dog extends Animal {
+        // If no constructor is defined, JS adds:
+        // constructor(...args) { super(...args); }
+    }
+    
+    // But if you define ONE, you MUST call super manually.
+    ```
+      ```js
+      class Dog extends Animal {
+          constructor(name) {
+              // ❌ ReferenceError
+              // this.breed = 'Lab'; 
+              // super(name);
+              
+              // ✅ Correct
+              super(name);
+              this.breed = 'Lab';
+          }
+      }
+  ```
+
+---
+
+## 🔄 Method Overriding & Polymorphism
+
+JS allows subclasses to override parent methods. Use `super.methodName()` to call the parent version.
+
+<Code lang="js" title="Overriding" code={`
+class Shape {
+    area() {
+        return 0;
+    }
+}
+
+class Circle extends Shape {
+    constructor(radius) {
+        super();
+        this.radius = radius;
+    }
+
+    area() {
+        // Override
+        return Math.PI * this.radius ** 2;
+    }
+}
+
+const c = new Circle(5);
+console.log(c.area()); // 78.53...
+`} />
+
+### Polymorphism in Action
+
+<Code lang="js" title="Polymorphism" code={`
+function makeSound(animal) {
+    // Doesn't care if it's a Dog, Cat, or Bird
+    console.log(animal.speak());
+}
+
+makeSound(new Dog('Rex'));
+makeSound(new Cat('Whiskers'));
+`} />
+
+---
+
+## 🚫 Limitations & Differences from Java
+
+| Feature | Java | JavaScript |
+|---------|------|------------|
+| **Multiple Inheritance** | ❌ No (Use Interfaces) | ❌ No (Use Mixins) |
+| **Access Modifiers** | `private`, `protected`, `public` | Mostly `public`. `#` for private. |
+| **Static Methods** | Hidden | Hidden (same behavior) |
+| **Final Classes** | `final class` | No keyword (convention only) |
+| **Abstract Classes** | `abstract class` | No keyword (throw errors in methods) |
+
+### Private Fields (`#`)
+
+JS uses `#` for true privacy. These are **not** inherited.
+
+<Code lang="js" title="Private Fields" code={`
+class Parent {
+    #secret = "shh";
+    
+    getSecret() {
+        return this.#secret;
+    }
+}
+
+class Child extends Parent {
+    tryAccess() {
+        // console.log(this.#secret); // ❌ SyntaxError
+        return this.getSecret(); // ✅ Access via public method
+    }
+}
+`} />
+
+---
+
+## 🌐 Achieving "Multiple Inheritance" with Mixins
+
+Since JS classes can only extend one class, we use **Mixins** (functions that return classes) to add capabilities.
+
+<Code lang="js" title="Mixins Pattern" code={`
+// Mixin 1
+const Flyable = (Base) => class extends Base {
+    fly() {
+        console.log("Flying...");
+    }
+};
+
+// Mixin 2
+const Swimmable = (Base) => class extends Base {
+    swim() {
+        console.log("Swimming...");
+    }
+};
+
+// Base Class
+class Bird {}
+
+// Compose Capabilities
+class Duck extends Swimmable(Flyable(Bird)) {}
+
+const d = new Duck();
+d.fly();  // ✅
+d.swim(); // ✅
+`} />
+
+<Aside type="tip">
+**Design Tip**: Use **Composition** (has-a) over **Inheritance** (is-a) when possible. Mixins are a form of composition that mimics multiple inheritance.
+</Aside>
+
+---
+
+## 💻 Real-World Code — Layered Architecture
+
+<Code lang="js" title="Service Layer Pattern" code={`
+// Base Service
+class BaseService {
+    constructor(apiUrl) {
+        this.apiUrl = apiUrl;
+    }
+    
+    async fetch(endpoint) {
+        const res = await fetch(\`\${this.apiUrl}\${endpoint}\`);
+        if (!res.ok) throw new Error('Network Error');
+        return res.json();
+    }
+}
+
+// Specific Service
+class UserService extends BaseService {
+    constructor() {
+        super('https://api.example.com');
+    }
+    
+    async getUsers() {
+        return this.fetch('/users');
+    }
+    
+    async getUser(id) {
+        return this.fetch(\`/users/\${id}\`);
+    }
+}
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Forgetting super()" icon="error">
+    ```js
+    class Child extends Parent {
+        constructor() {
+            this.x = 10; // 💥 ReferenceError
+            super();
+        }
+    }
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Arrow Functions in Classes" icon="caution">
+    ```js
+    class Dog extends Animal {
+        // Arrow functions bind 'this' to the instance, not the prototype.
+        // This breaks inheritance/polymorphism for methods.
+        speak = () => "Woof"; 
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 3: instanceof vs typeof" icon="shield">
+    ```js
+    const d = new Dog();
+    console.log(d instanceof Dog);    // true
+    console.log(d instanceof Animal); // true (Prototype chain)
+    console.log(typeof d);            // "object"
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How does JS inheritance work under the hood?" icon="information">
+    Via the **Prototype Chain**. Each object has a `[[Prototype]]` link to another object. `class extends` sets up this link automatically.
+  </Card>
+  
+  <Card title="Q: Can a class extend multiple classes?" icon="error">
+    No. JS supports single inheritance for classes. Use **Mixins** or **Composition** for multiple behaviors.
+  </Card>
+
+  <Card title="Q: What is the difference between `super()` and `super.method()`?" icon="approve-check">
+    `super()` calls the parent **constructor**. `super.method()` calls a specific **method** from the parent prototype.
+  </Card>
+
+  <Card title="Q: Why prefer Composition over Inheritance?" icon="rocket">
+    Inheritance creates tight coupling and fragile hierarchies. Composition (using objects inside other objects) is more flexible and easier to test.
+  </Card>
+</CardGrid>
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+JS INHERITANCE CHECKLIST
+
+1. Syntax:
+   class Child extends Parent { ... }
+
+2. Constructor:
+   - Must call super() first.
+   - Passes args to Parent.
+
+3. Methods:
+   - Override by defining same name.
+   - Use super.method() to call parent.
+
+4. Privacy:
+   - Use #field for true private (not inherited).
+
+5. Alternatives:
+   - Mixins for multiple behaviors.
+   - Composition for complex relationships.
+
+⚠️ Key Differences from Java:
+- No 'protected' keyword (use convention or WeakMap)
+- No 'abstract' keyword (throw errors manually)
+- Dynamic prototype chain
+- Mixins instead of Interfaces
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Always call `super()` in subclass constructors.
+2. ✅ Use `#` for fields that shouldn't be accessed externally.
+3. ✅ Prefer Composition/Mixins for sharing code across unrelated classes.
+4. ✅ Understand the Prototype Chain for debugging.
+
+Mastering inheritance helps you build scalable, reusable JS architectures. ☕✨
+</Aside>
+```
+
+---
+
+## 🔄 Java Inheritance → JS Inheritance Conversion Summary
+
+| Java Concept | JavaScript Equivalent | Critical Difference |
+|-------------|----------------------|-------------------|
+| **extends** | `extends` | Same keyword, but JS uses Prototypes. |
+| **super()** | `super()` | Mandatory in JS constructor before `this`. |
+| **@Override** | ❌ None | JS doesn't enforce overriding signatures. |
+| **Abstract Class** | Base Class with Errors | JS has no `abstract` keyword. |
+| **Interface** | ❌ None (Use TS or Mixins) | JS relies on Duck Typing. |
+| **Final Class** | ❌ None | No keyword to prevent extension. |
+| **Protected** | ❌ None | Use `_prefix` convention or `WeakMap`. |
+| **Static Hiding** | Same | Static methods are not polymorphic. |
+
+---
+
+🧠 **Interview Power Move**: When asked about inheritance, always mention:  
+1. **Prototype Chain**: How JS actually links objects.  
+2. **Super Requirement**: Why `super()` must be first.  
+3. **Composition > Inheritance**: Why mixins/objects are often better.  
+4. **Privacy**: How `#` fields differ from Java's `private`.  
+5. **Polymorphism**: How JS achieves it dynamically.  
+
+---
+
+
+# 🧬 JavaScript Inheritance
+
+---
+
+## 🔰 What Is Inheritance?
+
+Inheritance = **a mechanism where one object/class acquires properties and behaviors of another**, enabling code reuse and establishing is-a relationships.
+
+```js
+// WITHOUT inheritance — duplicate code:
+class Dog  { eat() { console.log("eating"); } speak() { return "Woof"; } }
+class Cat  { eat() { console.log("eating"); } speak() { return "Meow"; } }
+class Bird { eat() { console.log("eating"); } speak() { return "Tweet"; } }
+// eat() duplicated 3x 😱
+
+// WITH inheritance — shared behavior, specialized override:
+class Animal { eat() { console.log("eating"); } }
+class Dog  extends Animal { speak() { return "Woof";  } }
+class Cat  extends Animal { speak() { return "Meow";  } }
+class Bird extends Animal { speak() { return "Tweet"; } }
+// eat() defined ONCE — inherited by all ✅
+```
+
+---
+
+## 🗺️ Complete Map
+
+```
+Inheritance in JavaScript
+│
+├── 🔗 Prototype Chain (foundation)
+│   ├── [[Prototype]] internal slot
+│   ├── Object.getPrototypeOf()
+│   ├── __proto__ (legacy)
+│   └── prototype vs __proto__
+│
+├── 🏛️  Class-based Inheritance (ES6+)
+│   ├── extends keyword
+│   ├── super() — constructor call
+│   ├── super.method() — method call
+│   ├── super.prop — property access
+│   └── new.target
+│
+├── 🔧 Prototype-based Inheritance (ES5)
+│   ├── Object.create()
+│   ├── Constructor functions
+│   └── Manual prototype chain
+│
+├── 🔀 Mixin Inheritance
+│   ├── functional mixins
+│   ├── Object.assign mixins
+│   └── class mixin pattern
+│
+├── 🧱 Built-in Extension
+│   ├── extends Array
+│   ├── extends Error
+│   ├── extends Map/Set
+│   └── extends null
+│
+├── ⚙️  Inheritance Mechanics
+│   ├── property lookup chain
+│   ├── method resolution order
+│   ├── static inheritance
+│   └── Symbol.species
+│
+└── 🔬 V8 Internals
+    ├── hidden class transitions
+    ├── inline cache polymorphism
+    └── prototype chain optimization
+```
+
+---
+
+## ⚙️ Deep Dive — Prototype Chain (The Engine of Inheritance)
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         PROTOTYPE CHAIN — HOW LOOKUP WORKS               │
+│                                                          │
+│  const dog = new Dog("Rex");                             │
+│  dog.eat(); // how does JS find eat()?                   │
+│                                                          │
+│  Step 1: Check dog own properties → not found           │
+│          ↓                                               │
+│  Step 2: Check Dog.prototype → not found                │
+│          ↓                                               │
+│  Step 3: Check Animal.prototype → FOUND eat() ✅        │
+│          call it with this = dog                        │
+│                                                          │
+│  dog                                                     │
+│   │  [[Prototype]]                                       │
+│   └──────────────→  Dog.prototype                        │
+│                      │  [[Prototype]]                    │
+│                      └──────────────→  Animal.prototype  │
+│                                         │  [[Prototype]] │
+│                                         └──────────────→ │
+│                                           Object.prototype
+│                                            │  [[Prototype]]
+│                                            └──────────────→ null
+└──────────────────────────────────────────────────────────┘
+```
+
+### Prototype Chain — Code Proof
+
+```js
+class Animal {
+  eat() { return "eating"; }
+}
+
+class Dog extends Animal {
+  speak() { return "Woof"; }
+}
+
+const dog = new Dog();
+
+// Verify the chain:
+Object.getPrototypeOf(dog) === Dog.prototype;           // true
+Object.getPrototypeOf(Dog.prototype) === Animal.prototype; // true
+Object.getPrototypeOf(Animal.prototype) === Object.prototype; // true
+Object.getPrototypeOf(Object.prototype) === null;        // true — end
+
+// Property lookup:
+dog.hasOwnProperty("speak");   // false — on prototype
+dog.hasOwnProperty("eat");     // false — higher in chain
+Object.hasOwn(dog, "speak");   // false
+
+// Own vs inherited:
+"speak" in dog;   // true  — found in chain
+"eat"   in dog;   // true  — found in chain
+"fly"   in dog;   // false — nowhere in chain
+```
+
+---
+
+## 1️⃣ Class-based Inheritance — `extends` + `super`
+
+### Basic `extends`
+
+```js
+class Shape {
+  #color;
+  #filled;
+
+  constructor(color = "black", filled = false) {
+    this.#color  = color;
+    this.#filled = filled;
+  }
+
+  get color()  { return this.#color; }
+  get filled() { return this.#filled; }
+
+  set color(v) {
+    if (typeof v !== "string") throw new TypeError("Color must be string");
+    this.#color = v;
+  }
+
+  toString() {
+    return `Shape[color=${this.#color}, filled=${this.#filled}]`;
+  }
+
+  area()      { throw new Error(`${this.constructor.name}.area() not implemented`); }
+  perimeter() { throw new Error(`${this.constructor.name}.perimeter() not implemented`); }
+}
+
+class Circle extends Shape {
+  #radius;
+
+  constructor(radius, color, filled) {
+    super(color, filled);   // ✅ MUST be first — calls Shape constructor
+    this.#radius = radius;
+  }
+
+  get radius() { return this.#radius; }
+  set radius(v) {
+    if (v <= 0) throw new RangeError("Radius must be positive");
+    this.#radius = v;
+  }
+
+  area()      { return Math.PI * this.#radius ** 2; }
+  perimeter() { return 2 * Math.PI * this.#radius; }
+
+  // Extend parent's toString:
+  toString() {
+    return `Circle[radius=${this.#radius}, ${super.toString()}]`;
+  }
+}
+
+class Rectangle extends Shape {
+  #width;
+  #height;
+
+  constructor(width, height, color, filled) {
+    super(color, filled);
+    this.#width  = width;
+    this.#height = height;
+  }
+
+  area()      { return this.#width * this.#height; }
+  perimeter() { return 2 * (this.#width + this.#height); }
+
+  get isSquare() { return this.#width === this.#height; }
+
+  toString() {
+    return `Rectangle[${this.#width}×${this.#height}, ${super.toString()}]`;
+  }
+}
+
+const c = new Circle(5, "red", true);
+c.area();      // 78.53...
+c.color;       // "red" — inherited getter ✅
+c.toString();  // "Circle[radius=5, Shape[color=red, filled=true]]"
+
+c instanceof Circle  // true
+c instanceof Shape   // true ✅ — is-a relationship
+c instanceof Object  // true
+```
+
+---
+
+## 2️⃣ `super` — Three Critical Forms
+
+### Form 1: `super()` — Parent Constructor Call
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              super() RULES                               │
+│                                                          │
+│  1. MUST be called in subclass constructor               │
+│  2. MUST be called BEFORE accessing 'this'               │
+│  3. MUST be called BEFORE returning from constructor     │
+│  4. Implicitly called if no constructor defined          │
+│  5. 'this' is UNINITIALIZED until super() returns        │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+class Vehicle {
+  constructor(make, model, year) {
+    this.make  = make;
+    this.model = model;
+    this.year  = year;
+  }
+}
+
+class Car extends Vehicle {
+  #doors;
+
+  constructor(make, model, year, doors = 4) {
+    // this.#doors = doors; // ❌ ReferenceError — before super()
+    super(make, model, year); // ✅ initializes 'this'
+    this.#doors = doors;      // ✅ after super() — 'this' available
+  }
+}
+
+class ElectricCar extends Car {
+  #batteryCapacity;
+
+  constructor(make, model, year, batteryKwh) {
+    super(make, model, year, 4); // calls Car → calls Vehicle
+    this.#batteryCapacity = batteryKwh;
+  }
+}
+
+// No constructor — super() called implicitly:
+class Truck extends Vehicle {
+  // No constructor → engine inserts:
+  // constructor(...args) { super(...args); }
+}
+
+new Truck("Ford", "F-150", 2024); // ✅ works — implicit super
+```
+
+### Form 2: `super.method()` — Parent Method Call
+
+```js
+class Logger {
+  format(msg) { return `[${new Date().toISOString()}] ${msg}`; }
+  log(msg)    { console.log(this.format(msg)); }
+}
+
+class PrefixLogger extends Logger {
+  #prefix;
+  constructor(prefix) { super(); this.#prefix = prefix; }
+
+  // Override + extend parent:
+  format(msg) {
+    return super.format(`[${this.#prefix}] ${msg}`); // call parent
+  }
+}
+
+class LevelLogger extends PrefixLogger {
+  #level;
+  constructor(prefix, level) { super(prefix); this.#level = level; }
+
+  format(msg) {
+    return super.format(`<${this.#level}> ${msg}`); // calls PrefixLogger.format
+    // which calls Logger.format — chain preserved ✅
+  }
+}
+
+const logger = new LevelLogger("AUTH", "INFO");
+logger.log("user logged in");
+// [2024-01-01T00:00:00.000Z] [AUTH] <INFO> user logged in
+```
+
+### Form 3: `super.property` — Parent Property Access
+
+```js
+class Base {
+  get config() {
+    return { timeout: 5000, retries: 3 };
+  }
+}
+
+class Extended extends Base {
+  // Override getter — extend parent's value:
+  get config() {
+    return {
+      ...super.config,         // spread parent config
+      retries: 5,              // override specific value
+      verbose: true            // add new property
+    };
+  }
+}
+
+new Extended().config;
+// { timeout: 5000, retries: 5, verbose: true } ✅
+```
+
+---
+
+## ⚙️ Deep Dive — How `super` Works in V8
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         super INTERNAL MECHANICS                         │
+│                                                          │
+│  super is NOT a runtime value — it's resolved at         │
+│  definition time via [[HomeObject]]                      │
+│                                                          │
+│  Every method defined inside a class body gets:          │
+│  [[HomeObject]] = the object it was defined on           │
+│                                                          │
+│  class Dog extends Animal {                              │
+│    speak() {              ← [[HomeObject]] = Dog.prototype│
+│      super.speak();       ← Object.getPrototypeOf(       │
+│    }                            Dog.prototype).speak()   │
+│  }                                                       │
+│                                                          │
+│  super.speak() resolves to:                              │
+│  1. Get [[HomeObject]] of current method → Dog.prototype │
+│  2. Get [[Prototype]] of [[HomeObject]] → Animal.prototype│
+│  3. Look up "speak" on Animal.prototype                  │
+│  4. Call it with this = current instance                 │
+│                                                          │
+│  [[HomeObject]] is SET AT DEFINITION — not at call time  │
+│  This is why copying a method breaks super 😱            │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+class Animal {
+  speak() { return "..."; }
+}
+
+class Dog extends Animal {
+  speak() { return super.speak() + " Woof"; }
+}
+
+const dog = new Dog();
+dog.speak(); // "... Woof" ✅
+
+// Copy method to plain object — [[HomeObject]] NOT updated:
+const obj = {};
+obj.speak = Dog.prototype.speak;
+obj.speak(); // ❌ TypeError — super.speak() lookup fails
+             // [[HomeObject]] still points to Dog.prototype
+             // but obj has no Animal.prototype in its chain
+```
+
+---
+
+## 3️⃣ Prototype-based Inheritance — ES5 Style
+
+```js
+// Before ES6 classes — manual prototype chain:
+
+// "Class" via constructor function:
+function Animal(name) {
+  this.name = name;
+}
+Animal.prototype.eat   = function() { return `${this.name} is eating`; };
+Animal.prototype.sleep = function() { return `${this.name} is sleeping`; };
+
+// "Subclass" via constructor + prototype chain:
+function Dog(name, breed) {
+  Animal.call(this, name); // ← super() equivalent
+  this.breed = breed;
+}
+
+// Set up prototype chain:
+Dog.prototype = Object.create(Animal.prototype); // ← extends equivalent
+Dog.prototype.constructor = Dog;                 // ← fix constructor ref
+
+Dog.prototype.speak = function() { return `${this.name} says Woof`; };
+
+// Verify:
+const d = new Dog("Rex", "Labrador");
+d.eat();               // "Rex is eating" ✅
+d.speak();             // "Rex says Woof" ✅
+d instanceof Dog;      // true ✅
+d instanceof Animal;   // true ✅
+
+Object.getPrototypeOf(d) === Dog.prototype;           // true
+Object.getPrototypeOf(Dog.prototype) === Animal.prototype; // true
+```
+
+### `Object.create()` — Pure Prototype Inheritance
+
+```js
+// Object.create(proto) — creates object with specified prototype:
+const animalProto = {
+  eat()   { return `${this.name} is eating`; },
+  sleep() { return `${this.name} is sleeping`; },
+  toString() { return `Animal(${this.name})`; }
+};
+
+const dogProto = Object.create(animalProto); // dogProto.__proto__ = animalProto
+dogProto.speak  = function() { return `${this.name} says Woof`; };
+dogProto.fetch  = function() { return `${this.name} fetches!`; };
+
+// Create instance:
+function createDog(name, breed) {
+  const dog  = Object.create(dogProto);
+  dog.name   = name;
+  dog.breed  = breed;
+  return dog;
+}
+
+const rex = createDog("Rex", "Labrador");
+rex.eat();    // "Rex is eating"   — from animalProto ✅
+rex.speak();  // "Rex says Woof"   — from dogProto ✅
+
+// Chain:
+Object.getPrototypeOf(rex) === dogProto;           // true
+Object.getPrototypeOf(dogProto) === animalProto;   // true
+```
+
+### Class vs Prototype Comparison
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         CLASS (ES6) vs PROTOTYPE (ES5)                   │
+├────────────────────────┬─────────────────────────────────┤
+│ ES6 Class              │ ES5 Prototype                   │
+├────────────────────────┼─────────────────────────────────┤
+│ extends Foo            │ Sub.prototype=Object.create(Foo) │
+│ super(args)            │ Foo.call(this, args)             │
+│ super.method()         │ Foo.prototype.method.call(this)  │
+│ Strict by default      │ Sloppy by default                │
+│ Not hoisted            │ Hoisted (function declaration)   │
+│ Private # fields       │ Convention _ only                │
+│ Static members         │ Function properties              │
+│ new.target             │ arguments.callee (deprecated)    │
+│ Same runtime result    │ Same runtime result              │
+└────────────────────────┴─────────────────────────────────┘
+```
+
+---
+
+## 4️⃣ Static Inheritance — Class-Level Chain
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         DUAL PROTOTYPE CHAINS                            │
+│                                                          │
+│  Instance chain:                                         │
+│  dog → Dog.prototype → Animal.prototype → Object.prototype
+│                                                          │
+│  Static chain (constructors themselves):                 │
+│  Dog → Animal → Function.prototype → Object.prototype   │
+│                                                          │
+│  Dog.__proto__ === Animal  ← STATIC INHERITANCE          │
+│  So static methods/properties ARE inherited              │
+└──────────────────────────────────────────────────────────┘
+```
+
+```js
+class Animal {
+  static kingdom = "Animalia";
+  static #count  = 0;
+
+  static getCount()   { return Animal.#count; }
+  static create(name) { return new this(name); } // polymorphic factory
+
+  constructor(name) {
+    this.name = name;
+    Animal.#count++;
+  }
+
+  static describe() {
+    return `${this.name} belongs to ${this.kingdom}`; // this = class
+  }
+}
+
+class Dog extends Animal {
+  static species = "Canis lupus";
+
+  constructor(name, breed) {
+    super(name);
+    this.breed = breed;
+  }
+}
+
+// Static inheritance:
+Dog.kingdom;          // "Animalia"     ✅ — inherited from Animal
+Dog.species;          // "Canis lupus"  ✅ — own
+Dog.getCount();       // 0              ✅ — inherited method
+Dog.describe();       // "Dog belongs to Animalia" — this=Dog ✅
+
+Dog.create("Rex");    // new Dog("Rex") ✅ — polymorphic factory
+
+// Verify static chain:
+Dog.__proto__ === Animal;              // true ✅
+Animal.__proto__ === Function.prototype; // true
+```
+
+---
+
+## 5️⃣ Mixin Inheritance — Compose Multiple Behaviors
+
+### Why Mixins?
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         SINGLE INHERITANCE LIMITATION                    │
+│                                                          │
+│  Problem: User needs both Serializable and Validatable   │
+│                                                          │
+│  class User extends Serializable { }    ✅ one parent   │
+│  class User extends Validatable { }     ✅ one parent   │
+│  class User extends Serializable, Validatable { } ❌    │
+│  (multiple inheritance not supported)                    │
+│                                                          │
+│  Solution: Functional Mixins                             │
+│  class User extends Serializable(Validatable(Base)) {}  │
+│  → Both behaviors composed in ✅                         │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Functional Mixin Pattern
+
+```js
+// Each mixin is a function that takes a Base class and returns new class:
+
+const Serializable = (Base) => class extends Base {
+  serialize()   { return JSON.stringify(this.toJSON()); }
+  toJSON()      { return Object.fromEntries(
+    Object.entries(this).filter(([k]) => !k.startsWith("#"))
+  ); }
+  static deserialize(json) {
+    return Object.assign(new this(), JSON.parse(json));
+  }
+};
+
+const Validatable = (Base) => class extends Base {
+  validate() {
+    if (!this.rules) return true;
+    const errors = this.rules()
+      .filter(rule => !rule.test(this))
+      .map(rule => rule.message);
+    if (errors.length) throw new ValidationError(errors);
+    return true;
+  }
+};
+
+const Timestamped = (Base) => class extends Base {
+  createdAt = new Date().toISOString();
+  updatedAt = new Date().toISOString();
+
+  touch() {
+    this.updatedAt = new Date().toISOString();
+    return this;
+  }
+};
+
+const Eventable = (Base) => class extends Base {
+  #listeners = new Map();
+
+  on(event, fn) {
+    (this.#listeners.get(event) ?? this.#listeners.set(event, new Set())
+      .get(event)).add(fn);
+    return this;
+  }
+
+  emit(event, data) {
+    this.#listeners.get(event)?.forEach(fn => fn(data));
+    return this;
+  }
+};
+
+// Compose multiple mixins:
+class Entity {}
+
+class User extends
+  Serializable(
+    Validatable(
+      Timestamped(
+        Eventable(Entity)
+      )
+    )
+  ) {
+  constructor(name, email) {
+    super();
+    this.name  = name;
+    this.email = email;
+  }
+
+  rules() {
+    return [
+      { test: u => u.name?.length >= 2,    message: "Name too short"  },
+      { test: u => u.email?.includes("@"), message: "Invalid email"   },
+    ];
+  }
+}
+
+const user = new User("Ali", "ali@example.com");
+user.validate();            // ✅ true
+user.serialize();           // '{"name":"Ali","email":"ali@example.com",...}'
+user.touch();               // updates updatedAt
+user.on("save", () => console.log("saved"));
+user.emit("save");          // "saved"
+user.createdAt;             // ISO string
+
+// instanceof all:
+user instanceof User;       // true ✅
+// Note: instanceof only checks ACTUAL class chain — not mixin behaviors
+```
+
+---
+
+## 6️⃣ Extending Built-in Classes
+
+### `extends Array`
+
+```js
+class NumberArray extends Array {
+  // Inherited: push, pop, map, filter, reduce, sort, etc.
+
+  sum()     { return this.reduce((a, b) => a + b, 0); }
+  average() { return this.sum() / this.length; }
+  min()     { return Math.min(...this); }
+  max()     { return Math.max(...this); }
+  median()  {
+    const sorted = [...this].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  // Override — ensure operations return NumberArray:
+  static get [Symbol.species]() { return NumberArray; }
+}
+
+const arr = new NumberArray(1, 2, 3, 4, 5);
+arr.sum();       // 15
+arr.average();   // 3
+arr.median();    // 3
+
+// Inherited Array methods return NumberArray (via Symbol.species):
+const filtered = arr.filter(n => n > 2);
+filtered instanceof NumberArray; // true ✅
+filtered.sum();                  // 12 ✅ — methods available on result
+```
+
+### `extends Error` — Custom Error Hierarchy
+
+```js
+// Base application error:
+class AppError extends Error {
+  #code;
+  #details;
+  #timestamp;
+
+  constructor(message, code, details = {}) {
+    super(message);
+    this.name       = this.constructor.name; // "AppError", "ValidationError" etc.
+    this.#code      = code;
+    this.#details   = details;
+    this.#timestamp = new Date().toISOString();
+
+    // Fix V8 stack trace:
+    Error.captureStackTrace?.(this, this.constructor);
+  }
+
+  get code()      { return this.#code; }
+  get details()   { return { ...this.#details }; }
+  get timestamp() { return this.#timestamp; }
+
+  toJSON() {
+    return {
+      name:      this.name,
+      message:   this.message,
+      code:      this.#code,
+      details:   this.#details,
+      timestamp: this.#timestamp,
+    };
+  }
+}
+
+class ValidationError extends AppError {
+  constructor(field, message, value) {
+    super(message, "VALIDATION_ERROR", { field, value });
+    this.field = field;
+  }
+}
+
+class NotFoundError extends AppError {
+  constructor(resource, id) {
+    super(`${resource} with id ${id} not found`, "NOT_FOUND", { resource, id });
+  }
+}
+
+class UnauthorizedError extends AppError {
+  constructor(reason = "Authentication required") {
+    super(reason, "UNAUTHORIZED");
+  }
+}
+
+class RateLimitError extends AppError {
+  #resetAt;
+  constructor(resetAt) {
+    super("Rate limit exceeded", "RATE_LIMIT");
+    this.#resetAt = resetAt;
+  }
+  get resetAt() { return this.#resetAt; }
+}
+
+// Error handling with instanceof chain:
+try {
+  throw new ValidationError("email", "Invalid email format", "notanemail");
+} catch (err) {
+  console.log(err instanceof ValidationError);  // true
+  console.log(err instanceof AppError);         // true ✅
+  console.log(err instanceof Error);            // true ✅
+  console.log(err.code);                        // "VALIDATION_ERROR"
+  console.log(err.field);                       // "email"
+}
+```
+
+### `Symbol.species` — Control What Subclass Methods Return
+
+```js
+// Without Symbol.species — subclass methods return Base:
+class MyArray extends Array {}
+
+const a = new MyArray(1, 2, 3);
+const b = a.map(x => x * 2);
+
+b instanceof MyArray; // true — map returns MyArray ✅ (ES6 default)
+
+// FORCE map/filter/slice to return plain Array:
+class ReadOnlyArray extends Array {
+  static get [Symbol.species]() { return Array; } // ← force base class
+
+  push()    { throw new Error("ReadOnlyArray is immutable"); }
+  pop()     { throw new Error("ReadOnlyArray is immutable"); }
+  splice()  { throw new Error("ReadOnlyArray is immutable"); }
+}
+
+const ro = new ReadOnlyArray(1, 2, 3);
+ro.push(4);         // ❌ Error: ReadOnlyArray is immutable
+const mapped = ro.map(x => x * 2); // [2, 4, 6]
+mapped instanceof ReadOnlyArray;    // false — plain Array (via Symbol.species)
+mapped instanceof Array;            // true ✅
+mapped.push(8);                     // ✅ — mapped is plain Array
+```
+
+---
+
+## 7️⃣ `new.target` — Know What's Being Constructed
+
+```js
+class Animal {
+  constructor(name) {
+    // new.target = the class directly called with new
+    console.log(new.target.name);
+
+    // Prevent direct instantiation:
+    if (new.target === Animal) {
+      throw new TypeError("Animal is abstract");
+    }
+
+    this.name = name;
+  }
+}
+
+class Dog extends Animal {
+  constructor(name, breed) {
+    super(name);      // new.target = Dog (not Animal) in super call
+    this.breed = breed;
+  }
+}
+
+new Animal("Rex");    // ❌ TypeError: Animal is abstract
+new Dog("Rex", "Lab"); // ✅ new.target = Dog in both constructors
+
+// new.target for polymorphic factory:
+class Shape {
+  static create(...args) {
+    if (new.target === undefined) {
+      // Called as Shape.create() — static context
+      throw new Error("Call on subclass: Circle.create()");
+    }
+  }
+
+  // Better: use 'this' in static for polymorphism
+  static make(...args) {
+    return new this(...args); // 'this' = calling class
+  }
+}
+```
+
+---
+
+## 8️⃣ Method Overriding — Polymorphism
+
+```js
+class Renderer {
+  // Default implementation — can be overridden:
+  render(element) {
+    return `<${element.tag}>${element.content}</${element.tag}>`;
+  }
+
+  // Template — uses overridable steps:
+  renderPage(elements) {
+    const body = elements.map(e => this.render(e)).join("\n"); // polymorphic
+    return `<!DOCTYPE html><html><body>\n${body}\n</body></html>`;
+  }
+}
+
+class MarkdownRenderer extends Renderer {
+  // Override — completely different behavior:
+  render(element) {
+    const map = { h1: "#", h2: "##", h3: "###", p: "", li: "-" };
+    const prefix = map[element.tag] ?? "";
+    return prefix ? `${prefix} ${element.content}` : element.content;
+  }
+}
+
+class AccessibleRenderer extends Renderer {
+  // Override + extend — add ARIA attributes:
+  render(element) {
+    const base = super.render(element); // call parent version
+    return base.replace(
+      `<${element.tag}>`,
+      `<${element.tag} role="${element.role ?? "presentation"}">`
+    );
+  }
+}
+
+// Polymorphic usage — same renderPage, different render behavior:
+const renderers = [
+  new Renderer(),
+  new MarkdownRenderer(),
+  new AccessibleRenderer()
+];
+
+const elements = [
+  { tag: "h1", content: "Title" },
+  { tag: "p",  content: "Body text" }
+];
+
+// Same call — different output per renderer:
+renderers.forEach(r => console.log(r.renderPage(elements)));
+```
+
+---
+
+## 🏭 Real Production Patterns
+
+### Pattern 1 — Repository Inheritance Hierarchy
+
+```js
+// Base with shared logic:
+class BaseRepository {
+  #pool;
+  #tableName;
+  #softDelete;
+
+  constructor(pool, tableName, { softDelete = true } = {}) {
+    if (new.target === BaseRepository) {
+      throw new TypeError("BaseRepository is abstract");
+    }
+    this.#pool       = pool;
+    this.#tableName  = tableName;
+    this.#softDelete = softDelete;
+  }
+
+  get table() { return this.#tableName; }
+
+  // Shared query helper:
+  async #query(sql, params = []) {
+    const { rows } = await this.#pool.query(sql, params);
+    return rows;
+  }
+
+  // Inherited by all repos:
+  async findById(id) {
+    const rows = await this.#query(
+      `SELECT * FROM ${this.table} WHERE id=$1${this.#softDelete ? " AND deleted_at IS NULL" : ""}`,
+      [id]
+    );
+    return rows[0] ?? null;
+  }
+
+  async findAll({ where = {}, limit = 100, offset = 0, orderBy = "id" } = {}) {
+    const conditions = Object.entries(where)
+      .map(([k, v], i) => `${k}=$${i + 1}`)
+      .join(" AND ");
+
+    const sql = `
+      SELECT * FROM ${this.table}
+      ${conditions ? `WHERE ${conditions}` : ""}
+      ${this.#softDelete ? (conditions ? "AND" : "WHERE") + " deleted_at IS NULL" : ""}
+      ORDER BY ${orderBy}
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+
+    return this.#query(sql, Object.values(where));
+  }
+
+  async save(data) {
+    const keys   = Object.keys(data);
+    const values = Object.values(data);
+    const cols   = keys.join(",");
+    const refs   = keys.map((_, i) => `$${i + 1}`).join(",");
+    const rows   = await this.#query(
+      `INSERT INTO ${this.table} (${cols}) VALUES (${refs}) RETURNING *`,
+      values
+    );
+    return rows[0];
+  }
+
+  async update(id, changes) {
+    const keys   = Object.keys(changes);
+    const values = Object.values(changes);
+    const sets   = keys.map((k, i) => `${k}=$${i + 2}`).join(",");
+    const rows   = await this.#query(
+      `UPDATE ${this.table} SET ${sets},updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [id, ...values]
+    );
+    return rows[0];
+  }
+
+  async delete(id) {
+    if (this.#softDelete) {
+      return this.update(id, { deleted_at: new Date() });
+    }
+    await this.#query(`DELETE FROM ${this.table} WHERE id=$1`, [id]);
+    return true;
+  }
+
+  async count(where = {}) {
+    const conditions = Object.entries(where)
+      .map(([k], i) => `${k}=$${i + 1}`).join(" AND ");
+    const sql = `SELECT COUNT(*)::int FROM ${this.table}${conditions ? ` WHERE ${conditions}` : ""}`;
+    const rows = await this.#query(sql, Object.values(where));
+    return rows[0].count;
+  }
+}
+
+// Concrete repos inherit all CRUD — add domain-specific methods:
+class UserRepository extends BaseRepository {
+  constructor(pool) {
+    super(pool, "users");
+  }
+
+  // Domain-specific:
+  async findByEmail(email) {
+    const rows = await this.findAll({ where: { email } });
+    return rows[0] ?? null;
+  }
+
+  async findAdmins() {
+    return this.findAll({ where: { role: "admin" } });
+  }
+
+  async updatePassword(id, passwordHash) {
+    return this.update(id, { password_hash: passwordHash });
+  }
+}
+
+class OrderRepository extends BaseRepository {
+  constructor(pool) {
+    super(pool, "orders");
+  }
+
+  async findByUser(userId) {
+    return this.findAll({ where: { user_id: userId }, orderBy: "created_at DESC" });
+  }
+
+  async findPending() {
+    return this.findAll({ where: { status: "pending" } });
+  }
+
+  async markCompleted(id) {
+    return this.update(id, { status: "completed", completed_at: new Date() });
+  }
+}
+
+class ProductRepository extends BaseRepository {
+  constructor(pool) {
+    super(pool, "products", { softDelete: false }); // hard delete products
+  }
+
+  async findByCategory(category) {
+    return this.findAll({ where: { category } });
+  }
+
+  async adjustStock(id, delta) {
+    const rows = await this.#pool.query(
+      "UPDATE products SET stock=stock+$2 WHERE id=$1 RETURNING *", [id, delta]
+    );
+    return rows[0];
+  }
+}
+```
+
+### Pattern 2 — Error Hierarchy with HTTP Mapping
+
+```js
+class HttpError extends Error {
+  #statusCode;
+  #errorCode;
+
+  constructor(message, statusCode, errorCode) {
+    super(message);
+    this.name        = this.constructor.name;
+    this.#statusCode = statusCode;
+    this.#errorCode  = errorCode;
+    Error.captureStackTrace?.(this, this.constructor);
+  }
+
+  get statusCode() { return this.#statusCode; }
+  get errorCode()  { return this.#errorCode; }
+
+  toResponse() {
+    return {
+      error:     this.name,
+      message:   this.message,
+      code:      this.#errorCode,
+      status:    this.#statusCode,
+    };
+  }
+}
+
+class BadRequestError    extends HttpError {
+  constructor(msg, code = "BAD_REQUEST") { super(msg, 400, code); }
+}
+
+class UnauthorizedError  extends HttpError {
+  constructor(msg = "Unauthorized") { super(msg, 401, "UNAUTHORIZED"); }
+}
+
+class ForbiddenError     extends HttpError {
+  constructor(msg = "Forbidden") { super(msg, 403, "FORBIDDEN"); }
+}
+
+class NotFoundError      extends HttpError {
+  constructor(resource, id) {
+    super(`${resource} ${id} not found`, 404, "NOT_FOUND");
+  }
+}
+
+class ConflictError      extends HttpError {
+  constructor(msg) { super(msg, 409, "CONFLICT"); }
+}
+
+class ValidationError    extends BadRequestError {
+  #fields;
+  constructor(fields) {
+    super("Validation failed", "VALIDATION_ERROR");
+    this.#fields = fields;
+  }
+  get fields()   { return [...this.#fields]; }
+  toResponse() {
+    return { ...super.toResponse(), fields: this.#fields };
+  }
+}
+
+class RateLimitError extends HttpError {
+  #retryAfter;
+  constructor(retryAfter) {
+    super("Too many requests", 429, "RATE_LIMIT");
+    this.#retryAfter = retryAfter;
+  }
+  get retryAfter() { return this.#retryAfter; }
+}
+
+// Centralized error handler using inheritance:
+function errorHandler(err, req, res, next) {
+  if (err instanceof HttpError) {
+    const body = err.toResponse();
+    if (err instanceof RateLimitError) {
+      res.setHeader("Retry-After", err.retryAfter);
+    }
+    return res.status(err.statusCode).json(body);
+  }
+
+  // Unknown error:
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "InternalServerError", message: "Something went wrong" });
+}
+```
+
+### Pattern 3 — Multi-Level UI Component Hierarchy
+
+```js
+class Component {
+  #id;
+  #props;
+  #children = [];
+  #mounted   = false;
+
+  constructor(props = {}) {
+    this.#id    = crypto.randomUUID();
+    this.#props = Object.freeze({ ...props });
+  }
+
+  get id()       { return this.#id; }
+  get props()    { return this.#props; }
+  get children() { return [...this.#children]; }
+  get isMounted(){ return this.#mounted; }
+
+  addChild(child) {
+    if (!(child instanceof Component)) throw new TypeError("Child must be Component");
+    this.#children.push(child);
+    return this;
+  }
+
+  mount(container) {
+    if (this.#mounted) return this;
+    const el = this.render();           // polymorphic ✅
+    container.appendChild(el);
+    this.#mounted = true;
+    this.onMount?.();                   // optional hook
+    return this;
+  }
+
+  update(newProps) {
+    this.#props = Object.freeze({ ...this.#props, ...newProps });
+    this.onUpdate?.(newProps);          // optional hook
+    return this;
+  }
+
+  unmount() {
+    this.onUnmount?.();
+    this.#mounted = false;
+    return this;
+  }
+
+  // Abstract — subclass must implement:
+  render() {
+    throw new Error(`${this.constructor.name}.render() not implemented`);
+  }
+}
+
+class Button extends Component {
+  render() {
+    const btn = document.createElement("button");
+    btn.textContent = this.props.label;
+    btn.className   = this.props.className ?? "";
+    btn.onclick     = this.props.onClick ?? null;
+    return btn;
+  }
+
+  onMount()   { console.log(`Button "${this.props.label}" mounted`); }
+  onUnmount() { console.log(`Button "${this.props.label}" unmounted`); }
+}
+
+class IconButton extends Button {
+  render() {
+    const btn  = super.render();           // get parent's button
+    const icon = document.createElement("span");
+    icon.className   = `icon icon-${this.props.icon}`;
+    icon.ariaHidden  = "true";
+    btn.prepend(icon);                     // add icon to parent's button
+    return btn;
+  }
+}
+
+class LoadingButton extends Button {
+  #loading = false;
+
+  render() {
+    const btn = super.render();
+    btn.disabled = this.#loading;
+    if (this.#loading) {
+      const spinner = document.createElement("span");
+      spinner.className = "spinner";
+      btn.prepend(spinner);
+    }
+    return btn;
+  }
+
+  setLoading(loading) {
+    this.#loading = loading;
+    return this.update({ disabled: loading });
+  }
+}
+```
+
+---
+
+## 💀 Interview Traps
+
+### Trap 1: `super()` not first in constructor
+
+```js
+class Child extends Parent {
+  constructor() {
+    this.x = 1; // ❌ ReferenceError: Must call super() first
+    super();
+  }
+}
+
+// Why? In a derived class, 'this' is UNINITIALIZED until
+// super() allocates it. The parent constructor sets up the
+// object's initial shape (hidden class) before child can use it.
+
+// But — super() itself can use expressions:
+class Child extends Parent {
+  constructor(x, y) {
+    const arg = computeArg(x, y); // ✅ before super() — no 'this' access
+    super(arg);                    // ✅
+    this.own = x;                  // ✅ after super()
+  }
+}
+```
+
+---
+
+### Trap 2: Private fields NOT inherited — subclass cannot access parent's
+
+```js
+class Parent {
+  #secret = 42;
+
+  getSecret()    { return this.#secret; }  // ✅ inside Parent
+  doubleSecret() { return this.#secret * 2; }
+}
+
+class Child extends Parent {
+  revealSecret() {
+    return this.#secret; // ❌ SyntaxError — #secret not declared in Child
+  }
+
+  // Must use parent's public methods:
+  revealCorrectly() {
+    return this.getSecret(); // ✅
+  }
+}
+
+// Private fields scope = declaring class ONLY — not subclasses
+```
+
+---
+
+### Trap 3: Copying a method breaks `super`
+
+```js
+class Animal {
+  type() { return "Animal"; }
+}
+
+class Dog extends Animal {
+  type() {
+    return `Dog extends ${super.type()}`; // super uses [[HomeObject]]
+  }
+}
+
+const dog = new Dog();
+dog.type(); // "Dog extends Animal" ✅
+
+// Copy method to another object:
+const obj = { type: dog.type };
+obj.type(); // ❌ TypeError: Cannot read properties of undefined
+            // [[HomeObject]] = Dog.prototype
+            // obj has no Animal.prototype in chain
+            // super.type() lookup fails
+
+// Methods with super are NOT safely movable
+// Bind doesn't fix this — [[HomeObject]] is immutable
+```
+
+---
+
+### Trap 4: `constructor` property breaks after naive prototype assignment
+
+```js
+function Animal(name) { this.name = name; }
+Animal.prototype.eat = function() { return "eating"; };
+
+function Dog(name) { Animal.call(this, name); }
+
+// WRONG — replaces entire prototype:
+Dog.prototype = Animal.prototype; // ❌ SAME object — not chain!
+// Changes to Dog.prototype ALSO change Animal.prototype 😱
+
+// ALSO WRONG — loses constructor:
+Dog.prototype = Object.create(Animal.prototype);
+// Dog.prototype.constructor === Animal 😱 — not Dog
+
+// CORRECT:
+Dog.prototype = Object.create(Animal.prototype);
+Dog.prototype.constructor = Dog; // ✅ fix constructor reference
+
+new Dog("Rex").constructor === Dog; // true ✅
+```
+
+---
+
+### Trap 5: `extends` with null — no `Object.prototype`
+
+```js
+class Pure extends null {
+  constructor() {
+    // No super() to call — null has no constructor
+    // Must return object explicitly:
+    return Object.create(new.target.prototype);
+  }
+}
+
+const p = new Pure();
+p.toString();            // ❌ TypeError — no Object.prototype in chain
+p.hasOwnProperty("x");  // ❌ TypeError
+
+// Only use extends null for truly clean objects (like hash maps):
+class CleanMap extends null {
+  constructor() {
+    return Object.create(new.target.prototype);
+  }
+}
+
+const m = new CleanMap();
+"toString" in m;    // false — no inherited props ✅ clean slate
+m.x = 1;
+Object.keys(m);     // ["x"] ✅
+```
+
+---
+
+### Trap 6: `Symbol.species` removal — ES2023 broke some patterns
+
+```js
+// Pre-ES2023: Array.prototype.map returned subclass instance:
+class MyArray extends Array {}
+const a = new MyArray(1, 2, 3);
+a.map(x => x).constructor === MyArray; // true (old behavior)
+
+// ES2023: Array methods now always return plain Array:
+// Symbol.species for built-in Array methods was removed
+// to prevent prototype pollution attack vectors
+
+class MyArray extends Array {
+  static get [Symbol.species]() { return MyArray; }
+}
+
+// In ES2023+ — even with Symbol.species, Array methods
+// return plain Array, not MyArray
+// Real prod impact: code relying on chained methods returning
+// subclass instances silently broke with Node.js 20+ / Chrome 113+
+
+// Fix: override the methods explicitly:
+class SafeArray extends Array {
+  map(...args) {
+    return new SafeArray(...super.map(...args)); // explicit ✅
+  }
+  filter(...args) {
+    return new SafeArray(...super.filter(...args)); // explicit ✅
+  }
+}
+```
+
+---
+
+### Trap 7: `instanceof` fails across realms / after prototype reassignment
+
+```js
+class Animal {}
+class Dog extends Animal {}
+
+const dog = new Dog();
+dog instanceof Dog;    // true ✅
+dog instanceof Animal; // true ✅
+
+// Reassign prototype:
+Dog.prototype = {};
+dog instanceof Dog;    // false 😱 — old instance disconnected
+new Dog() instanceof Dog; // true — new instances use new prototype
+
+// Cross-realm:
+const vm = require("vm");
+const vDog = vm.runInNewContext("class Dog {}; new Dog()");
+vDog instanceof Dog; // false 😱 — different realm's Dog class
+```
+
+---
+
+## 📊 Property Lookup Priority
+
+```
+┌──────────────────────────────────────────────────────────┐
+│         PROPERTY LOOKUP ORDER                            │
+│                                                          │
+│  When accessing obj.prop:                                │
+│                                                          │
+│  1. obj OWN properties (fastest — own property)         │
+│  2. obj [[Prototype]] (parent class prototype)           │
+│  3. parent [[Prototype]] (grandparent prototype)         │
+│  4. ... up the chain ...                                 │
+│  5. Object.prototype                                     │
+│  6. null → return undefined (property not found)        │
+│                                                          │
+│  OVERRIDE priority:                                      │
+│  Own property > Child.prototype > Parent.prototype       │
+│  First found WINS — chain search STOPS                   │
+│                                                          │
+│  Performance:                                            │
+│  Own property: O(1) — shape-indexed lookup               │
+│  +1 level: O(1) — single pointer dereference            │
+│  +n levels: O(n) — n pointer dereferences                │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Inheritance Types Comparison
+
+| Type | Syntax | Multiple? | Private access | instanceof |
+|---|---|---|---|---|
+| Class extends | `extends` | ❌ Single | ❌ Parent private inaccessible | ✅ |
+| Functional mixin | `Mixin(Base)` | ✅ Composed | ✅ Own private only | ❌ partial |
+| Object.create | `Object.create(proto)` | ❌ Single | N/A (no class) | ✅ |
+| Constructor fn | `Foo.call(this)` + prototype | ❌ Single | N/A | ✅ |
+| Object.assign mixin | `Object.assign(proto, mixin)` | ✅ Any number | N/A | ❌ |
+
+---
+
+## 📊 DSA / Internals Connection
+
+> The prototype chain is a **singly linked list** of objects. Property lookup = **linked list traversal** — O(n) where n = chain depth. V8 optimizes this with **inline caches (ICs)**: after the first property lookup resolves, V8 caches the chain depth and offset. Subsequent lookups on the same hidden class hit the cache and are O(1).
+>
+> When a subclass adds properties in the same order every time, V8 assigns the same **hidden class (shape)** to all instances — enabling PACKED array layout for property storage and O(1) property access via shape-indexed lookup. Mixing inheritance with dynamic property addition in different orders creates **shape branching** — each branch gets its own hidden class, breaking V8's inline cache and degrading to slower generic lookup.
+>
+> The **dual prototype chain** (instance chain + static/constructor chain) mirrors **two separate inheritance hierarchies** in type theory — the value type chain (`Dog.prototype`) and the meta-type chain (`Dog.__proto__`). This gives JS both instance method inheritance AND static method inheritance with a single `extends` keyword.
+
+---

@@ -1,0 +1,1166 @@
+---
+title: C++ Advanced Exception Rethrowing
+slug: computer-languages/cpp/exception-handling/advanced-rethrowing
+description: Master C++ exception rethrowing, `std::nested_exception`, cause chaining, and stack trace preservation.
+sidebar:
+  label: "Advanced Rethrowing"
+  badge:
+    text: Best Practices
+    variant: tip
+tags: [cpp, exception, rethrow, nested-exception, stack-trace, interview, c++11, c++17]
+---
+
+import { Aside, Badge, Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+## 🔄 Rethrowing an Exception in C++
+
+---
+
+### 🧠 What It Is
+
+Rethrowing in C++ involves catching an exception and propagating it further, either as-is or wrapped in a new context. 
+
+Key differences from Java:
+1. **No Checked Exceptions**: You don't need to update `throws` declarations.
+2. **No Automatic Cause Chaining**: C++ `std::exception` does not automatically store a "cause". You must use `std::nested_exception` (C++11) or custom fields.
+3. **Stack Traces**: Standard C++ exceptions do **not** capture stack traces. You need external libraries (like Boost.Stacktrace) or compiler extensions.
+
+---
+
+### 🔬 Four Forms of Rethrowing
+
+```text
+Rethrow
+├── 1. Rethrow same object         → throw;
+├── 2. Wrap with Nesting           → std::throw_with_nested(...)
+├── 3. Wrap Custom (Manual Chain)  → throw MyException("msg", prev_e);
+└── 4. Replace (Bad Practice)      → throw NewException(); // Loses old info
+```
+
+---
+
+### 🔬 Form 1 — Rethrow Same Object (`throw;`)
+
+Use `throw;` (without an argument) inside a catch block to rethrow the **currently handled exception**. This preserves the original object and its type exactly.
+
+<Code lang="cpp" title="Rethrowing the current exception" code={`
+#include <iostream>
+#include <stdexcept>
+
+void dbCall() {
+    throw std::runtime_error("Connection refused");
+}
+
+void process() {
+    try {
+        dbCall();
+    } catch (const std::exception& e) {
+        std::cerr << "Logging error: " << e.what() << '\\n';
+        throw; // ✅ Rethrows the EXACT same runtime_error object
+    }
+}
+
+int main() {
+    try {
+        process();
+    } catch (const std::exception& e) {
+        std::cerr << "Caught: " << e.what() << '\\n';
+    }
+}
+`} />
+
+<Aside type="note">
+**Why `throw;` and not `throw e;`?**
+- `throw;`: Rethrows the original exception object (polymorphic type preserved).
+- `throw e;`: Creates a **copy** of `e`. If `e` is a reference to a derived class caught by a base reference, `throw e;` slices it to the base type! **Always use `throw;`**.
+</Aside>
+
+---
+
+### 🔬 Form 2 — Wrapping with `std::nested_exception` (C++11)
+
+Since standard exceptions don't have a `getCause()` method, C++11 introduced `std::nested_exception` to mix-in cause chaining.
+
+<Code lang="cpp" title="Using std::nested_exception" code={`
+#include <iostream>
+#include <stdexcept>
+#include <exception>
+
+// Helper to rethrow with nesting
+void handleAndRethrow(const std::string& msg) {
+    try {
+        throw; // Rethrow current exception
+    } catch (...) {
+        // std::current_exception() captures the active exception
+        std::throw_with_nested(std::runtime_error(msg));
+    }
+}
+
+void dbCall() {
+    throw std::runtime_error("SQL Error");
+}
+
+void serviceLayer() {
+    try {
+        dbCall();
+    } catch (...) {
+        handleAndRethrow("Service Layer Failure");
+    }
+}
+
+// Recursive printer for nested exceptions
+void printException(const std::exception& e, int level = 0) {
+    std::cerr << std::string(level * 2, ' ') << "Error: " << e.what() << '\\n';
+    try {
+        std::rethrow_if_nested(e);
+    } catch (const std::exception& nested) {
+        printException(nested, level + 1);
+    } catch (...) {}
+}
+
+int main() {
+    try {
+        serviceLayer();
+    } catch (const std::exception& e) {
+        printException(e);
+    }
+}
+
+// Output:
+// Error: Service Layer Failure
+//   Error: SQL Error
+`} />
+
+---
+
+### 🔬 Form 3 — Custom Exception with Manual Chaining
+
+For production code, it's often cleaner to create a custom exception class that stores the previous exception explicitly.
+
+<Code lang="cpp" title="Custom Exception with Cause" code={`
+#include <stdexcept>
+#include <string>
+#include <memory>
+
+class AppException : public std::runtime_error {
+public:
+    AppException(const std::string& msg, std::exception_ptr cause = nullptr)
+        : std::runtime_error(msg), m_cause(cause) {}
+
+    std::exception_ptr cause() const { return m_cause; }
+
+private:
+    std::exception_ptr m_cause;
+};
+
+void lowerLevel() {
+    throw std::invalid_argument("Bad Input");
+}
+
+void upperLevel() {
+    try {
+        lowerLevel();
+    } catch (const std::exception& e) {
+        // Capture current exception as a pointer
+        auto cause = std::current_exception();
+        throw AppException("Upper level failed", cause);
+    }
+}
+`} />
+
+<Aside type="tip">
+**`std::exception_ptr`**: This is a shared-pointer-like object that holds a reference to an exception. It allows you to store, pass, and rethrow exceptions later, even across threads.
+</Aside>
+
+---
+
+### 🔬 Form 4 — Replacing (The Anti-Pattern)
+
+Throwing a new exception without linking the old one destroys diagnostic information.
+
+```cpp
+try {
+    dbCall();
+} catch (const std::exception& e) {
+    // ❌ BAD: The original "SQL Error" is lost forever.
+    throw std::runtime_error("DB Failed"); 
+}
+```
+
+---
+
+### 🔬 Stack Traces in C++
+
+Unlike Java, `std::exception` does **not** capture the stack trace.
+1. **Standard C++**: `what()` only returns the message string.
+2. **Boost.Stacktrace**: The most common portable solution.
+3. **Compiler Extensions**: GCC/Clang have `__builtin_frame_address`, but they are non-standard.
+
+<Code lang="cpp" title="Simulating Stack Trace (Conceptual)" code={`
+// In real projects, use Boost.Stacktrace or similar
+#include <boost/stacktrace.hpp>
+
+class TracedException : public std::runtime_error {
+    boost::stacktrace::stacktrace st_;
+public:
+    TracedException(const std::string& msg)
+        : std::runtime_error(msg), st_(boost::stacktrace::stacktrace()) {}
+
+    const boost::stacktrace::stacktrace& trace() const { return st_; }
+};
+
+void risky() {
+    throw TracedException("Something went wrong");
+}
+`} />
+
+---
+
+### 💻 Real-World Code — Layered Architecture
+
+In C++, we often translate low-level errors (like SQL) into domain errors using `std::throw_with_nested`.
+
+<Code lang="cpp" title="Layered Error Translation" code={`
+#include <iostream>
+#include <stdexcept>
+#include <exception>
+
+// 1. Infrastructure Layer
+void sqlExecute() {
+    throw std::runtime_error("Connection Timeout");
+}
+
+// 2. Repository Layer
+void findUser(int id) {
+    try {
+        sqlExecute();
+    } catch (...) {
+        std::throw_with_nested(std::runtime_error("User DB Error"));
+    }
+}
+
+// 3. Service Layer
+void getUser(int id) {
+    try {
+        findUser(id);
+    } catch (...) {
+        std::throw_with_nested(std::runtime_error("Service Logic Failed"));
+    }
+}
+
+// Utility to print nested chain
+void printCurrentException(int level = 0) {
+    try {
+        throw;
+    } catch (const std::exception& e) {
+        std::cerr << std::string(level * 2, ' ') << e.what() << '\\n';
+        try {
+            std::rethrow_if_nested(e);
+        } catch (...) {
+            printCurrentException(level + 1);
+        }
+    } catch (...) {
+        std::cerr << std::string(level * 2, ' ') << "Unknown exception\\n";
+    }
+}
+
+int main() {
+    try {
+        getUser(1);
+    } catch (...) {
+        printCurrentException();
+    }
+}
+
+// Output:
+// Service Logic Failed
+//   User DB Error
+//     Connection Timeout
+`} />
+
+---
+
+### 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: `throw e;` vs `throw;`" icon="error">
+    ```cpp
+    catch (Base& e) {
+        throw e;   // ❌ SLICING! If e was Derived, it becomes Base.
+        throw;     // ✅ Correct. Rethrows original polymorphic object.
+    }
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Losing the Cause" icon="shield">
+    ```cpp
+    catch (const std::exception& e) {
+        throw std::runtime_error("New Msg"); // ❌ Old exception lost.
+        // Use std::throw_with_nested or custom chaining.
+    }
+    ```
+  </Card>
+
+  <Card title="Trap 3: No Stack Trace" icon="caution">
+    Standard C++ exceptions do **not** provide line numbers or stack traces. If you need them, you **must** integrate a library like `Boost.Stacktrace` or use platform-specific APIs. Don't expect `e.printStackTrace()`.
+  </Card>
+
+  <Card title="Trap 4: Exception Slicing in Storage" icon="information">
+    If you store an exception in a variable (`std::exception e = ...`), you slice it. Always use `std::exception_ptr` to store/transport exceptions safely.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔩 DSA / Internals Connection
+
+### `std::exception_ptr` and Type Erasure
+
+`std::exception_ptr` is a type-erased container. It can hold *any* exception type. This allows you to catch an exception in one thread and rethrow it in another (e.g., in `std::future`).
+
+```cpp
+std::exception_ptr ptr;
+try {
+    throw std::runtime_error("Err");
+} catch (...) {
+    ptr = std::current_exception();
+}
+
+// Later, possibly in another thread:
+try {
+    std::rethrow_exception(ptr);
+} catch (const std::exception& e) {
+    // Handles the original runtime_error
+}
+```
+
+### Cost of Rethrowing
+
+- `throw;`: Very cheap. It just resumes the unwinding process.
+- `std::throw_with_nested`: Allocates a new exception object and copies the current one into it. More expensive, but necessary for context.
+
+---
+
+### 📊 Rethrow Forms — Decision Table
+
+| Form | Syntax | Preserves Type? | Preserves Context? | Use Case |
+|------|--------|-----------------|--------------------|----------|
+| **Rethrow** | `throw;` | ✅ Yes | ✅ Yes | Logging/Metrics, same layer |
+| **Nest** | `std::throw_with_nested(e)` | ✅ Yes | ✅ Yes (Chain) | Layer translation |
+| **Wrap Custom** | `throw MyEx("msg", ptr)` | ❌ No (New Type) | ✅ Yes (Manual) | API Boundaries |
+| **Replace** | `throw NewEx("msg")` | ❌ No | ❌ No | **Avoid** |
+
+---
+
+### 🧪 Test Your Understanding
+
+<Code lang="cpp" title="Predict the output" code={`
+#include <iostream>
+#include <stdexcept>
+
+class A : public std::exception {
+public:
+    const char* what() const noexcept override { return "A"; }
+};
+
+class B : public A {
+public:
+    const char* what() const noexcept override { return "B"; }
+};
+
+void foo() {
+    try {
+        throw B();
+    } catch (A& e) {
+        std::cout << "Caught: " << e.what() << "\\n";
+        throw; // Rethrow
+    }
+}
+
+int main() {
+    try {
+        foo();
+    } catch (B& e) {
+        std::cout << "Main: " << e.what() << "\\n";
+    } catch (A& e) {
+        std::cout << "Main: A " << e.what() << "\\n";
+    }
+}
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Output:
+Caught: B
+Main: B
+
+Explanation:
+1. foo() throws B.
+2. catch (A& e) catches it (B is-a A). e.what() prints "B" (virtual dispatch).
+3. throw; rethrows the ORIGINAL B object.
+4. main() catches B& directly.
+If we used throw e;, it would have sliced to A, and main() would have caught A.
+```
+</details>
+
+---
+
+# 🔄 C++ Advanced Rethrowing — Complete Deep Dive
+
+---
+
+## 📌 What Is Rethrowing?
+
+**Propagating an active exception further up the call stack** after partially handling it — logging, modifying, wrapping, or transporting it.
+
+```
+Normal flow:      throw → propagate → catch → handle → done
+Rethrow flow:     throw → propagate → catch → [partial handle] → rethrow → propagate further
+```
+
+---
+
+## 🗺️ Rethrowing Mechanisms
+
+```
+Rethrowing in C++
+│
+├── Bare throw;                    → rethrow same exception (in catch block)
+├── throw expr;                    → throw NEW exception (replaces current)
+├── std::rethrow_exception(ptr)    → rethrow from std::exception_ptr
+├── std::throw_with_nested(e)      → wrap current + throw new (chain)
+├── std::rethrow_if_nested(e)      → unpack nested chain
+└── std::current_exception()       → capture active exception as ptr
+```
+
+---
+
+## 🔷 1. Bare `throw;` — Rethrow Original
+
+```cpp
+// Bare throw: rethrows the EXACT exception currently being handled
+// Preserves: original type, original what(), original exception object
+
+try {
+    throw std::runtime_error("original");
+} catch (const std::exception& e) {
+    log("intercepted: ", e.what());   // log it
+    throw;                             // rethrow SAME exception
+    // NOT throw e; ← that would create a new sliced exception
+}
+```
+
+### `throw;` vs `throw e;` — The Critical Difference
+
+```cpp
+class Base : public std::exception {
+public:
+    virtual const char* what() const noexcept override { return "Base"; }
+};
+
+class Derived : public Base {
+public:
+    const char* what() const noexcept override { return "Derived"; }
+};
+
+// ─────────────────────────────────────────────
+// Bare throw; → original preserved
+// ─────────────────────────────────────────────
+try {
+    throw Derived{};
+} catch (const Base& e) {    // caught as Base& — but object is Derived
+    std::cout << e.what();    // → "Derived" (polymorphic)
+    throw;                    // rethrows Derived — dynamic type preserved
+}
+// Outer handler:
+catch (const Derived& d) { std::cout << "Derived caught\n"; } // ✅ matches
+
+// ─────────────────────────────────────────────
+// throw e; → new exception, SLICED to static type
+// ─────────────────────────────────────────────
+try {
+    throw Derived{};
+} catch (const Base& e) {    // e is Base& (static type)
+    std::cout << e.what();    // → "Derived" (polymorphic — still Derived object)
+    throw e;                  // throws NEW Base (sliced to static type of e)
+                              // Derived-ness GONE
+}
+// Outer handler:
+catch (const Derived& d) { }  // ❌ never reached — rethrown as Base
+catch (const Base& b)    { std::cout << "Base caught\n"; } // ← catches it
+```
+
+```
+Memory model:
+
+Exception buffer:    [Derived object]
+                          │
+catch (const Base& e) ────┤ e references the Derived object
+                          │
+throw;            ────────┤ rethrows the same [Derived object] — SAME BUFFER
+                          │
+throw e;          ────────┘ creates NEW [Base object] — NEW BUFFER
+                            copies Base subobject of e into new buffer
+                            Derived part LOST
+```
+
+---
+
+## 🔷 2. Rethrow with Context Added
+
+```cpp
+// Pattern: catch → log context → rethrow
+void execute_query(const std::string& sql, int user_id) {
+    try {
+        db_.execute(sql);
+    } catch (const DatabaseException& e) {
+        // Add context that the thrower didn't have
+        logger_.error("Query failed for user={} sql={}: {}",
+                      user_id, sql, e.what());
+        metrics_.increment("db.errors", {{"user", user_id}});
+        throw;   // rethrow — caller decides what to do with it
+    }
+}
+```
+
+---
+
+## 🔷 3. `std::exception_ptr` — Capture and Transport
+
+```cpp
+#include <exception>
+
+// Capture current active exception — keeps it alive
+std::exception_ptr ptr = std::current_exception();
+// ptr == nullptr if no active exception
+// ptr != nullptr if called inside catch block
+```
+
+### `std::current_exception()` Rules
+
+```cpp
+// ✅ Valid contexts — inside catch block
+try {
+    throw std::runtime_error("test");
+} catch (...) {
+    auto ep = std::current_exception();   // ← captures active exception
+    // ep is valid — points to runtime_error object
+}
+
+// ❌ Invalid context — outside catch block
+auto ep = std::current_exception();    // ep == nullptr (no active exception)
+
+// ✅ Nested catch — captures innermost active exception
+try {
+    throw std::runtime_error("outer");
+} catch (...) {
+    try {
+        throw std::logic_error("inner");
+    } catch (...) {
+        auto ep = std::current_exception(); // captures "inner" (logic_error)
+    }
+    auto ep2 = std::current_exception();    // captures "outer" (runtime_error)
+}
+```
+
+---
+
+### `std::rethrow_exception` — Rethrow From Pointer
+
+```cpp
+// Rethrow from stored exception_ptr — anywhere, any time
+std::exception_ptr ep;
+
+// Capture:
+try {
+    throw std::runtime_error("stored");
+} catch (...) {
+    ep = std::current_exception();
+}
+// Exception object ALIVE while ep holds reference
+
+// Rethrow — later, elsewhere, even another thread:
+if (ep) {
+    try {
+        std::rethrow_exception(ep);    // rethrows original type + message
+    } catch (const std::runtime_error& e) {
+        std::cout << e.what();         // → "stored"
+    }
+}
+
+// Multiple rethrows — ep keeps exception alive through all of them
+for (int i = 0; i < 3; i++) {
+    try {
+        std::rethrow_exception(ep);
+    } catch (const std::exception& e) {
+        std::cout << i << ": " << e.what() << "\n";
+    }
+}
+// ep = nullptr; → exception object destroyed now
+```
+
+---
+
+### Cross-Thread Exception Transport
+
+```cpp
+// The primary use case for exception_ptr
+// Exceptions CANNOT cross thread boundaries automatically
+// exception_ptr bridges this gap
+
+class AsyncTask {
+    std::promise<int>  promise_;
+    std::future<int>   future_;
+
+public:
+    AsyncTask() : future_(promise_.get_future()) { }
+
+    void run_in_thread() {
+        std::thread([this]() {
+            try {
+                int result = compute_intensive_work();
+                promise_.set_value(result);         // success
+            } catch (...) {
+                promise_.set_exception(             // ← transport exception
+                    std::current_exception()
+                );
+            }
+        }).detach();
+    }
+
+    int get_result() {
+        return future_.get();   // ← rethrows exception in CALLING thread
+        // If worker threw: exception reproduced here
+        // Calling thread's catch blocks handle it
+    }
+};
+
+// Usage:
+AsyncTask task;
+task.run_in_thread();
+
+try {
+    int result = task.get_result();   // may rethrow worker's exception
+    use(result);
+} catch (const NetworkError& e) {
+    retry();   // worker's exception caught in main thread
+} catch (const std::exception& e) {
+    log(e.what());
+}
+```
+
+---
+
+### Exception Collection — Aggregate Multiple Exceptions
+
+```cpp
+// Collect exceptions from parallel work, rethrow all
+class ExceptionAggregator {
+    std::vector<std::exception_ptr> exceptions_;
+    std::mutex                      mtx_;
+
+public:
+    void capture() {
+        std::lock_guard lock(mtx_);
+        exceptions_.push_back(std::current_exception());
+    }
+
+    void rethrow_all() {
+        if (exceptions_.empty()) return;
+
+        if (exceptions_.size() == 1) {
+            std::rethrow_exception(exceptions_[0]);
+        }
+
+        // Multiple exceptions — throw aggregate
+        std::string msg = std::to_string(exceptions_.size()) + " errors:\n";
+        for (auto& ep : exceptions_) {
+            try {
+                std::rethrow_exception(ep);
+            } catch (const std::exception& e) {
+                msg += "  - " + std::string(e.what()) + "\n";
+            } catch (...) {
+                msg += "  - [unknown exception]\n";
+            }
+        }
+        throw std::runtime_error(msg);
+    }
+};
+
+// Parallel processing with exception collection
+void parallel_process(std::vector<Task>& tasks) {
+    ExceptionAggregator errors;
+    std::vector<std::thread> threads;
+
+    for (auto& task : tasks) {
+        threads.emplace_back([&, &task]() {
+            try {
+                task.execute();
+            } catch (...) {
+                errors.capture();   // save — don't let escape thread
+            }
+        });
+    }
+
+    for (auto& t : threads) t.join();
+    errors.rethrow_all();   // rethrow in main thread
+}
+```
+
+---
+
+## 🔷 4. `std::throw_with_nested` — Exception Chaining
+
+```cpp
+// Wraps the CURRENT active exception inside a new one
+// Creates a chain: new_exception contains original as nested
+
+void layer3() {
+    throw std::runtime_error("root: connection refused");
+}
+
+void layer2() {
+    try {
+        layer3();
+    } catch (...) {
+        // Wrap original + throw higher-level exception
+        std::throw_with_nested(
+            DatabaseException(1045, "Query failed in layer2")
+        );
+        // DatabaseException now contains runtime_error as nested
+    }
+}
+
+void layer1() {
+    try {
+        layer2();
+    } catch (...) {
+        std::throw_with_nested(
+            ServiceException("Order processing failed")
+        );
+        // ServiceException → DatabaseException → runtime_error (chain)
+    }
+}
+```
+
+### How `throw_with_nested` Works Internally
+
+```cpp
+// std::throw_with_nested creates a combined type:
+// struct __nested_exception_impl : NewException, std::nested_exception { };
+// Where std::nested_exception stores the current exception_ptr
+
+class nested_exception {
+    exception_ptr nested_ptr_;   // holds the captured exception
+public:
+    nested_exception() noexcept
+        : nested_ptr_(current_exception()) { }  // auto-captures current
+
+    void rethrow_nested() const {
+        if (nested_ptr_) rethrow_exception(nested_ptr_);
+    }
+    exception_ptr nested_ptr() const noexcept { return nested_ptr_; }
+};
+```
+
+---
+
+## 🔷 5. `std::rethrow_if_nested` — Unpack Chain
+
+```cpp
+// Unpack exception chain — recursive descent
+void print_exception(const std::exception& e, int depth = 0) {
+    // Print current level
+    std::cerr << std::string(depth * 2, ' ')
+              << "[" << depth << "] " << e.what() << "\n";
+
+    try {
+        std::rethrow_if_nested(e);   // rethrows nested if e has one
+    } catch (const std::exception& nested) {
+        print_exception(nested, depth + 1);   // recurse
+    } catch (...) {
+        std::cerr << std::string((depth+1)*2, ' ')
+                  << "[non-std exception]\n";
+    }
+}
+
+// Usage
+try {
+    layer1();
+} catch (const std::exception& e) {
+    print_exception(e);
+}
+```
+
+```
+Output:
+[0] Order processing failed
+  [1] Query failed in layer2
+    [2] root: connection refused
+```
+
+---
+
+### Full Nested Exception Example
+
+```cpp
+// Custom exceptions that support nesting
+class AppException : public std::exception {
+    std::string msg_;
+public:
+    explicit AppException(std::string m) : msg_(std::move(m)) { }
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
+// Rethrow with full chain printed
+void handle_with_chain(const std::exception& e) {
+    std::cerr << "Error chain:\n";
+    print_exception(e);  // prints full chain
+
+    // Log the chain to monitoring
+    std::string chain;
+    std::function<void(const std::exception&)> collect =
+        [&](const std::exception& ex) {
+            chain += std::string(ex.what()) + " → ";
+            try {
+                std::rethrow_if_nested(ex);
+            } catch (const std::exception& nested) {
+                collect(nested);
+            } catch (...) { chain += "[unknown]"; }
+        };
+    collect(e);
+    monitoring_.send_alert(chain);
+}
+```
+
+---
+
+## 🔷 6. Rethrow Patterns Catalog
+
+### Pattern 1 — Log and Rethrow
+
+```cpp
+// Most common pattern — add logging without changing exception
+template<typename F>
+auto with_logging(const std::string& op, F&& func) {
+    try {
+        return func();
+    } catch (const std::exception& e) {
+        logger_.error("[{}] failed: {}", op, e.what());
+        throw;   // ← bare throw — preserve everything
+    }
+}
+
+auto result = with_logging("payment.charge", [&]{
+    return gateway_.charge(token, amount);
+});
+```
+
+---
+
+### Pattern 2 — Translate and Rethrow
+
+```cpp
+// Convert low-level exception to domain exception
+void UserRepository::find(int id) {
+    try {
+        return db_.query("SELECT * FROM users WHERE id=?", id);
+    } catch (const DbConnectionError& e) {
+        // Translate: infrastructure → domain
+        throw RepositoryUnavailableException(
+            "UserRepository unavailable: " + std::string(e.what())
+        );
+        // Original exception REPLACED — no nesting
+    } catch (const DbQueryError& e) {
+        // Translate with chain — preserve root cause
+        std::throw_with_nested(
+            UserNotFoundException(id)
+        );
+        // Chain: UserNotFoundException → DbQueryError (preserved)
+    }
+}
+```
+
+---
+
+### Pattern 3 — Conditional Rethrow
+
+```cpp
+// Retry logic — rethrow if out of retries
+void with_retry(int max_attempts, std::function<void()> op) {
+    std::exception_ptr last_error;
+
+    for (int attempt = 1; attempt <= max_attempts; attempt++) {
+        try {
+            op();
+            return;   // success — done
+        } catch (const RetryableException& e) {
+            last_error = std::current_exception();  // save
+            log("Attempt {} failed: {}, retrying...", attempt, e.what());
+            backoff(attempt);
+            // loop continues
+        } catch (...) {
+            throw;   // non-retryable — rethrow immediately
+        }
+    }
+
+    // All attempts exhausted
+    if (last_error) std::rethrow_exception(last_error);  // rethrow last
+}
+```
+
+---
+
+### Pattern 4 — Boundary Rethrow
+
+```cpp
+// At API boundaries — translate to appropriate response
+// Catch everything, rethrow nothing (absorb all)
+HttpResponse handle_safely(std::function<HttpResponse()> handler) noexcept {
+    try {
+        return handler();
+
+    } catch (const ValidationException& e) {
+        return {400, e.what()};
+
+    } catch (const AuthException& e) {
+        return {401, e.what()};
+
+    } catch (const NotFoundException& e) {
+        return {404, e.what()};
+
+    } catch (const std::exception& e) {
+        logger_.critical("Unhandled: {}", e.what());
+        return {500, "internal error"};
+
+    } catch (...) {
+        logger_.critical("Non-std exception");
+        return {500, "internal error"};
+    }
+    // No rethrow — all exceptions absorbed at boundary
+}
+```
+
+---
+
+### Pattern 5 — Deferred Rethrow
+
+```cpp
+// Collect exception, rethrow later (RAII guard)
+class DeferredError {
+    std::exception_ptr ep_;
+
+public:
+    void capture() noexcept {
+        if (!ep_) ep_ = std::current_exception();
+        // First error wins — subsequent errors discarded
+    }
+
+    bool has_error() const noexcept { return ep_ != nullptr; }
+
+    void rethrow() {
+        if (ep_) std::rethrow_exception(ep_);
+    }
+
+    ~DeferredError() noexcept {
+        // Optionally: rethrow in destructor
+        // DANGEROUS — destructor throw can terminate
+        // Only do this if you're sure no exception is active
+        if (ep_ && !std::uncaught_exceptions()) {
+            // C++17: std::uncaught_exceptions() > 0 = in unwinding
+            // If not unwinding: safe to throw from dtor (unusual)
+        }
+    }
+};
+
+// Usage in cleanup sequence
+void cleanup_resources(std::vector<Resource>& resources) {
+    DeferredError error;
+
+    for (auto& r : resources) {
+        try {
+            r.release();
+        } catch (...) {
+            error.capture();   // save first error, continue cleanup
+        }
+    }
+
+    error.rethrow();   // rethrow after ALL resources released
+}
+```
+
+---
+
+## 🔬 Under the Hood
+
+```cpp
+// throw;  — bare rethrow
+throw;
+```
+
+```asm
+; Itanium ABI:
+call __cxa_rethrow
+; __cxa_rethrow:
+;   - gets current exception from thread-local exception stack
+;   - increments reference count (doesn't allocate new buffer)
+;   - re-initiates Phase 1 search from current frame upward
+;   - Phase 2: unwind + transfer to new handler
+;   Cost: same as original throw — exception buffer reused
+```
+
+```cpp
+// std::rethrow_exception(ep);
+std::rethrow_exception(ep);
+```
+
+```asm
+; __cxa_rethrow with explicit exception object
+; ep's internal __cxa_exception* used directly
+; Same exception buffer — no copy
+; Type information preserved — same typeinfo pointer
+```
+
+```
+exception_ptr internals:
+  Wraps __cxa_exception* (Itanium ABI)
+  Reference counted — shared_ptr-like
+  operator bool: non-null ptr = has exception
+  current_exception(): increments refcount of active exception
+  ~exception_ptr(): decrements refcount, may free exception buffer
+```
+
+---
+
+## 🏭 Real-World Production Scenario
+
+**Microservice request pipeline with exception chaining:**
+
+```cpp
+class RequestPipeline {
+    // Each stage adds context then rethrows
+    // Final handler sees the full chain
+
+    Response execute(const Request& req) {
+        std::exception_ptr pipeline_error;
+
+        try {
+            // Stage 1: Authentication
+            auto user = authenticate(req);
+
+            // Stage 2: Validation
+            auto valid_req = validate(req, user);
+
+            // Stage 3: Business logic
+            auto result = process(valid_req);
+
+            // Stage 4: Persistence
+            persist(result);
+
+            return Response{200, result.to_json()};
+
+        } catch (...) {
+            pipeline_error = std::current_exception();
+        }
+
+        // Analyze exception chain for response + alerting
+        try {
+            std::rethrow_exception(pipeline_error);
+        } catch (const ValidationException& e) {
+            return Response{400, e.what()};
+
+        } catch (const AuthException& e) {
+            // Add request context via nesting — then log chain
+            try {
+                std::throw_with_nested(
+                    RequestContextException(req.id(), req.endpoint())
+                );
+            } catch (const std::exception& chained) {
+                print_exception(chained);   // logs full chain
+            }
+            return Response{401, "unauthorized"};
+
+        } catch (const DatabaseException& e) {
+            // DB errors: alert + rethrow for circuit breaker
+            alert_sre("DB failure in request " + req.id() + ": " + e.what());
+            circuit_breaker_.record_failure();
+            std::rethrow_exception(pipeline_error);  // propagate to middleware
+
+        } catch (const std::exception& e) {
+            logger_.critical("Unhandled in pipeline [{}]: {}",
+                           req.id(), e.what());
+            // Walk chain for full context
+            print_exception(e);
+            return Response{500, "internal error"};
+        }
+
+        return Response{500, "unreachable"};
+    }
+};
+```
+
+---
+
+## 🎯 Interview Traps
+
+**Trap 1:**
+```cpp
+try {
+    throw std::runtime_error("A");
+} catch (std::exception& e) {   // non-const ref
+    e = std::runtime_error("B"); // assign new value
+    throw;                        // what is rethrown?
+}
+```
+> `throw;` rethrows the **original exception object** in the exception buffer. Assigning `e = std::runtime_error("B")` modifies the `std::exception` base subobject's state (via assignment) — but the **dynamic type** remains `std::runtime_error("A")`. The `what()` might return "B" (if assignment updated internal state) but the type is still `runtime_error`. This is subtle and implementation-defined behavior — avoid modifying caught exceptions.
+
+**Trap 2:**
+```cpp
+std::exception_ptr ep;
+try {
+    throw std::runtime_error("test");
+} catch (...) {
+    ep = std::current_exception();
+    std::rethrow_exception(ep);   // rethrow INSIDE catch
+} catch (const std::runtime_error& e) {
+    std::cout << "caught\n";
+}
+```
+> `std::rethrow_exception(ep)` inside the first `catch(...)` throws `runtime_error`. The second `catch(const std::runtime_error&)` is a sibling of the first — **not** a nested handler. Exception from `rethrow_exception` propagates OUT of the entire try block. The second catch never runs. Printed: nothing, exception propagates to caller.
+
+**Trap 3:**
+```
+"Does std::rethrow_exception copy the exception object?"
+```
+> **No** — `rethrow_exception(ep)` reuses the SAME exception buffer that `ep` refers to. It's reference-counted. No copy, no allocation. This is why you can call `rethrow_exception` multiple times with the same `ep` — same object each time.
+
+**Trap 4:**
+```cpp
+void foo() {
+    try {
+        throw std::runtime_error("test");
+    } catch (...) { }
+    throw;   // outside catch — what happens?
+}
+```
+> **Undefined behavior.** `throw;` outside of a catch block (when no exception is being handled) is UB — typically calls `std::terminate()`. `std::current_exception()` returns `nullptr` outside a catch block — `rethrow_exception(nullptr)` is also UB.
+
+**Trap 5:**
+```cpp
+try {
+    throw std::runtime_error("first");
+} catch (...) {
+    try {
+        throw std::logic_error("second");
+    } catch (...) {
+        // current_exception() here returns?
+        auto ep = std::current_exception();  // "first" or "second"?
+        std::rethrow_exception(ep);
+    }
+}
+```
+> `ep` captures `"second"` — the innermost active exception. Each `catch(...)` makes ITS exception the current one. The inner `catch(...)` handles `"second"`, so `current_exception()` = `"second"`. `rethrow_exception(ep)` rethrows `logic_error("second")`. `"first"` is accessible through the outer `catch(...)`.
+
+---

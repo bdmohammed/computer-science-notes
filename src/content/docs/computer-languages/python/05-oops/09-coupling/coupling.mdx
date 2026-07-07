@@ -1,0 +1,1163 @@
+---
+title: Python Coupling & Dependency Management
+slug: computer-languages/python/design/coupling
+description: Master tight vs loose coupling in Python. Learn Dependency Injection, Duck Typing, and Protocol-based decoupling to build maintainable, testable architectures.
+sidebar:
+  label: "Coupling"
+  badge:
+    text: Design Principle
+    variant: tip
+tags: [python, coupling, dependency-injection, duck-typing, architecture, interview, solid]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 🔗 Coupling in Python
+
+> **Coupling** is the degree to which one module depends on another.  
+> **Tight Coupling**: Changing Class A breaks Class B.  
+> **Loose Coupling**: Classes interact via abstractions (interfaces/protocols), allowing independent evolution.
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of coupling as **software gravity**.  
+- **Tight**: Classes are glued together. Hard to move or test alone.  
+- **Loose**: Classes connect via flexible cables (interfaces). Easy to swap components.  
+**Goal**: "High Cohesion, Low Coupling."
+</Aside>
+
+---
+
+## 📋 Types of Coupling in Python
+
+| Type | Severity | Python Example |
+|------|----------|----------------|
+| **Content** | 🔴 Worst | Modifying `obj._private_data` directly |
+| **Common** | 🔴 Worst | Using global mutable variables (`global state`) |
+| **Control** | 🟠 Bad | Passing flags like `process(data, is_pdf=True)` |
+| **Stamp** | 🟡 Moderate | Passing a huge `dict` when only one key is needed |
+| **Data** | 🟢 Good | Passing only required primitives/objects |
+| **Message** | 🟢 Best | Event-driven / Signal dispatching |
+
+<CardGrid>
+  <Card title="Tight Coupling" icon="error">
+    ```python
+    # ❌ Hardwired dependency
+    class OrderService:
+        def process(self):
+            # Directly creates dependency
+            db = MySQLDatabase() 
+            db.save()
+    ```
+  </Card>
+  
+  <Card title="Loose Coupling" icon="approve-check">
+    ```python
+    # ✅ Injected dependency
+    class OrderService:
+        def __init__(self, db: Database):
+            self.db = db  # Abstraction
+
+        def process(self):
+            self.db.save()
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 1️⃣ Content Coupling — Breaking Encapsulation
+
+In Python, `_underscore` is a convention for "protected," and `__dunder` is name-mangled. Accessing these directly creates tight coupling to internal implementation.
+
+<Code lang="python" title="❌ Content Coupling: Accessing Internals" code={`
+class Cart:
+    def __init__(self):
+        self._items = []  # Protected internal state
+        self._total = 0.0
+
+    def add_item(self, item):
+        self._items.append(item)
+        self._recalculate()
+
+    def _recalculate(self):
+        self._total = sum(i.price for i in self._items)
+
+# ❌ Tight Coupling: External code modifies internals
+def bad_checkout(cart):
+    cart._items.clear()       # Bypasses logic
+    cart._total = 0           # Direct mutation
+`} />
+
+<Code lang="python" title="✅ Fix: Respect Encapsulation" code={`
+# ✅ Loose Coupling: Use public API
+def good_checkout(cart):
+    cart.clear()              # Uses public method
+    # Cart controls its own state
+`} />
+
+<Aside type="caution">
+**Python Trap**: Just because you *can* access `_protected` attributes doesn't mean you *should*. Doing so couples your code to the internal structure, which may change without notice.
+</Aside>
+
+---
+
+## 2️⃣ Common Coupling — Global State
+
+Using global variables creates hidden dependencies between modules.
+
+<Code lang="python" title="❌ Common Coupling: Global Mutable State" code={`
+# config.py
+current_user = None  # 😱 Global mutable state
+
+# auth.py
+def login(user):
+    import config
+    config.current_user = user
+
+# billing.py
+def charge():
+    import config
+    # 😱 What if current_user is None? Or changed by another thread?
+    user = config.current_user 
+`} />
+
+<Code lang="python" title="✅ Fix: Dependency Injection" code={`
+# ✅ Explicit Context
+class RequestContext:
+    def __init__(self, user):
+        self.user = user
+
+class BillingService:
+    def charge(self, ctx: RequestContext):
+        user = ctx.user  # Explicit, safe, testable
+`} />
+
+---
+
+## 3️⃣ Control Coupling — Boolean Flags
+
+Passing boolean flags to control behavior forces the caller to know the callee's internal logic.
+
+<Code lang="python" title="❌ Control Coupling: Flag Passing" code={`
+class ReportGenerator:
+    def generate(self, data, is_pdf: bool):
+        if is_pdf:
+            self._export_pdf(data)
+        else:
+            self._export_csv(data)
+
+# Caller must know implementation details
+gen = ReportGenerator()
+gen.generate(data, True)  # What does True mean?
+`} />
+
+<Code lang="python" title="✅ Fix: Polymorphism / Strategy Pattern" code={`
+from abc import ABC, abstractmethod
+
+class Exporter(ABC):
+    @abstractmethod
+    def export(self, data): pass
+
+class PdfExporter(Exporter):
+    def export(self, data):
+        print("Exporting PDF...")
+
+class CsvExporter(Exporter):
+    def export(self, data):
+        print("Exporting CSV...")
+
+class ReportGenerator:
+    def __init__(self, exporter: Exporter):
+        self.exporter = exporter
+
+    def generate(self, data):
+        self.exporter.export(data)  # No flags needed!
+
+# Usage
+gen = ReportGenerator(PdfExporter())
+gen.generate(data)  # Clear intent
+`} />
+
+---
+
+## 4️⃣ Tight vs Loose — Real Production Comparison
+
+<CardGrid>
+  <Card title="❌ Tight Coupling: Hardcoded Imports" icon="error">
+    ```python
+    import stripe
+
+    class PaymentService:
+        def charge(self, amount):
+            # 🔴 Tightly coupled to Stripe library
+            stripe.Charge.create(amount=amount)
+            
+    # Problems:
+    # • Can't test without real Stripe API
+    # • Switching to PayPal requires rewriting this class
+    ```
+  </Card>
+  
+  <Card title="✅ Loose Coupling: Protocol-Based DI" icon="approve-check">
+    ```python
+    from typing import Protocol
+
+    # Abstraction
+    class PaymentGateway(Protocol):
+        def charge(self, amount: float) -> bool: ...
+
+    # Implementation
+    class StripeGateway:
+        def charge(self, amount: float) -> bool:
+            # Stripe logic
+            return True
+
+    # Service depends on Abstraction
+    class PaymentService:
+        def __init__(self, gateway: PaymentGateway):
+            self.gateway = gateway
+
+        def process(self, amount):
+            return self.gateway.charge(amount)
+
+    # Testing is easy:
+    class MockGateway:
+        def charge(self, amount): return True
+        
+    service = PaymentService(MockGateway())
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 5️⃣ Dependency Injection in Python
+
+Python doesn't have a built-in DI container like Spring, but we use **Constructor Injection** manually or with libraries like `dependency-injector`.
+
+<Tabs>
+  <TabItem label="Constructor Injection (Preferred)" icon="check">
+    ```python
+    class UserService:
+        def __init__(self, repo: UserRepository):
+            self.repo = repo  # Immutable dependency
+
+    # Wiring
+    repo = SqlUserRepository()
+    service = UserService(repo)
+    ```
+  </TabItem>
+  
+  <TabItem label="Duck Typing Injection" icon="duck">
+    ```python
+    # Python doesn't strictly require Interfaces.
+    # If it quacks, it works.
+    
+    class Logger:
+        def log(self, msg): print(msg)
+
+    class App:
+        def __init__(self, logger):
+            self.logger = logger  # Accepts ANY object with .log()
+            
+    app = App(Logger())
+    app = App(PrintLogger())  # Swappable!
+    ```
+  </TabItem>
+</Tabs>
+
+---
+
+## 6️⃣ Interface Segregation — Protocols
+
+Don't force classes to depend on large interfaces they don't use. Use `typing.Protocol` to define small, specific contracts.
+
+<Code lang="python" title="✅ Small Protocols reduce Coupling" code={`
+from typing import Protocol
+
+# ❌ Fat Interface (Avoid)
+class UserService(Protocol):
+    def get_user(self, id: int): ...
+    def delete_user(self, id: int): ...
+    def send_email(self, id: int): ...
+
+# ✅ Segregated Protocols
+class UserReader(Protocol):
+    def get_user(self, id: int): ...
+
+class UserWriter(Protocol):
+    def delete_user(self, id: int): ...
+
+# BillingService only needs to READ
+class BillingService:
+    def __init__(self, reader: UserReader):
+        self.reader = reader  # Minimal coupling
+`} />
+
+---
+
+## 7️⃣ Event-Driven Decoupling
+
+Use signals or event buses to decouple producers from consumers.
+
+<Code lang="python" title="✅ Event-Driven Architecture" code={`
+import blinker  # Popular signaling library
+
+# Define Signal
+order_placed = blinker.signal('order-placed')
+
+# Producer (doesn't know who listens)
+class OrderService:
+    def place_order(self):
+        # ... save order ...
+        order_placed.send(order_id=123)
+
+# Consumer (doesn't know who produced)
+@order_placed.connect
+def send_email(order_id):
+    print(f"Sending email for order {order_id}")
+
+@order_placed.connect
+def update_inventory(order_id):
+    print(f"Updating inventory for order {order_id}")
+`} />
+
+---
+
+## 💣 Interview Traps
+
+<CardGrid>
+  <Card title="Trap 1: Importing Concrete Classes" icon="error">
+    ```python
+    # ❌ Tight Coupling
+    from concrete_db import PostgresDB
+    
+    class Service:
+        def __init__(self):
+            self.db = PostgresDB()  # Hardwired
+            
+    # ✅ Fix: Inject abstraction
+    class Service:
+        def __init__(self, db: DatabaseProtocol):
+            self.db = db
+    ```
+  </Card>
+  
+  <Card title="Trap 2: Mutable Default Arguments" icon="warning">
+    ```python
+    # ❌ Common Coupling via Shared State
+    def add_item(item, cache=[]):
+        cache.append(item)  # Shared across all calls!
+        
+    # ✅ Fix: Use None or explicit context
+    def add_item(item, cache=None):
+        if cache is None:
+            cache = []
+    ```
+  </Card>
+
+  <Card title="Trap 3: Circular Imports" icon="danger">
+    ```python
+    # a.py
+    import b  # ❌ Circular Dependency
+    
+    # b.py
+    import a  # ❌ Circular Dependency
+    
+    # Fix: Refactor shared logic into c.py
+    # a.py -> c.py <- b.py
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+<CardGrid>
+  <Card title="Q: How do you achieve loose coupling in Python?" icon="information">
+    1. **Dependency Injection**: Pass dependencies via `__init__`.
+    2. **Duck Typing/Protocols**: Depend on behavior, not specific classes.
+    3. **Event Signals**: Use `blinker` or similar for pub/sub.
+    4. **Avoid Globals**: Pass context explicitly.
+  </Card>
+  
+  <Card title="Q: What is the difference between Tight and Loose coupling?" icon="approve-check">
+    - **Tight**: Class A imports and instantiates Class B. Hard to test.
+    - **Loose**: Class A accepts an interface/protocol. Class B is injected. Easy to swap/mock.
+  </Card>
+
+  <Card title="Q: Why is boolean flag passing bad?" icon="backspace">
+    It creates **Control Coupling**. The caller dictates internal logic. Use polymorphism (Strategy Pattern) instead.
+  </Card>
+</CardGrid>
+
+---
+
+## 🔑 Quick Reference Summary
+
+| Anti-Pattern | Symptom | Fix |
+|--------------|---------|-----|
+| `import Concrete` | Hard to swap implementations | Inject Protocol/ABC |
+| `global state` | Hidden dependencies | Pass context explicitly |
+| `if flag:` | Control coupling | Use Strategy Pattern |
+| `obj._private` | Content coupling | Use public methods |
+| Circular Imports | `ImportError` | Refactor into shared module |
+
+<Aside type="caution">
+**Final Checklist**:
+1. ✅ Inject dependencies, don't create them.
+2. ✅ Use `typing.Protocol` for structural subtyping.
+3. ✅ Avoid global mutable state.
+4. ✅ Keep functions/classes focused (Single Responsibility).
+5. ✅ Use events for side effects (logging, notifications).
+</Aside>
+
+---
+
+## 🧪 Test Your Understanding
+
+<Code lang="python" title="Predict Coupling Severity" code={`
+# Q1: What type of coupling is this?
+def process(data, format_type):
+    if format_type == "json":
+        return json.dumps(data)
+    return str(data)
+
+# Q2: How to fix this tight coupling?
+import redis
+class Cache:
+    def __init__(self):
+        self.r = redis.Redis()  # Hardwired
+`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+Q1: Control Coupling. 
+Fix: Use Strategy Pattern (JsonFormatter, StringFormatter).
+
+Q2: Tight Coupling via direct instantiation.
+Fix: Inject the Redis client or a CacheProtocol.
+class Cache:
+    def __init__(self, client: RedisProtocol):
+        self.r = client
+```
+</details>
+
+> 🚀 **Final Wisdom**: In Python, **loose coupling** is achieved by depending on **abstractions** (Protocols) and **injecting** concrete implementations. This makes your code modular, testable, and resilient to change. 🐍✨
+
+<Badge text="Astro 6 Ready" variant="success" /> • <Badge text="Python 3.10+" variant="tip" /> • <Badge text="Interview Optimized" variant="caution" />
+
+---
+
+# 🔗 Python Coupling
+
+---
+
+## 🧠 Mental Model First
+
+```
+COUPLING = degree of DEPENDENCY between two modules/classes.
+           How much does A know about B?
+           How much does changing B break A?
+
+HIGH COUPLING (Tight):           LOW COUPLING (Loose):
+  A knows B's internals            A knows only B's interface
+  A creates B directly             A receives B from outside
+  A uses B's concrete type         A uses B's abstraction
+  Changing B breaks A              Changing B doesn't affect A
+
+GOAL: Write code where each piece
+      knows as LITTLE as possible about other pieces.
+```
+
+```
+COUPLING SPECTRUM:
+┌─────────────────────────────────────────────────────────────────┐
+│  TIGHTEST                                                       │
+│    Content coupling    → A modifies B's internal data directly  │
+│    Common coupling     → A and B share global mutable state     │
+│    External coupling   → A and B depend on same external format │
+│    Control coupling    → A tells B HOW to do its job            │
+│    Stamp coupling      → A passes more data to B than B needs   │
+│    Data coupling       → A passes only what B needs (ok)        │
+│  LOOSEST                                                        │
+│    Message coupling    → A and B communicate via events/messages│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1️⃣ Content Coupling — Worst
+
+```python
+# 💀 TIGHT: A reaches into B's private internals:
+class UserService:
+    def __init__(self):
+        self._repo = UserRepository()
+
+    def deactivate(self, user_id: int) -> None:
+        # Directly manipulates repo's internal cache:
+        self._repo._cache.pop(user_id, None)      # ← accessing private _cache
+        self._repo._db_conn.execute(              # ← accessing private _db_conn
+            f"UPDATE users SET active=0 WHERE id={user_id}"
+        )
+```
+
+```python
+# ✅ LOOSE: use the public interface only:
+class UserService:
+    def __init__(self, repo: UserRepository):
+        self._repo = repo
+
+    def deactivate(self, user_id: int) -> None:
+        self._repo.deactivate(user_id)    # ← public method only
+```
+
+---
+
+## 2️⃣ Common Coupling — Shared Mutable State
+
+```python
+# 💀 TIGHT: global state shared by multiple modules:
+# globals.py
+DB_CONN   = None
+CACHE     = {}
+USER_COUNT = 0
+
+# service_a.py
+from globals import CACHE, USER_COUNT
+def process():
+    CACHE["key"] = "val"     # mutates shared state
+    USER_COUNT += 1          # 💥 UnboundLocalError — rebind, not mutate
+
+# service_b.py
+from globals import CACHE
+def lookup():
+    return CACHE.get("key")  # reads shared state — B depends on A's mutation order
+```
+
+```python
+# ✅ LOOSE: encapsulate state, pass as dependency:
+class Cache:
+    def __init__(self):
+        self._store: dict = {}
+
+    def get(self, key: str):
+        return self._store.get(key)
+
+    def set(self, key: str, value) -> None:
+        self._store[key] = value
+
+
+class ServiceA:
+    def __init__(self, cache: Cache):   # injected — not shared global
+        self._cache = cache
+
+class ServiceB:
+    def __init__(self, cache: Cache):   # same cache instance if needed
+        self._cache = cache             # but dependency is EXPLICIT
+```
+
+---
+
+## 3️⃣ Control Coupling — Telling HOW
+
+```python
+# 💀 TIGHT: A passes a flag telling B how to behave:
+class Formatter:
+    def format(self, data: dict, mode: str) -> str:
+        if mode == "json":
+            import json
+            return json.dumps(data)
+        elif mode == "xml":
+            return f"<root>{data}</root>"
+        elif mode == "csv":
+            return ",".join(str(v) for v in data.values())
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+# Caller controls Formatter's internal behavior via flag
+formatter = Formatter()
+formatter.format(data, "json")   # tells HOW to work — tight coupling
+```
+
+```python
+# ✅ LOOSE: Strategy pattern — inject the behavior:
+from abc import ABC, abstractmethod
+
+class FormatStrategy(ABC):
+    @abstractmethod
+    def format(self, data: dict) -> str: ...
+
+class JSONFormat(FormatStrategy):
+    def format(self, data: dict) -> str:
+        import json
+        return json.dumps(data)
+
+class XMLFormat(FormatStrategy):
+    def format(self, data: dict) -> str:
+        items = "".join(f"<{k}>{v}</{k}>" for k, v in data.items())
+        return f"<root>{items}</root>"
+
+class CSVFormat(FormatStrategy):
+    def format(self, data: dict) -> str:
+        return ",".join(str(v) for v in data.values())
+
+class Formatter:
+    def __init__(self, strategy: FormatStrategy):
+        self._strategy = strategy         # injected — caller decides format
+
+    def format(self, data: dict) -> str:
+        return self._strategy.format(data) # delegates — no flag needed
+
+f = Formatter(JSONFormat())
+f.format({"key": "val"})   # no mode flag — strategy determines behavior
+```
+
+---
+
+## 4️⃣ Dependency Injection — The Core Coupling Solution
+
+```python
+# 💀 TIGHT — hardwired dependencies:
+class OrderService:
+    def __init__(self):
+        self._db       = PostgresDB("localhost", 5432)   # concrete
+        self._cache    = RedisCache("localhost", 6379)   # concrete
+        self._mailer   = SMTPMailer("smtp.gmail.com")    # concrete
+        self._logger   = FileLogger("/var/log/app.log")  # concrete
+
+    def create_order(self, user_id: int, items: list) -> dict:
+        ...
+```
+
+```python
+# Problems:
+# 1. Cannot test without real Postgres, Redis, SMTP
+# 2. Changing DB requires modifying OrderService
+# 3. Cannot swap implementations
+# 4. Violates Dependency Inversion Principle
+```
+
+```python
+# ✅ LOOSE — inject abstractions:
+from typing import Protocol
+
+class Database(Protocol):
+    def query(self, sql: str, params: tuple) -> list: ...
+    def execute(self, sql: str, params: tuple) -> None: ...
+
+class Cache(Protocol):
+    def get(self, key: str) -> bytes | None: ...
+    def set(self, key: str, value: bytes, ttl: int = 0) -> None: ...
+
+class Mailer(Protocol):
+    def send(self, to: str, subject: str, body: str) -> None: ...
+
+class Logger(Protocol):
+    def info(self, msg: str) -> None: ...
+    def error(self, msg: str) -> None: ...
+
+
+class OrderService:
+    def __init__(
+        self,
+        db:     Database,        # abstraction — not Postgres
+        cache:  Cache,           # abstraction — not Redis
+        mailer: Mailer,          # abstraction — not SMTP
+        logger: Logger,          # abstraction — not FileLogger
+    ):
+        self._db     = db
+        self._cache  = cache
+        self._mailer = mailer
+        self._logger = logger
+
+    def create_order(self, user_id: int, items: list) -> dict:
+        self._logger.info(f"Creating order for user {user_id}")
+        order = {"user_id": user_id, "items": items}
+        self._db.execute("INSERT INTO orders ...", (user_id,))
+        self._cache.set(f"order:{user_id}", b"cached")
+        self._mailer.send("user@email.com", "Order Confirmed", "...")
+        return order
+```
+
+```python
+# Production:
+service = OrderService(
+    db     = PostgresDB("localhost", 5432),
+    cache  = RedisCache("localhost", 6379),
+    mailer = SMTPMailer("smtp.gmail.com"),
+    logger = StructuredLogger(),
+)
+
+# Testing — swap ALL dependencies easily:
+class FakeDB:
+    def query(self, sql, params): return []
+    def execute(self, sql, params): pass
+
+class FakeCache:
+    def get(self, key): return None
+    def set(self, key, value, ttl=0): pass
+
+class FakeMailer:
+    sent = []
+    def send(self, to, subject, body):
+        self.sent.append((to, subject, body))
+
+class FakeLogger:
+    def info(self, msg): pass
+    def error(self, msg): pass
+
+service = OrderService(FakeDB(), FakeCache(), FakeMailer(), FakeLogger())
+```
+
+---
+
+## 5️⃣ Law of Demeter — Don't Talk to Strangers
+
+```
+"Only talk to your immediate friends."
+An object should only call methods of:
+  ├── itself
+  ├── objects passed as arguments
+  ├── objects it created
+  └── its direct attributes
+
+NOT: objects returned BY those objects (the "train wreck")
+```
+
+```python
+# 💀 TIGHT — train wreck:
+class OrderProcessor:
+    def process(self, order):
+        # Reaches through multiple layers:
+        city = order.customer.address.city.upper()      # ← violation
+        tax  = order.customer.address.city.tax_rate()   # ← violation
+        fee  = order.customer.account.wallet.balance()  # ← violation
+
+# If Customer.address.city changes → OrderProcessor breaks
+# OrderProcessor knows about: Order, Customer, Address, City, Account, Wallet
+```
+
+```python
+# ✅ LOOSE — delegate to immediate object:
+class Customer:
+    def city_name(self) -> str:
+        return self.address.city.upper()          # Customer hides City
+
+    def tax_rate(self) -> float:
+        return self.address.city.tax_rate()       # Customer hides Address
+
+    def wallet_balance(self) -> float:
+        return self.account.wallet.balance()      # Customer hides Account
+
+
+class OrderProcessor:
+    def process(self, order):
+        # Only knows Order and Customer — not their internals:
+        city = order.customer.city_name()         # ✅ one hop
+        tax  = order.customer.tax_rate()          # ✅ one hop
+        fee  = order.customer.wallet_balance()    # ✅ one hop
+```
+
+---
+
+## 6️⃣ Event-Driven Decoupling — Observer Pattern
+
+```python
+from typing import Callable
+from collections import defaultdict
+
+class EventBus:
+    """
+    Components publish events.
+    Components subscribe to events.
+    Neither knows about each other.
+    """
+    def __init__(self):
+        self._handlers: dict[str, list[Callable]] = defaultdict(list)
+
+    def subscribe(self, event: str, handler: Callable) -> None:
+        self._handlers[event].append(handler)
+
+    def publish(self, event: str, **data) -> None:
+        for handler in self._handlers[event]:
+            handler(**data)
+
+
+# Components completely decoupled from each other:
+class OrderService:
+    def __init__(self, db, bus: EventBus):
+        self._db  = db
+        self._bus = bus
+
+    def create_order(self, user_id: int, items: list) -> dict:
+        order = {"id": 1, "user_id": user_id, "items": items}
+        self._db.save(order)
+        self._bus.publish("order.created", order=order)  # ← just event
+        return order
+        # OrderService knows NOTHING about email, inventory, analytics
+
+
+class EmailService:
+    def __init__(self, mailer, bus: EventBus):
+        bus.subscribe("order.created", self.on_order_created)
+
+    def on_order_created(self, order: dict) -> None:
+        print(f"Email: sending confirmation for order {order['id']}")
+
+
+class InventoryService:
+    def __init__(self, db, bus: EventBus):
+        bus.subscribe("order.created", self.on_order_created)
+
+    def on_order_created(self, order: dict) -> None:
+        print(f"Inventory: reserving items for order {order['id']}")
+
+
+class AnalyticsService:
+    def __init__(self, db, bus: EventBus):
+        bus.subscribe("order.created", self.on_order_created)
+
+    def on_order_created(self, order: dict) -> None:
+        print(f"Analytics: recording order event")
+```
+
+```python
+bus       = EventBus()
+orders    = OrderService(FakeDB(), bus)
+emails    = EmailService(FakeMailer(), bus)
+inventory = InventoryService(FakeDB(), bus)
+analytics = AnalyticsService(FakeDB(), bus)
+
+orders.create_order(1, ["widget", "gadget"])
+# Email: sending confirmation for order 1
+# Inventory: reserving items for order 1
+# Analytics: recording order event
+
+# Adding a new subscriber requires ZERO changes to OrderService
+```
+
+---
+
+## 7️⃣ Dependency Inversion Principle — High-Level Abstractions
+
+```
+DEPENDENCY INVERSION PRINCIPLE (DIP):
+  High-level modules should NOT depend on low-level modules.
+  Both should depend on ABSTRACTIONS.
+
+  Abstractions should NOT depend on details.
+  Details should depend on ABSTRACTIONS.
+
+┌─────────────────────────────────────────────────────────────┐
+│  WITHOUT DIP:                                               │
+│    OrderService → PostgresDB    (high depends on low)       │
+│                                                             │
+│  WITH DIP:                                                  │
+│    OrderService → Database (interface)  ← both depend       │
+│    PostgresDB   → Database (interface)    on abstraction    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+```python
+from typing import Protocol
+from abc import ABC, abstractmethod
+
+# ABSTRACTION (the dependency everyone points to):
+class NotificationSender(Protocol):
+    def send(self, recipient: str, message: str) -> bool: ...
+
+
+# LOW-LEVEL: depends on abstraction:
+class EmailSender:
+    def send(self, recipient: str, message: str) -> bool:
+        print(f"EMAIL → {recipient}: {message}")
+        return True
+
+class SMSSender:
+    def send(self, recipient: str, message: str) -> bool:
+        print(f"SMS → {recipient}: {message}")
+        return True
+
+class PushSender:
+    def send(self, recipient: str, message: str) -> bool:
+        print(f"PUSH → {recipient}: {message}")
+        return True
+
+
+# HIGH-LEVEL: depends on abstraction — not on Email/SMS/Push:
+class AlertService:
+    def __init__(self, sender: NotificationSender):
+        self._sender = sender
+
+    def alert(self, user_email: str, message: str) -> None:
+        sent = self._sender.send(user_email, message)
+        if not sent:
+            raise RuntimeError(f"Failed to send alert to {user_email}")
+```
+
+---
+
+## 8️⃣ Coupling Metrics — How to Measure
+
+```python
+# AFFERENT COUPLING (Ca): how many classes USE this class
+# EFFERENT COUPLING (Ce): how many classes this class USES
+# INSTABILITY: I = Ce / (Ca + Ce) → 0=stable, 1=unstable
+
+# Example:
+class Utils:           # low Ce (uses few), high Ca (used by many)
+    pass               # stable — should be abstract/stable
+
+class Controller:      # high Ce (uses many), low Ca (used by few)
+    pass               # unstable — should be concrete/changeable
+
+# Rule: stable classes should be abstract (ABCs/Protocols)
+#       unstable classes should be concrete (implementations)
+```
+
+---
+
+## 🔬 Circular Import = Circular Coupling
+
+```python
+# SYMPTOM of tight coupling — circular imports:
+
+# user_service.py
+from order_service import OrderService    # A imports B
+
+# order_service.py
+from user_service import UserService      # B imports A → circular!
+
+# ImportError: cannot import name 'UserService'
+# from partially initialized module 'user_service'
+```
+
+```python
+# FIX 1 — introduce abstraction layer:
+# interfaces.py — no dependencies
+class UserRepository(Protocol):
+    def find(self, id: int): ...
+
+class OrderRepository(Protocol):
+    def find(self, id: int): ...
+
+# user_service.py — depends on interfaces, not order_service
+from interfaces import OrderRepository
+
+# order_service.py — depends on interfaces, not user_service
+from interfaces import UserRepository
+
+# FIX 2 — late import inside method:
+class UserService:
+    def get_orders(self, user_id: int):
+        from order_service import OrderService   # imported at call time
+        return OrderService().find_by_user(user_id)
+
+# FIX 3 — TYPE_CHECKING guard:
+from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from order_service import OrderService   # type hints only — not runtime
+
+def process(self, order: "OrderService") -> None: ...
+```
+
+---
+
+## 🔬 DSA Connection
+
+```python
+# Loosely coupled graph — algorithm separate from structure:
+from typing import Protocol, Iterator
+
+class GraphProtocol(Protocol):
+    def neighbors(self, node: int) -> Iterator[int]: ...
+
+# Algorithm depends only on Protocol — not on any concrete graph:
+def dijkstra(graph: GraphProtocol, start: int,
+             end: int) -> list[int]:
+    import heapq
+    dist  = {start: 0}
+    prev  = {}
+    heap  = [(0, start)]
+
+    while heap:
+        d, u = heapq.heappop(heap)
+        if u == end:
+            break
+        for v in graph.neighbors(u):
+            nd = d + 1
+            if v not in dist or nd < dist[v]:
+                dist[v] = nd
+                prev[v] = u
+                heapq.heappush(heap, (nd, v))
+
+    path, node = [], end
+    while node in prev:
+        path.append(node)
+        node = prev[node]
+    path.append(start)
+    return path[::-1]
+
+
+# Any graph implementation works:
+class AdjList:
+    def __init__(self, edges):
+        from collections import defaultdict
+        self._g = defaultdict(list)
+        for u, v in edges:
+            self._g[u].append(v)
+            self._g[v].append(u)
+
+    def neighbors(self, node):
+        return iter(self._g[node])
+
+
+class MatrixGraph:
+    def __init__(self, m):
+        self._m = m
+
+    def neighbors(self, node):
+        return (j for j, v in enumerate(self._m[node]) if v)
+
+
+# dijkstra works with BOTH — loosely coupled:
+g1 = AdjList([(0,1),(1,2),(2,3)])
+g2 = MatrixGraph([[0,1,0,0],[1,0,1,0],[0,1,0,1],[0,0,1,0]])
+dijkstra(g1, 0, 3)   # [0, 1, 2, 3]
+dijkstra(g2, 0, 3)   # [0, 1, 2, 3]
+```
+
+---
+
+## 💀 Interview Trap 1 — `import` Inside Class Creates Hidden Coupling
+
+```python
+class ReportGenerator:
+    def generate(self, data):
+        import pandas as pd           # ← hidden dependency
+        import matplotlib.pyplot as plt  # ← hidden dependency
+
+        df = pd.DataFrame(data)
+        plt.plot(df)
+        plt.savefig("report.png")
+
+# Problems:
+# 1. Cannot test without pandas + matplotlib installed
+# 2. Coupling hidden inside method body
+# 3. No way to inject alternatives
+# 4. Slower — imports happen on every call (if not cached)
+
+# Fix — inject as dependency:
+class ReportGenerator:
+    def __init__(self, dataframe_lib, plot_lib):
+        self._pd  = dataframe_lib
+        self._plt = plot_lib
+
+    def generate(self, data):
+        df = self._pd.DataFrame(data)
+        self._plt.plot(df)
+```
+
+---
+
+## 💀 Interview Trap 2 — `isinstance` Check = Coupling to Concrete Type
+
+```python
+class Processor:
+    def process(self, data):
+        if isinstance(data, list):       # ← coupled to list specifically
+            return [x*2 for x in data]
+        elif isinstance(data, dict):     # ← coupled to dict
+            return {k: v*2 for k,v in data.items()}
+        elif isinstance(data, tuple):    # ← coupled to tuple
+            return tuple(x*2 for x in data)
+        # What about numpy arrays? custom containers? generators?
+        raise TypeError(f"Unknown type: {type(data)}")
+
+# Every new type requires modifying Processor
+```
+
+```python
+# ✅ LOOSE — duck typing or Protocol:
+from collections.abc import Mapping, Sequence
+
+def process(data):
+    if isinstance(data, Mapping):     # works for dict, OrderedDict, etc.
+        return {k: v*2 for k,v in data.items()}
+    elif isinstance(data, Sequence):  # works for list, tuple, etc.
+        return type(data)(x*2 for x in data)
+    raise TypeError(f"Cannot process {type(data)}")
+
+# Even better — Protocol:
+class Scalable(Protocol):
+    def scale(self, factor: float): ...
+
+def process(data: Scalable, factor: float = 2):
+    return data.scale(factor)    # works with any object that has scale()
+```
+
+---
+
+## 💀 Interview Trap 3 — Hardcoded String Keys = Hidden Coupling
+
+```python
+# 💀 Event names as raw strings — fragile coupling:
+bus.publish("ordr.cretd", order=order)     # typo!
+bus.subscribe("order.created", handler)    # never receives events
+
+# Bus doesn't know — no error, silent failure
+```
+
+```python
+# ✅ Fix — typed event constants or enum:
+from enum import auto, StrEnum
+
+class Events(StrEnum):
+    ORDER_CREATED  = "order.created"
+    ORDER_SHIPPED  = "order.shipped"
+    USER_REGISTERED = "user.registered"
+
+bus.publish(Events.ORDER_CREATED, order=order)   # type-checked
+bus.subscribe(Events.ORDER_CREATED, handler)     # same constant
+
+# Typo now: Events.ORDR_CRETD → AttributeError immediately
+```
+
+---
+
+## 💀 Interview Trap 4 — `super()` Coupling in Mixin Order
+
+```python
+class LogMixin:
+    def save(self):
+        print("LogMixin: logging")
+        super().save()             # assumes something below has save()
+
+class Base:
+    def save(self):
+        print("Base: saving")
+
+class Model(LogMixin, Base):       # ✅ works — Base has save()
+    pass
+
+class Broken(LogMixin):            # 💥 LogMixin.super().save() → object.save()
+    pass                           # AttributeError: 'object' has no 'save'
+
+Broken().save()  # AttributeError
+
+# Mixin assumes MRO provides save() — coupling to class hierarchy order
+# Fix — check or provide default:
+class SafeLogMixin:
+    def save(self):
+        print("SafeLogMixin: logging")
+        if hasattr(super(), 'save'):
+            super().save()
+```
+
+---

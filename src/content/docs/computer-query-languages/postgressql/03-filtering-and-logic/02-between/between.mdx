@@ -1,0 +1,485 @@
+---
+title: PostgreSQL BETWEEN Operator
+slug: computer-query-languages/postgresql/filtering-and-logic/between
+description: Master the BETWEEN operator in PostgreSQL — inclusive ranges, timestamp traps, index optimization, NULL handling, and production-safe patterns.
+sidebar:
+  label: "BETWEEN"
+  badge:
+    text: Filtering
+    variant: tip
+tags: [postgresql, between, range-queries, timestamps, indexing, interview, performance]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 BETWEEN — Complete Guide
+
+> **`BETWEEN` is inclusive shorthand for `>= AND <=` — clean to write, but hides critical edge cases around inclusivity, timestamps, and indexes that silently return wrong data in production.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `BETWEEN low AND high` as a mathematical closed interval `[low, high]`. Both boundaries are **always included**. It's purely syntactic sugar — PostgreSQL rewrites it to `>= AND <=` before optimization.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Architecture
+
+```
+FROM      ← Load tables into memory.
+WHERE     ← BETWEEN lives here ✅
+GROUP BY
+HAVING    ← BETWEEN works here too ✅
+SELECT
+ORDER BY
+```
+
+```
+[SQL Parser] → Translates `col BETWEEN a AND b` → `col >= a AND col <= b`
+        ↓
+[Query Planner] → Recognizes as RANGE condition
+        ↓
+[Executor] → Uses B-Tree Index Range Scan (if indexed)
+        ↓
+[Output] → Rows where a ≤ col ≤ b
+```
+
+<Aside type="note">
+**Key Insight**: `BETWEEN` is **pure syntactic sugar**. PostgreSQL optimizes it identically to `>= AND <=`. The planner never sees `BETWEEN` — it only sees the rewritten range condition.
+</Aside>
+
+---
+
+## 1️⃣ Basic Syntax
+
+<Code lang="sql" title="BETWEEN is shorthand for >= AND <=" code={`-- BETWEEN low AND high
+-- Exactly equivalent to: col >= low AND col <= high
+
+SELECT * FROM orders
+WHERE  amount BETWEEN 500 AND 5000;
+
+-- Identical to:
+-- WHERE  amount >= 500 AND amount <= 5000
+
+-- Numbers
+SELECT * FROM products WHERE price BETWEEN 999 AND 49999;
+
+-- Dates
+SELECT * FROM orders  WHERE created_at BETWEEN '2024-01-01' AND '2024-12-31';
+
+-- Text (alphabetical range)
+SELECT * FROM users   WHERE name BETWEEN 'A' AND 'M';
+
+-- NOT BETWEEN
+SELECT * FROM orders  WHERE amount NOT BETWEEN 500 AND 5000;
+-- Equivalent to: amount < 500 OR amount > 5000`} />
+
+---
+
+## 2️⃣ Inclusivity — The Defining Rule
+
+```text
+BETWEEN is ALWAYS inclusive on BOTH ends.
+No exceptions. No configuration.
+
+col BETWEEN low AND high
+=  col >= low
+   AND
+   col <= high
+   ↑              ↑
+ inclusive      inclusive
+```
+
+<Code lang="sql" title="Proof of inclusivity" code={`-- Both boundary values ARE included
+SELECT * FROM orders WHERE amount BETWEEN 100 AND 500;
+-- Returns rows where amount = 100 ✅
+-- Returns rows where amount = 500 ✅
+-- Returns rows where amount = 300 ✅
+
+-- Direct boolean test
+SELECT 100 BETWEEN 100 AND 500;   -- true  ✅ (lower bound included)
+SELECT 500 BETWEEN 100 AND 500;   -- true  ✅ (upper bound included)
+SELECT 501 BETWEEN 100 AND 500;   -- false
+SELECT  99 BETWEEN 100 AND 500;   -- false`} />
+
+<Aside type="caution">
+**🎯 Interview Trap**: *"Is BETWEEN inclusive or exclusive?"*  
+**A:** Always inclusive on **both** ends. `BETWEEN 1 AND 10` includes 1 and 10. This differs from Python's `range(1, 10)` which excludes 10. Many developers introduce off-by-one bugs by assuming exclusive upper bounds.
+</Aside>
+
+---
+
+## 3️⃣ The Timestamp Trap — Most Common Production Bug
+
+<Code lang="sql" title="❌ The bug: missing last-day data" code={`-- Find all orders in January 2024
+SELECT * FROM orders
+WHERE  created_at BETWEEN '2024-01-01' AND '2024-01-31';
+
+-- Looks correct. Is WRONG. 💀
+
+-- Why?
+-- '2024-01-31' is interpreted as '2024-01-31 00:00:00.000000'
+-- Orders placed on Jan 31 at ANY time after midnight are MISSED:
+--   2024-01-31 09:00:00  → NOT included ❌
+--   2024-01-31 23:59:59  → NOT included ❌`} />
+
+```
+Timeline visualization:
+
+Jan 1                              Jan 31
+00:00:00                           00:00:00     23:59:59
+   │                                  │              │
+   ├──────── BETWEEN covers ──────────┤              │
+                                                     ↑
+                                            These orders MISSED 💀
+```
+
+<Aside type="danger">
+**🚨 Production Rule**: Never use `BETWEEN` for `TIMESTAMP` or `TIMESTAMPTZ` ranges. The implicit `00:00:00` truncation silently drops an entire day's data. Financial reports show wrong totals. Analytics miss last-day metrics.
+</Aside>
+
+### ✅ The Fix — Exclusive Upper Bound
+
+<Code lang="sql" title="Correct pattern for time ranges" code={`-- ✅ Correct pattern for date ranges
+SELECT * FROM orders
+WHERE  created_at >= '2024-01-01'
+  AND  created_at <  '2024-02-01';   -- exclusive upper bound
+--                    ↑
+--             next month's start = this month's clean end
+
+-- Covers:
+--   2024-01-01 00:00:00 ✅
+--   2024-01-31 09:00:00 ✅
+--   2024-01-31 23:59:59 ✅
+--   2024-02-01 00:00:00 ❌ (excluded by <)
+
+-- Postgres makes this clean with DATE_TRUNC + INTERVAL:
+WHERE created_at >= DATE_TRUNC('month', NOW())
+  AND created_at <  DATE_TRUNC('month', NOW()) + INTERVAL '1 month'
+-- Perfect — always current month, no hardcoding ✅`} />
+
+```text
+Golden pattern for any time period:
+
+Day:    >= 'YYYY-MM-DD'        AND < 'YYYY-MM-DD' + 1 day
+Month:  >= 'YYYY-MM-01'        AND < 'YYYY-(MM+1)-01'
+Year:   >= 'YYYY-01-01'        AND < 'YYYY+1-01-01'
+```
+
+---
+
+## 4️⃣ BETWEEN with Different Data Types
+
+<Tabs>
+  <TabItem label="Integers" icon="hash">
+    ```sql
+    -- Clean, no hidden edge cases
+    SELECT * FROM products WHERE stock BETWEEN 1 AND 100;
+    SELECT * FROM employees WHERE age  BETWEEN 25 AND 35;
+    SELECT * FROM scores    WHERE grade BETWEEN 80 AND 100;
+    -- Both ends included, integers have no sub-values ✅
+    ```
+  </TabItem>
+  
+  <TabItem label="Decimals / NUMERIC" icon="decimal">
+    ```sql
+    -- BETWEEN 1.0 AND 5.0
+    SELECT * FROM products WHERE rating BETWEEN 1.0 AND 5.0;
+    -- Includes 1.0 ✅ and 5.0 ✅ and 3.14159 ✅
+    
+    -- ⚠️ Edge case: floating point precision
+    SELECT 0.1 + 0.2 BETWEEN 0.3 AND 0.3;
+    -- false 💀 (0.1 + 0.2 = 0.30000000000000004)
+    
+    -- ✅ Use NUMERIC for exact decimal comparisons
+    SELECT (0.1::NUMERIC + 0.2::NUMERIC) BETWEEN 0.3 AND 0.3;
+    -- true ✅
+    ```
+  </TabItem>
+
+  <TabItem label="Dates (DATE type)" icon="calendar">
+    ```sql
+    -- DATE type has no time component → BETWEEN is safe
+    SELECT * FROM events
+    WHERE  event_date BETWEEN '2024-01-01' AND '2024-01-31';
+    -- Includes Jan 1 ✅ and Jan 31 ✅
+    -- No time component to worry about ✅
+    -- TIMESTAMP / TIMESTAMPTZ → NEVER use BETWEEN
+    ```
+  </TabItem>
+
+  <TabItem label="Text" icon="type">
+    ```sql
+    -- Alphabetical ordering (by collation)
+    SELECT * FROM users WHERE last_name BETWEEN 'A' AND 'D';
+    -- Includes: Adams ✅, Brown ✅, Cole ✅, Davis ✅
+    -- Includes: 'D' itself ✅
+    -- Excludes: Evans ❌ (E > D)
+    
+    -- ⚠️ Careful: case sensitivity & collation
+    SELECT 'apple' BETWEEN 'A' AND 'Z';   -- depends on collation
+    -- In default Postgres: lowercase > uppercase
+    -- 'apple' > 'Z' in ASCII ordering → false!
+    
+    SELECT 'Apple' BETWEEN 'A' AND 'Z';   -- true ✅ (uppercase A)
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="tip">
+**Real-Life SDE**: Text `BETWEEN` is rarely used in practice. If you need alphabetical filtering, explicit `>=` and `<` with proper collation is clearer and safer. Stick to `BETWEEN` for numbers and `DATE` types.
+</Aside>
+
+---
+
+## 5️⃣ Internals — Index Usage & Range Scans
+
+<Code lang="sql" title="BETWEEN is rewritten before planning" code={`-- Index on amount
+CREATE INDEX idx_orders_amount ON orders(amount);
+
+EXPLAIN SELECT * FROM orders WHERE amount BETWEEN 500 AND 5000;
+
+-- Output:
+-- Index Scan using idx_orders_amount on orders
+--   Index Cond: ((amount >= 500) AND (amount <= 5000))
+-- ↑ Postgres already rewrote BETWEEN to >= AND <=
+-- Range scan on B-Tree: finds 500, scans forward to 5000 ✅`} />
+
+```
+B-Tree range scan visualization:
+
+Index (sorted):
+  ...│ 450 │ 490 │ 500 │ 550 │ 800 │ 2000 │ 5000 │ 5001 │...
+              ↑                                  ↑
+           find 500                         stop at 5000
+           (binary search)                  (scan forward)
+
+Cost: O(log n) to find start + O(k) to scan matching range
+      where k = number of rows in range
+```
+
+<Aside type="note">
+**🎯 DSA Connection**: `BETWEEN` on an indexed column = binary search to find lower bound + forward linear scan. Exactly like `lower_bound()` in C++ or `Collections.binarySearch()` in Java. Complexity: **O(log n + k)**, where `k` = rows in range.
+</Aside>
+
+---
+
+## 6️⃣ BETWEEN vs `>= AND <=` — When to Use Which
+
+| Feature | `BETWEEN` | `>= AND <=` |
+|---------|-----------|-------------|
+| Syntax | Cleaner to write | More explicit |
+| Boundary Control | Both ends inclusive | Mix: `>= low AND < high` |
+| Timestamp Safety | ❌ Dangerous | ✅ Correct |
+| Query Plan | Identical (rewritten) | Identical |
+| Best For | Integers, `DATE`, safe ranges | Timestamps, mixed boundaries |
+
+**Rule**: 
+- Integers / simple numbers → `BETWEEN` is fine ✅
+- Timestamps / `TIMESTAMPTZ` → always `>= AND <` ✅
+- When in doubt → `>= AND <=` ✅ (explicit is better)
+
+---
+
+## 7️⃣ BETWEEN with NULL — The Familiar Trap
+
+<Code lang="sql" title="NULL propagation in ranges" code={`-- NULL in column
+SELECT NULL BETWEEN 1 AND 10;    -- NULL (not false, not true)
+-- Row excluded (same three-value logic as always)
+
+-- NULL as boundary
+SELECT 5 BETWEEN NULL AND 10;    -- NULL → row excluded
+SELECT 5 BETWEEN 1 AND NULL;     -- NULL → row excluded
+
+-- Practical impact
+CREATE TEMP TABLE scores (val INTEGER);
+INSERT INTO scores VALUES (5), (10), (NULL), (15);
+
+SELECT * FROM scores WHERE val BETWEEN 1 AND 20;
+-- Returns: 5, 10, 15
+-- NULL excluded silently ✅ (expected behavior here)`} />
+
+---
+
+## 8️⃣ NOT BETWEEN
+
+<Code lang="sql" title="Excluding ranges" code={`-- Exclude a range
+SELECT * FROM products
+WHERE  price NOT BETWEEN 1000 AND 5000;
+-- = price < 1000 OR price > 5000
+
+-- Useful for outlier detection
+SELECT * FROM transactions
+WHERE  amount NOT BETWEEN -10000 AND 10000;
+-- Flags suspiciously large transactions
+
+-- Age targeting
+SELECT * FROM users
+WHERE  age NOT BETWEEN 13 AND 17;  -- exclude minors from a feature`} />
+
+<Aside type="caution">
+**NOT BETWEEN & NULL**: Same NULL behavior. `NULL NOT BETWEEN 1 AND 10 = NULL` → row excluded. If you need to include NULLs: `WHERE val NOT BETWEEN 1 AND 10 OR val IS NULL`.
+</Aside>
+
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: E-commerce Price Filter" icon="search">
+    ```sql
+    -- User selects ₹1000 – ₹50000 in filter
+    SELECT id, name, price, category
+    FROM   products
+    WHERE  price BETWEEN :min_price AND :max_price   -- integers, safe ✅
+      AND  is_listed = true
+      AND  stock > 0
+    ORDER BY price ASC;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Monthly Report (Safe)" icon="chart">
+    ```sql
+    -- Revenue report for a given month
+    -- :report_month = '2024-03-01'
+    SELECT
+      DATE_TRUNC('day', created_at) AS day,
+      COUNT(*)                       AS orders,
+      SUM(amount)                    AS revenue
+    FROM orders
+    WHERE created_at >= DATE_TRUNC('month', :report_month::TIMESTAMPTZ)
+      AND created_at <  DATE_TRUNC('month', :report_month::TIMESTAMPTZ)
+                        + INTERVAL '1 month'        -- ✅ no BETWEEN
+    GROUP BY 1 ORDER BY 1;
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Age Group Segmentation" icon="users">
+    ```sql
+    SELECT
+      CASE
+        WHEN age BETWEEN 13 AND 17 THEN 'teen'
+        WHEN age BETWEEN 18 AND 24 THEN 'young_adult'
+        WHEN age BETWEEN 25 AND 34 THEN 'adult'
+        WHEN age BETWEEN 35 AND 54 THEN 'middle_age'
+        ELSE                             'senior'
+      END           AS segment,
+      COUNT(*)      AS user_count
+    FROM users
+    WHERE age IS NOT NULL
+    GROUP BY segment
+    ORDER BY MIN(age);
+    ```
+  </Card>
+
+  <Card title="Pattern 4: Salary Band Join" icon="briefcase">
+    ```sql
+    -- Employees in a pay grade
+    SELECT e.name, e.salary, pg.band_name
+    FROM   employees e
+    JOIN   pay_grades pg
+      ON   e.salary BETWEEN pg.min_salary AND pg.max_salary
+    -- BETWEEN in JOIN condition — perfectly valid ✅
+    ORDER BY e.salary DESC;
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Sliding Window (Last N Days)" icon="clock">
+    ```sql
+    -- Orders in last 30 days (dynamic)
+    SELECT COUNT(*), SUM(amount)
+    FROM   orders
+    WHERE  created_at >= NOW() - INTERVAL '30 days'
+      AND  created_at <  NOW();
+    -- ✅ Use >= AND < not BETWEEN for timestamps
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Cursor Pagination by ID" icon="page">
+    ```sql
+    -- Efficient batch processing using ID ranges
+    SELECT id, user_id, amount, status
+    FROM   orders
+    WHERE  id BETWEEN :start_id AND :end_id
+    ORDER BY id ASC;
+    
+    -- Batch 1: BETWEEN 1     AND 10000
+    -- Batch 2: BETWEEN 10001 AND 20000
+    -- No OFFSET cost, constant speed ✅
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Behavior Yourself
+
+<Code lang="sql" title="Run these in psql" code={`-- 1. Inclusivity test
+SELECT 1 BETWEEN 1 AND 10;     -- true  (lower included)
+SELECT 10 BETWEEN 1 AND 10;    -- true  (upper included)
+SELECT 11 BETWEEN 1 AND 10;    -- false
+
+-- 2. Timestamp trap — see what '2024-01-31' means
+SELECT '2024-01-31'::TIMESTAMPTZ;
+-- 2024-01-31 00:00:00+00  ← midnight only!
+
+-- 3. BETWEEN rewrite — planner sees >= AND <=
+EXPLAIN SELECT * FROM generate_series(1,100) n
+WHERE n BETWEEN 40 AND 60;
+-- Filter: ((n >= 40) AND (n <= 60))  ← BETWEEN is gone ✅
+
+-- 4. NULL behavior
+SELECT NULL BETWEEN 1 AND 10;  -- NULL
+SELECT 5 BETWEEN NULL AND 10;  -- NULL`} />
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| Is BETWEEN inclusive? | Yes — both ends always included (`>= AND <=`) |
+| `BETWEEN '2024-01-01' AND '2024-01-31'` for timestamps? | Wrong — misses Jan 31 after midnight. Use `>= AND <` |
+| How does Postgres execute BETWEEN? | Rewrites to `>= AND <=` at parse time. Identical plan. |
+| BETWEEN on indexed column? | B-Tree range scan — binary search to start + forward scan |
+| `NULL BETWEEN 1 AND 10`? | NULL → row excluded (three-value logic) |
+| BETWEEN vs `>= AND <=`? | Same plan. BETWEEN cleaner for integers, dangerous for timestamps |
+| NOT BETWEEN equivalent? | `col < low OR col > high` |
+| BETWEEN in JOIN condition? | Valid — useful for range-based joins (salary bands, IP ranges) |
+| BETWEEN for text? | Works alphabetically but collation-sensitive. Rarely used. |
+| Safe data types for BETWEEN? | INTEGER, DATE, NUMERIC. Avoid TIMESTAMP/TIMESTAMPTZ. |
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+BETWEEN low AND high
+
+      low                    high
+       │                      │
+───────●──────────────────────●───────
+       ↑                      ↑
+   included                included
+   (>=)                     (<=)
+
+For INTEGERS:   Safe ✅
+For DATES:      Safe ✅ (no time component)
+For TIMESTAMPS: DANGER ❌ upper bound = midnight only
+                Use >= start AND < next_period instead
+
+Parser rewrites immediately:
+BETWEEN → (>= low AND <= high)
+Planner never sees BETWEEN
+Execution: B-Tree range scan when indexed
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use `BETWEEN` for integers and `DATE` columns — it's clean and safe
+2. ✅ Replace all `TIMESTAMP BETWEEN` with `>= start AND < exclusive_end`
+3. ✅ Verify index usage with `EXPLAIN (ANALYZE, BUFFERS)`
+4. ✅ Remember: `NOT BETWEEN` excludes boundaries AND `NULL` rows
+5. ✅ Use cursor pagination (`BETWEEN id_start AND id_end`) instead of `OFFSET`
+
+Mastering range operators turns silent data bugs into predictable, production-safe queries. 🐘✨
+</Aside>

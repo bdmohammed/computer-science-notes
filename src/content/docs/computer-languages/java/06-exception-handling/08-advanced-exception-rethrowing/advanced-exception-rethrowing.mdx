@@ -1,0 +1,586 @@
+---
+title: Java Advanced Exception Rethrowing
+slug: computer-languages/java/exception-handling/advanced-rethrowing
+description: Master Java's exception rethrowing techniques, including cause chaining, multi-catch precision, and pitfalls to avoid for clean error propagation.
+sidebar:
+  label: "Advanced Rethrowing"
+  badge:
+    text: Best Practices
+    variant: tip
+tags: [java, exception-handling, rethrowing, cause-chaining, multi-catch, interview]
+---
+
+## 🔄 Rethrowing an Exception
+
+---
+
+### 🧠 What It Is
+
+Rethrowing is **catching an exception and throwing it again** — either the same object or a new one. It is the mechanism that allows intermediate layers to add context, log, measure, or transform exceptions while keeping the failure propagating upward. Done wrong: root cause lost, misleading traces, silent swallowing. Done right: clean layered architecture with full diagnostic chain.
+
+---
+
+### 🔬 Four Forms of Rethrowing
+
+```
+Rethrow
+├── 1. Rethrow same object         → throw e
+├── 2. Wrap in new exception       → throw new X("context", e)
+├── 3. Rethrow as different type   → throw new X("msg")  ← loses cause
+└── 4. Precise rethrow (Java 7+)   → multi-catch + throw e
+```
+
+---
+
+### 🔬 Form 1 — Rethrow Same Object
+
+```java
+try {
+    dbCall();
+} catch (SQLException e) {
+    metrics.increment("db.errors");     // side effect — then rethrow
+    log.warn("DB error observed", e);
+    throw e;                            // ✅ same object — original trace preserved
+}
+```
+
+```
+Stack trace after rethrow same object:
+  SQLException: connection refused
+      at dbCall(Repo.java:45)          ← original throw site
+      at process(Service.java:20)
+      at caller(Controller.java:10)
+
+Stack trace NOT updated — points to original throw site.
+Rethrow site invisible in trace.
+```
+
+---
+
+### 🔬 Form 2 — Wrap in New Exception (Correct Pattern)
+
+```java
+try {
+    dbCall();
+} catch (SQLException e) {
+    throw new RepositoryException("Failed to load user: " + userId, e);
+    //                                                               ↑
+    //                                                         cause chained
+}
+```
+
+```
+Stack trace after wrapping:
+  RepositoryException: Failed to load user: u-99
+      at UserRepository.findById(UserRepository.java:34)  ← wrap site
+      at UserService.getUser(UserService.java:20)
+      at UserController.handle(UserController.java:10)
+  Caused by: SQLException: connection refused
+      at dbCall(Repo.java:45)                              ← original throw site
+      at UserRepository.findById(UserRepository.java:32)
+
+Two traces: wrapper shows propagation path, cause shows root.
+Both preserved — full diagnostic chain.
+```
+
+---
+
+### 🔬 Form 3 — Rethrow as Different Type WITHOUT Cause (Wrong)
+
+```java
+// ❌ Anti-pattern — cause not chained
+try {
+    dbCall();
+} catch (SQLException e) {
+    throw new RuntimeException("db failed");    // e not passed — GONE
+}
+```
+
+```
+Stack trace:
+  RuntimeException: db failed
+      at process(Service.java:22)   ← only shows wrap site
+
+  Caused by: NOTHING — e was lost
+  SQLState, error code, original message: all gone
+  DBA cannot diagnose — no SQL error info
+```
+
+---
+
+### 🔬 Form 4 — Precise Rethrow (Java 7+)
+
+```java
+// Precise rethrow: multi-catch + throw e
+// Compiler tracks exact types — throws declaration stays narrow
+
+void process() throws IOException, SQLException {   // precise — not throws Exception
+    try {
+        riskyOp();                                  // throws IOException or SQLException
+    } catch (IOException | SQLException e) {
+        log.error("operation failed", e);
+        throw e;                                    // ✅ compiler knows e ∈ {IOException, SQLException}
+                                                    // throws declaration satisfies both
+    }
+}
+
+// Without multi-catch (pre-Java 7):
+void process() throws Exception {                   // forced broad — loses precision
+    try {
+        riskyOp();
+    } catch (Exception e) {
+        log.error("operation failed", e);
+        throw e;                                    // compiler sees Exception — broad
+    }
+}
+```
+
+---
+
+### 🔬 `fillInStackTrace()` — Rethrow With New Trace
+
+```java
+try {
+    riskyOp();
+} catch (RuntimeException e) {
+    // Option A: throw e — original trace preserved
+    throw e;
+
+    // Option B: e.fillInStackTrace() — UPDATES trace to current location
+    throw (RuntimeException) e.fillInStackTrace();
+    // Now trace points HERE — not to original throw site
+    // Original trace: GONE
+    // Use only when you intentionally want to hide original location
+}
+```
+
+```
+fillInStackTrace() use cases:
+  ✅ Wrapping exception in same type — want trace to show wrapper site
+  ✅ Re-raising stored exception — original trace would be misleading
+  ❌ Normal rethrow — always use throw e (preserve original)
+```
+
+---
+
+### 🔬 Stack Trace Behavior — All Forms Compared
+
+```java
+void original() {
+    throw new RuntimeException("root");        // line 5
+}
+
+void rethrower() {
+    try {
+        original();
+    } catch (RuntimeException e) {
+
+        // Form 1: throw e
+        throw e;
+        // Trace: RuntimeException: root
+        //   at original():5     ← points here
+        //   at rethrower():10
+        //   at caller():20
+
+        // Form 2: throw new X(msg, e)
+        throw new ServiceException("wrapped", e);
+        // Trace: ServiceException: wrapped
+        //   at rethrower():14   ← points here (wrap site)
+        // Caused by: RuntimeException: root
+        //   at original():5
+
+        // Form 3: throw new X(msg) — no cause
+        throw new ServiceException("wrapped");
+        // Trace: ServiceException: wrapped
+        //   at rethrower():18
+        // (no Caused by — root cause GONE)
+
+        // Form 4: throw (RuntimeException) e.fillInStackTrace()
+        throw (RuntimeException) e.fillInStackTrace();
+        // Trace: RuntimeException: root
+        //   at rethrower():22   ← points HERE not original
+        //   at caller():20
+        // Original trace: GONE
+    }
+}
+```
+
+---
+
+### 🔬 Rethrowing Checked as Unchecked — Escape Hatch
+
+```java
+// Pattern: wrap checked in unchecked to escape checked constraint
+// Common for: streams, lambdas, APIs that don't declare checked
+
+// JDK-provided wrappers:
+catch (IOException e) {
+    throw new UncheckedIOException(e);          // JDK built-in — preserves cause
+}
+
+// Custom wrapper:
+catch (SQLException e) {
+    throw new DataAccessException("DB failed", e);   // RuntimeException subclass
+}
+
+// Generic escape — avoid in production code
+catch (Exception e) {
+    throw new RuntimeException(e);              // cause preserved but type lost
+}
+
+// Sneaky throw — bypasses checked system entirely
+@SuppressWarnings("unchecked")
+static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+    throw (T) t;                                // throws checked without declaring
+}
+catch (IOException e) {
+    sneakyThrow(e);                             // IOException propagates undeclared
+}
+```
+
+---
+
+### 🔬 Rethrowing in Layered Architecture
+
+```java
+// Layer pattern: each layer catches, transforms, rethrows
+// Infrastructure → Repository → Service → Controller
+
+// Infrastructure (JDBC)
+class JdbcUserDao {
+    User findById(long id) throws SQLException {
+        // raw SQLException from JDBC driver
+    }
+}
+
+// Repository — transforms infrastructure to domain
+class UserRepository {
+    User findById(long id) {                        // no throws — unchecked
+        try {
+            return dao.findById(id);
+        } catch (SQLIntegrityConstraintViolationException e) {
+            throw new UserNotFoundException(id, e); // specific domain exception
+        } catch (SQLException e) {
+            throw new DataAccessException(          // general data exception
+                "Failed to load user: " + id, e    // cause chained ✅
+            );
+        }
+    }
+}
+
+// Service — transforms domain to service-level
+class UserService {
+    UserDTO getUser(long id) {
+        try {
+            return toDTO(repository.findById(id));
+        } catch (UserNotFoundException e) {
+            throw new ResourceNotFoundException(    // HTTP-mappable exception
+                "user", id, e                       // cause chained ✅
+            );
+        } catch (DataAccessException e) {
+            log.error("Repository failure for user {}", id, e);
+            throw new ServiceUnavailableException(  // transient failure
+                "User service temporarily unavailable", e  // cause chained ✅
+            );
+        }
+    }
+}
+
+// Controller — maps to HTTP, no further rethrowing
+class UserController {
+    Response getUser(long id) {
+        try {
+            return Response.ok(service.getUser(id)).build();
+        } catch (ResourceNotFoundException e) {
+            return Response.status(404).entity(e.getMessage()).build();
+        } catch (ServiceUnavailableException e) {
+            return Response.status(503).entity("retry later").build();
+        }
+    }
+}
+```
+
+```
+Exception transformation chain:
+  SQLException (JDBC)
+       ↓ caught + wrapped (cause chained)
+  DataAccessException (domain infrastructure)
+       ↓ caught + wrapped (cause chained)
+  ServiceUnavailableException (service layer)
+       ↓ caught + mapped
+  HTTP 503 response
+
+Root cause (SQLException) always reachable via:
+  e.getCause().getCause()
+Full chain preserved for logging + debugging.
+```
+
+---
+
+### 💻 Real-World Code — Retry with Rethrow
+
+```java
+public class RetryingGateway {
+
+    private static final int MAX_ATTEMPTS = 3;
+
+    public PaymentResult charge(String token, BigDecimal amount)
+            throws PaymentException {
+
+        PaymentException lastException = null;
+
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return gateway.charge(token, amount);
+
+            } catch (GatewayTimeoutException e) {
+                // Transient — retry
+                lastException = new PaymentException(
+                    "Attempt " + attempt + " timed out", e,
+                    token, PaymentException.ErrorCode.GATEWAY_TIMEOUT, true
+                );
+                log.warn("Gateway timeout attempt {}/{}: {}",
+                    attempt, MAX_ATTEMPTS, e.getMessage());
+
+                if (attempt < MAX_ATTEMPTS) {
+                    sleep(backoff(attempt));
+                    // rethrow happens outside loop after max attempts
+                }
+
+            } catch (CardDeclinedException e) {
+                // Non-transient — rethrow immediately, no retry
+                throw new PaymentException(
+                    "Card declined for token: " + token, e,
+                    token, PaymentException.ErrorCode.CARD_DECLINED, false
+                );
+
+            } catch (GatewayException e) {
+                // Unknown gateway error — wrap and rethrow immediately
+                throw new PaymentException(
+                    "Gateway error on attempt " + attempt, e,
+                    token, PaymentException.ErrorCode.GATEWAY_ERROR, false
+                );
+            }
+        }
+
+        // All attempts exhausted — rethrow last exception
+        throw lastException;            // ✅ preserves last cause in chain
+    }
+
+    private long backoff(int attempt) {
+        return (long) Math.pow(2, attempt) * 100;   // exponential backoff
+    }
+}
+```
+
+🔴 **What breaks if done wrong:** Catching `GatewayTimeoutException` and rethrowing `new PaymentException("timeout")` without cause → no trace of which attempt failed, what the gateway returned, or where the timeout occurred → ops team debugging blind.
+
+---
+
+### 💣 Interview Traps
+
+**🪤 Trap 1 — `throw e` vs `throw new X(e)` stack trace location**
+
+```java
+void process() {
+    try {
+        throw new RuntimeException("original");     // line 3
+    } catch (RuntimeException e) {
+        throw e;                                    // line 5 — rethrows same object
+    }
+}
+
+// Stack trace:
+// RuntimeException: original
+//     at process(Demo.java:3)    ← points to line 3 (original throw)
+//     NOT to line 5 (rethrow)
+
+// But:
+void process() {
+    try {
+        throw new RuntimeException("original");     // line 3
+    } catch (RuntimeException e) {
+        throw new RuntimeException("wrapped", e);   // line 5
+    }
+}
+// RuntimeException: wrapped
+//     at process(Demo.java:5)    ← points to line 5 (wrap site)
+// Caused by: RuntimeException: original
+//     at process(Demo.java:3)
+```
+
+`throw e` preserves original trace — rethrow site invisible. `throw new X(e)` creates new trace at wrap site. Senior devs sometimes `throw e` thinking it creates a new trace — it doesn't.
+
+---
+
+**🪤 Trap 2 — Exception rethrown from `finally` loses original**
+
+```java
+void process() throws IOException {
+    try {
+        throw new IOException("primary");           // ①
+    } catch (IOException e) {
+        log.error("caught", e);
+        throw e;                                    // ② rethrow same — fine so far
+    } finally {
+        throw new RuntimeException("from finally"); // ③ REPLACES ②
+        // IOException is GONE
+        // RuntimeException propagates — no cause chain
+        // "primary" message: invisible
+    }
+}
+```
+
+Rethrow in catch is immediately overridden by `finally` throw. Even `throw e` (correct form) is defeated by `finally`. Never throw from `finally`.
+
+---
+
+**🪤 Trap 3 — Rethrowing changes `throws` contract for caller**
+
+```java
+// Caller prepared for IOException:
+try {
+    process();
+} catch (IOException e) { }     // catches what process() declares
+
+// process() implementation changes:
+void process() throws IOException {
+    try {
+        riskyOp();
+    } catch (IOException e) {
+        // Was: throw e  (IOException propagates — caller ready)
+        // Changed to: throw new RuntimeException(e)  (unchecked — caller unprepared)
+        throw new RuntimeException(e);
+        // IOException catch in caller: NEVER fires
+        // RuntimeException propagates unhandled — caller crashes
+    }
+}
+```
+
+Changing from `throw e` to `throw new RuntimeException(e)` breaks all callers that relied on catching the checked exception. Unchecked replacement bypasses all existing `catch(IOException)` handlers silently.
+
+---
+
+**🪤 Trap 4 — Multi-level cause chain can hide intermediate exceptions**
+
+```java
+// Chain: SQLException → DataAccessException → ServiceException
+ServiceException se = new ServiceException("service failed",
+    new DataAccessException("db failed",
+        new SQLException("connection refused")));
+
+// Logging only top level:
+log.error("error: " + se.getMessage());         // "service failed" — useless
+
+// Logging with SLF4J — logs full chain:
+log.error("error", se);                         // all 3 levels printed
+
+// Root cause:
+Throwable root = se;
+while (root.getCause() != null) root = root.getCause();
+// root = SQLException("connection refused")
+
+// Java 9+: ExceptionUtils-style traversal via:
+// se.getCause().getCause() — manual
+// Or Apache Commons Lang: ExceptionUtils.getRootCause(se)
+```
+
+---
+
+**🪤 Trap 5 — Rethrowing in loop — all but last exception lost**
+
+```java
+Exception lastSeen = null;
+for (String item : items) {
+    try {
+        process(item);
+    } catch (Exception e) {
+        lastSeen = e;                   // previous exception overwritten — LOST
+        // If 3 items fail: only last failure preserved
+        // First two failures: invisible
+    }
+}
+if (lastSeen != null) throw new BatchException("batch failed", lastSeen);
+```
+
+🔴 **Fix for batch processing:**
+
+```java
+List<Exception> failures = new ArrayList<>();
+for (String item : items) {
+    try {
+        process(item);
+    } catch (Exception e) {
+        failures.add(e);                // collect all failures
+    }
+}
+if (!failures.isEmpty()) {
+    BatchException batch = new BatchException(
+        failures.size() + " items failed"
+    );
+    failures.forEach(batch::addSuppressed);   // attach all as suppressed
+    throw batch;
+}
+```
+
+---
+
+### 🔩 DSA / Internals Connection
+
+**Underlying primitive: Linked list (cause chain) + stack snapshot (fillInStackTrace)**
+
+```
+Cause chain = linked list of Throwable objects:
+
+ServiceException ──cause──► DataAccessException ──cause──► SQLException ──cause──► null
+
+Traversal: O(n) in chain depth
+Root cause: tail of linked list
+
+Rethrow same object (throw e):
+  Existing StackTraceElement[] unchanged
+  No new allocation for stack trace
+  O(1) — just re-raises pendingException
+
+Wrap in new (throw new X(msg, e)):
+  new Throwable() → fillInStackTrace() → O(depth) stack walk
+  new StackTraceElement[] allocated
+  cause field = e (linked list extended by 1 node)
+
+fillInStackTrace() explicitly:
+  Overwrites existing stackTrace field
+  O(depth) stack walk — expensive in hot paths
+  Returns this — chainable
+
+Suppressed list on rethrown exception:
+  addSuppressed() → ArrayList.add() → O(1) amortized
+  getSuppressed() → toArray() → O(n) in suppressed count
+```
+
+---
+
+### 📊 Rethrow Forms — Decision Table
+
+| Form | Trace | Cause | Use When |
+|------|-------|-------|----------|
+| `throw e` | Original preserved | N/A — same object | Add side effect (log/metric), same type propagates |
+| `throw new X(msg, e)` | New trace at wrap site | ✅ Chained | Layer translation — change exception type |
+| `throw new X(msg)` | New trace at wrap site | ❌ Lost | ❌ Almost never — loses root cause |
+| `throw (T) e.fillInStackTrace()` | Updated to current | N/A — same object | Intentionally hide original location |
+| `throw new UncheckedIOException(e)` | New trace | ✅ Chained | Escape checked constraint in streams/lambdas |
+| Multi-catch + `throw e` | Original preserved | N/A | Precise rethrow — narrow throws declaration |
+
+---
+
+### 🏭 SDE/SRE Relevance
+
+| Concept | Relevance |
+|---------|-----------|
+| Always chain cause — `new X(msg, e)` never `new X(msg)` | 🔴 MUST KNOW |
+| `throw e` preserves trace — rethrow site invisible | 🔴 MUST KNOW |
+| `throw` in `finally` replaces rethrown exception | 🔴 MUST KNOW |
+| Layer translation — each layer speaks its own exception language | 🔴 MUST KNOW |
+| Batch failure — collect all exceptions as suppressed | 🔴 MUST KNOW |
+| Changing `throw e` to `throw new RuntimeException(e)` breaks callers | 🔴 MUST KNOW |
+| Root cause traversal — linked list to tail | 🟡 GOOD TO KNOW |
+| `fillInStackTrace()` expensive — avoid in hot paths | 🟡 GOOD TO KNOW |

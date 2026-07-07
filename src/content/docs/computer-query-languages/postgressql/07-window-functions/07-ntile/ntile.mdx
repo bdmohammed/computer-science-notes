@@ -1,0 +1,498 @@
+---
+title: PostgreSQL NTILE() Window Function
+slug: computer-query-languages/postgresql/window-functions/ntile
+description: Master NTILE() in PostgreSQL — percentile bucketing, quartile analysis, uneven distribution rules, and real-world segmentation patterns.
+sidebar:
+  label: "NTILE"
+  badge:
+    text: Window Functions
+    variant: tip
+tags: [postgresql, window-functions, ntile, percentiles, analytics, segmentation, interview]
+---
+
+import { Aside, Badge, Card, CardGrid, Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## 📄 NTILE() — Complete Guide
+
+> **`NTILE(n)` divides rows into `n` equal-sized buckets and assigns each row a bucket number `1` through `n`. It's the SQL equivalent of percentile grouping, making quartile analysis, decile rankings, and "divide into equal parts" problems a single expression.**
+
+<Aside type="tip">
+**🧠 Mental Model**: Think of `NTILE()` as a **bucket sorter**.  
+It takes a sorted list, splits it into `n` roughly equal parts, and labels each row with its bucket number. Unlike `RANK()`, it doesn't care about exact positions—it cares about relative distribution.
+</Aside>
+
+---
+
+## ⚙️ Execution Order & Architecture
+
+```
+FROM
+WHERE
+GROUP BY
+HAVING
+SELECT    ← NTILE computed HERE ✅
+ORDER BY
+LIMIT
+```
+
+<Code lang="sql" title="Basic NTILE Usage" code={`
+-- NTILE(n) assigns bucket number 1..n to each row
+-- n = number of buckets to divide rows into
+
+SELECT
+  name, salary,
+  NTILE(4) OVER (ORDER BY salary DESC) AS quartile  -- Q1..Q4
+FROM employees;
+`} />
+
+---
+
+## 1️⃣ What NTILE Actually Does
+
+`NTILE(n)` divides sorted rows into `n` groups as evenly as possible.
+
+<CardGrid>
+  <Card title="Input Data (Sorted)" icon="database">
+    ```text
+    Name   | Salary
+    Raj    | 120,000
+    Priya  | 115,000
+    Sharma | 110,000
+    Dev    | 105,000
+    Sam    |  90,000
+    Ankit  |  85,000
+    Meera  |  75,000
+    Kiran  |  70,000
+    ```
+  </Card>
+  
+  <Card title="NTILE(4) Output" icon="chart">
+    | Name   | Salary  | Bucket | Label      |
+    |--------|---------|--------|------------|
+    | Raj    | 120,000 | 1      | Top 25%    |
+    | Priya  | 115,000 | 1      | Top 25%    |
+    | Sharma | 110,000 | 2      | Upper-Mid  |
+    | Dev    | 105,000 | 2      | Upper-Mid  |
+    | Sam    |  90,000 | 3      | Lower-Mid  |
+    | Ankit  |  85,000 | 3      | Lower-Mid  |
+    | Meera  |  75,000 | 4      | Bottom 25% |
+    | Kiran  |  70,000 | 4      | Bottom 25% |
+  </Card>
+</CardGrid>
+
+<Aside type="note">
+**🎯 DSA Connection**: `NTILE()` = **Bucket Sort partitioning**. Divides a sorted array into `k` equal parts for parallel processing or cache partitioning.
+</Aside>
+
+---
+
+## 2️⃣ Uneven Division — The Distribution Rule
+
+When rows don't divide evenly by `n`, `NTILE` distributes the extra rows to the **earlier** (lower-numbered) buckets.
+
+```text
+Formula:
+  base_size = FLOOR(total_rows / n)
+  extra     = total_rows MOD n
+  Buckets 1..extra get (base_size + 1) rows
+  Buckets (extra+1)..n get base_size rows
+```
+
+<Code lang="sql" title="10 rows divided into 3 buckets (NTILE(3))" code={`-- base_size = 3, extra = 1
+-- Bucket 1: 4 rows ← gets the extra
+-- Bucket 2: 3 rows
+-- Bucket 3: 3 rows
+
+SELECT name, score,
+    NTILE(3) OVER (ORDER BY score DESC) AS tertile
+FROM (VALUES
+    ('A',100),('B',90),('C',85),('D',80),('E',75),
+    ('F',70),('G',65),('H',60),('I',55),('J',50)
+) t(name, score);`} />
+
+<Aside type="caution">
+**Interview Trap**: `NTILE` buckets are **not guaranteed equal size**. With 10 rows and `NTILE(3)`, sizes are `4, 3, 3` not `3, 3, 4`. Extra rows always go to earlier buckets. This matters for strict percentile calculations.
+</Aside>
+
+---
+
+## 3️⃣ Basic Syntax & Common Buckets
+
+<Code lang="sql" title="NTILE Forms & Variations" code={`-- Global division (no partition)
+SELECT name, salary,
+    NTILE(4) OVER (ORDER BY salary DESC) AS global_quartile
+FROM employees;
+
+-- Per-group division (PARTITION BY)
+SELECT name, department, salary,
+    NTILE(4) OVER (
+        PARTITION BY department     -- divide into quartiles PER dept ✅
+        ORDER BY salary DESC
+    ) AS dept_quartile
+FROM employees;
+
+-- Common bucket sizes:
+NTILE(4)   -- quartiles  (Q1-Q4)
+NTILE(5)   -- quintiles
+NTILE(10)  -- deciles    (D1-D10)
+NTILE(100) -- percentiles`} />
+
+---
+
+## 4️⃣ NTILE vs PERCENT_RANK vs CUME_DIST
+
+<table>
+  <thead>
+    <tr>
+      <th>Function</th>
+      <th>Returns</th>
+      <th>Question Answered</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>NTILE(n)</code></td>
+      <td>Integer bucket <code>1..n</code></td>
+      <td>"Which bucket does this row fall in?"</td>
+    </tr>
+    <tr>
+      <td><code>PERCENT_RANK()</code></td>
+      <td>Float <code>0.0 to 1.0</code></td>
+      <td>"What fraction of rows rank below this one?"</td>
+    </tr>
+    <tr>
+      <td><code>CUME_DIST()</code></td>
+      <td>Float <code>0.0 to 1.0</code></td>
+      <td>"What fraction of rows are ≤ this value?"</td>
+    </tr>
+  </tbody>
+</table>
+
+<Code lang="sql" title="Side-by-Side Comparison" code={`SELECT name, salary,
+    NTILE(4)       OVER (ORDER BY salary DESC) AS ntile_q,
+    PERCENT_RANK() OVER (ORDER BY salary DESC) AS pct_rank,
+    CUME_DIST()    OVER (ORDER BY salary DESC) AS cume_dist,
+    RANK()         OVER (ORDER BY salary DESC) AS rank_num
+FROM employees
+ORDER BY salary DESC;`} />
+
+<Aside type="tip">
+**Key Difference**: `NTILE` gives discrete buckets. `PERCENT_RANK` & `CUME_DIST` give continuous fractional positions. Use `NTILE` for grouping/labeling, use the others for precise statistical ranking.
+</Aside>
+
+---
+
+## 5️⃣ Labeling Buckets — NTILE + CASE
+
+Convert numeric buckets into human-readable tiers.
+
+<Code lang="sql" title="Quartile Labels" code={`SELECT
+    name, salary,
+    NTILE(4) OVER (ORDER BY salary DESC) AS quartile_num,
+    CASE NTILE(4) OVER (ORDER BY salary DESC)
+        WHEN 1 THEN '🥇 Top 25%'
+        WHEN 2 THEN '🥈 Upper-Mid'
+        WHEN 3 THEN '🥉 Lower-Mid'
+        WHEN 4 THEN '📉 Bottom 25%'
+    END AS quartile_label
+FROM employees
+ORDER BY salary DESC;
+
+-- Pro Tip: Wrap in CTE to avoid repeating NTILE()
+WITH quartiles AS (
+    SELECT *, NTILE(4) OVER (ORDER BY salary DESC) AS q
+    FROM employees
+)
+SELECT name, salary, q,
+    CASE q
+        WHEN 1 THEN 'Top'
+        WHEN 2 THEN 'Mid-High'
+        WHEN 3 THEN 'Mid-Low'
+        WHEN 4 THEN 'Bottom'
+    END AS label
+FROM quartiles;`} />
+
+---
+
+## 6️⃣ PARTITION BY — Per-Group Percentiles
+
+`PARTITION BY` resets the bucket counter for each group, enabling relative comparisons within subsets.
+
+<Code lang="sql" title="Regional vs Global Quartiles" code={`SELECT
+    c.region,
+    c.id AS customer_id,
+    c.name,
+    lifetime_value,
+    NTILE(4) OVER (
+        PARTITION BY c.region
+        ORDER BY lifetime_value DESC
+    ) AS regional_quartile,
+    NTILE(4) OVER (
+        ORDER BY lifetime_value DESC    -- global ranking
+    ) AS global_quartile
+FROM customers c
+JOIN (...) ltv ON c.id = ltv.user_id
+ORDER BY c.region, lifetime_value DESC;`} />
+
+<Aside type="note">
+**Business Insight**: Regional quartiles answer "Who are the top performers in *their* market?" Global quartiles answer "Who are the absolute best across *all* markets?" Both are valid—choose based on the question.
+</Aside>
+
+---
+
+## 7️⃣ NTILE Limitations — What It Can't Do
+
+<CardGrid>
+  <Card title="1. No Exact Percentile Values" icon="info">
+    ```text
+    NTILE tells you WHICH bucket a row is in.
+    It does NOT tell you the actual value at the boundary.
+    
+    ✅ Fix: Use PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY col)
+    ```
+  </Card>
+  
+  <Card title="2. Positional, Not Value-Based" icon="warning">
+    ```text
+    Salaries: [100, 100, 100, 50]
+    NTILE(2) → [100, 100] in Bucket 1, [100, 50] in Bucket 2
+    
+    Identical values can split across buckets.
+    NTILE cares about row count, not value equality.
+    ```
+  </Card>
+
+  <Card title="3. NTILE(n) > Row Count" icon="caution">
+    ```text
+    10 rows, NTILE(100) → Buckets 1-10 get 1 row each.
+    Buckets 11-100 get ZERO rows (never appear in output).
+    Not an error, just empty buckets.
+    ```
+  </Card>
+
+  <Card title="4. No IGNORE NULLS" icon="shield">
+    ```text
+    NULLs are treated as regular rows and get assigned a bucket.
+    Filter them with WHERE BEFORE applying NTILE if needed.
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 8️⃣ Internals & Performance
+
+Postgres computes `NTILE()` in a single pass after sorting:
+
+1. **Sort** rows by `PARTITION BY` + `ORDER BY` → `O(n log n)`
+2. **Count** rows in partition: `total`
+3. **Compute** `base = total / n`, `extra = total % n`
+4. **Assign** bucket numbers mathematically → `O(n)`
+
+<Code lang="sql" title="EXPLAIN Output & Optimization" code={`EXPLAIN SELECT name, salary,
+    NTILE(4) OVER (ORDER BY salary DESC)
+FROM employees;
+
+-- Output:
+-- WindowAgg               ← NTILE computed here
+--   -> Sort               ← sort by salary DESC (expensive)
+--        Sort Key: salary DESC
+--        -> Seq Scan
+
+-- ✅ Optimization: Index on ORDER BY column
+CREATE INDEX idx_emp_salary ON employees(salary DESC);
+-- Postgres uses Index Scan Backward → NO Sort node! O(n) ✅`} />
+
+<Aside type="tip">
+**Performance Rule**: Always index the column in `ORDER BY`. Multiple `NTILE()` calls with the same `OVER()` definition share **one** sort operation. Use the `WINDOW` clause to define it once.
+</Aside>
+
+---
+
+## 9️⃣ Real-Life SDE Patterns
+
+<CardGrid>
+  <Card title="Pattern 1: RFM Customer Segmentation" icon="users">
+    ```sql
+    -- Recency, Frequency, Monetary scoring
+    WITH metrics AS (
+      SELECT user_id,
+        NTILE(4) OVER (ORDER BY last_purchase DESC) AS r,
+        NTILE(4) OVER (ORDER BY purchase_count DESC) AS f,
+        NTILE(4) OVER (ORDER BY total_spent DESC) AS m
+      FROM customer_data
+    )
+    SELECT user_id, r, f, m,
+      CASE WHEN r=1 AND f=1 AND m=1 THEN '💎 Champion'
+           WHEN r<=2 AND f<=2 THEN '🌟 Loyal'
+           ELSE '😴 At Risk'
+      END AS segment
+    FROM metrics;
+    ```
+  </Card>
+  
+  <Card title="Pattern 2: Salary Band Analysis" icon="briefcase">
+    ```sql
+    -- Divide employees into pay bands per department
+    SELECT name, dept, salary,
+      NTILE(4) OVER (
+        PARTITION BY dept ORDER BY salary ASC
+      ) AS pay_band
+    FROM employees;
+    -- Band 1 = Entry, Band 4 = Senior
+    ```
+  </Card>
+
+  <Card title="Pattern 3: Product Decile Ranking" icon="trophy">
+    ```sql
+    -- Rank products by revenue in deciles
+    SELECT product_name, revenue,
+      NTILE(10) OVER (ORDER BY revenue DESC) AS decile
+    FROM product_metrics;
+    -- Decile 1 = Top 10% sellers
+    ```
+  </Card>
+
+  <Card title="Pattern 4: A/B Test Assignment" icon="flask">
+    ```sql
+    -- Reproducible test group split
+    SELECT id, email,
+      CASE NTILE(4) OVER (ORDER BY created_at)
+        WHEN 1 THEN 'Variant A'  -- 25%
+        WHEN 2 THEN 'Variant B'  -- 25%
+        ELSE       'Control'     -- 50%
+      END AS test_group
+    FROM users;
+    ```
+  </Card>
+
+  <Card title="Pattern 5: Anomaly Detection" icon="alert-triangle">
+    ```sql
+    -- Flag top 5% transactions (potential fraud)
+    WITH buckets AS (
+      SELECT *,
+        NTILE(20) OVER (ORDER BY amount DESC) AS vigintile
+      FROM transactions
+    )
+    SELECT * FROM buckets WHERE vigintile = 1; -- Top 1/20 = 5%
+    ```
+  </Card>
+
+  <Card title="Pattern 6: Load Balancing" icon="server">
+    ```sql
+    -- Distribute queue items evenly across workers
+    SELECT id, payload,
+      NTILE(8) OVER (ORDER BY id) AS worker_id
+    FROM processing_queue;
+    -- Each worker gets ~equal batch size ✅
+    ```
+  </Card>
+</CardGrid>
+
+---
+
+## 🔬 Verify Yourself
+
+<Code lang="sql" title="Run these in psql" code={`-- Setup
+CREATE TEMP TABLE t_emp (id INT, name TEXT, salary INT);
+INSERT INTO t_emp VALUES
+    (1,'A',100), (2,'B',90), (3,'C',80),
+    (4,'D',70), (5,'E',60), (6,'F',50),
+    (7,'G',40), (8,'H',30), (9,'I',20);
+
+-- 1. Uneven division (9 rows, 4 buckets)
+SELECT name, salary, NTILE(4) OVER (ORDER BY salary DESC) AS q FROM t_emp;
+-- Bucket sizes: 3, 2, 2, 2 (extra goes to bucket 1)
+
+-- 2. Verify bucket sizes
+SELECT NTILE(4) OVER (ORDER BY salary DESC) AS b, COUNT(*)
+FROM t_emp GROUP BY b ORDER BY b;
+
+-- 3. NTILE vs PERCENT_RANK
+SELECT name, salary,
+    NTILE(4) OVER (ORDER BY salary DESC) AS bucket,
+    ROUND(PERCENT_RANK() OVER (ORDER BY salary DESC)::NUMERIC, 2) AS pct
+FROM t_emp;
+
+-- 4. NTILE > row count
+SELECT name, NTILE(20) OVER (ORDER BY salary DESC) AS b FROM t_emp;
+-- Buckets 10-20 never appear in output (empty)
+
+-- 5. WINDOW clause reuse
+SELECT name,
+    NTILE(4) OVER w AS q,
+    NTILE(10) OVER w AS d
+FROM t_emp
+WINDOW w AS (ORDER BY salary DESC);`} />
+
+<details>
+<summary>✅ Click to reveal answers</summary>
+
+```text
+1. Buckets: 1(3 rows), 2(2 rows), 3(2 rows), 4(2 rows)
+2. Confirms sizes: 3, 2, 2, 2
+3. NTILE = discrete 1-4. PERCENT_RANK = continuous 0.0-1.0
+4. Only buckets 1-9 get rows. 10-20 are empty.
+5. Both functions share ONE sort operation. Efficient ✅
+```
+</details>
+
+---
+
+## 🎯 Interview Cheat Sheet
+
+| Question | Answer |
+| :--- | :--- |
+| **What does `NTILE(n)` do?** | Divides rows into `n` buckets, assigns `1..n`. |
+| **Uneven division rule?** | Extra rows go to **earlier** buckets. Sizes differ by at most 1. |
+| **`NTILE(4)` = ?** | Quartiles (Q1=top 25%, Q4=bottom 25%). |
+| **`NTILE` vs `PERCENT_RANK`?** | `NTILE` = discrete bucket. `PERCENT_RANK` = continuous float `[0,1]`. |
+| **`NTILE` vs `CUME_DIST`?** | `NTILE` = group assignment. `CUME_DIST` = cumulative fraction ≤ value. |
+| **`NTILE(n)` > row count?** | Some buckets get 0 rows and won't appear in output. |
+| **Frame clause needed?** | No. `NTILE` ignores `ROWS/RANGE` clauses entirely. |
+| **Exact percentile values?** | Use `PERCENTILE_CONT(0.x)` instead of `NTILE`. |
+| **Performance tip?** | Index `ORDER BY` column → eliminates `Sort` node → `O(n)`. |
+| **NULL handling?** | NULLs get a bucket like any row. Filter them first if needed. |
+
+---
+
+## 🧠 Full Mental Model Summary
+
+```text
+NTILE(n) OVER (PARTITION BY p ORDER BY o)
+
+Distribution Logic:
+  total = rows in partition
+  base  = FLOOR(total / n)
+  extra = total MOD n
+  Buckets 1..extra    → (base + 1) rows
+  Buckets extra+1..n  → base rows
+
+Key Rules:
+1. Ignores frame clauses entirely.
+2. Splits by row POSITION, not value equality.
+3. Extra rows always assigned to LOWER bucket numbers.
+4. Empty buckets are silently omitted from output.
+
+When to use:
+✅ Customer segmentation (RFM)
+✅ Salary/Performance banding
+✅ A/B test group assignment
+✅ Load balancing / queue distribution
+
+When to avoid:
+❌ Need exact percentile VALUES → Use PERCENTILE_CONT
+❌ Need to keep identical values together → Use DENSE_RANK or GROUP BY
+❌ Strict statistical analysis → Use CUME_DIST / PERCENT_RANK
+```
+
+<Aside type="tip">
+**Next Steps**:
+1. ✅ Use `NTILE(4)` for quartile analysis, `NTILE(10)` for deciles.
+2. ✅ Always pair with `CASE` to turn numbers into business labels.
+3. ✅ Use `PARTITION BY` for relative group comparisons.
+4. ✅ Index `ORDER BY` columns to avoid costly sorts on large tables.
+5. ✅ Combine with `PERCENTILE_CONT` when you need exact boundary values.
+
+Mastering `NTILE()` turns raw datasets into actionable, segmented business insights. 🐘✨
+</Aside>
